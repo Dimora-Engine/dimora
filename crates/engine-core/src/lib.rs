@@ -8,5 +8,5 @@ mod input;
 mod time;
 
 pub use color::Color;
-pub use input::{Input, Key, MouseButton};
+pub use input::{Input, InputEvent, Key, MouseButton};
 pub use time::{FixedTimestep, Time};

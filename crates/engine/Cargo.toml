@@ -1,0 +1,17 @@
+[package]
+name = "engine"
+description = "Facade crate: Game, schedules and a prelude wiring the 2.5D engine crates together."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+engine-math.workspace = true
+engine-core.workspace = true
+engine-world.workspace = true
+engine-assets.workspace = true
+engine-animation.workspace = true
+engine-renderer.workspace = true
+engine-renderer-wgpu.workspace = true
+engine-platform.workspace = true

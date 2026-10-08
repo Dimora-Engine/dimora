@@ -44,5 +44,5 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     if in.lit != 0u {
         rgb = shade(rgb, in.world_pos, in.normal, 0.0);
     }
-    return vec4<f32>(rgb, 1.0);
+    return vec4<f32>(apply_fog(rgb, in.world_pos), 1.0);
 }

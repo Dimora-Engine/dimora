@@ -13,6 +13,7 @@ struct Globals {
     view_proj: mat4x4<f32>,
     camera_pos: vec4<f32>,
     ambient: vec4<f32>,
+    fog: vec4<f32>,             // rgb = color, w = density
     counts: vec4<u32>,          // x = light count
     lights: array<Light, 16>,
 }
@@ -20,6 +21,11 @@ struct Globals {
 @group(0) @binding(0) var<uniform> globals: Globals;
 @group(1) @binding(0) var albedo_tex: texture_2d<f32>;
 @group(1) @binding(1) var albedo_sampler: sampler;
+
+fn apply_fog(rgb: vec3<f32>, world_pos: vec3<f32>) -> vec3<f32> {
+    let d = distance(globals.camera_pos.xyz, world_pos) * globals.fog.w;
+    return mix(rgb, globals.fog.rgb, 1.0 - exp(-d * d));
+}
 
 // `wrap` softens the terminator (0 = pure Lambert). Sprites are flat cards, so a little wrap
 // keeps them from going black when a light sits roughly in their plane.

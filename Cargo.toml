@@ -8,6 +8,8 @@ members = [
     "crates/engine-renderer",
     "crates/engine-animation",
     "crates/engine-renderer-wgpu",
+    "crates/engine-platform",
+    "crates/engine",
 ]
 
 [workspace.package]

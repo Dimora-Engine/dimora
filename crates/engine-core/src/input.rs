@@ -19,6 +19,16 @@ pub enum MouseButton {
     Middle,
 }
 
+/// A device event, as produced by the platform layer.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum InputEvent {
+    Key { key: Key, pressed: bool },
+    MouseButton { button: MouseButton, pressed: bool },
+    /// Cursor position in window pixels, origin top-left.
+    MouseMoved(Vec2),
+    Scroll(f32),
+}
+
 /// Snapshot of device state for the current frame.
 ///
 /// The platform layer calls `press`/`release`/`set_mouse_position`/... as events arrive and
@@ -66,6 +76,18 @@ impl Input {
     /// `+1` when `positive` is held, `-1` when `negative` is held, `0` for neither or both.
     pub fn axis(&self, negative: Key, positive: Key) -> f32 {
         self.key_down(positive) as i8 as f32 - self.key_down(negative) as i8 as f32
+    }
+
+    /// Applies one platform event to the state.
+    pub fn apply(&mut self, event: InputEvent) {
+        match event {
+            InputEvent::Key { key, pressed: true } => self.press(key),
+            InputEvent::Key { key, pressed: false } => self.release(key),
+            InputEvent::MouseButton { button, pressed: true } => self.press_mouse(button),
+            InputEvent::MouseButton { button, pressed: false } => self.release_mouse(button),
+            InputEvent::MouseMoved(p) => self.set_mouse_position(p),
+            InputEvent::Scroll(s) => self.add_scroll(s),
+        }
     }
 
     pub fn press(&mut self, key: Key) {

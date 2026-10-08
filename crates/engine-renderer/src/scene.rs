@@ -89,6 +89,8 @@ pub struct RenderScene {
     pub clear_color: Color,
     /// Ambient RGB with intensity applied.
     pub ambient: [f32; 3],
+    /// Fog color (rgb) and density.
+    pub fog: [f32; 4],
     pub lights: Vec<LightData>,
     /// Opaque geometry, drawn first with depth writes: meshes then cutout sprites and tiles.
     pub meshes: Vec<MeshInstance>,

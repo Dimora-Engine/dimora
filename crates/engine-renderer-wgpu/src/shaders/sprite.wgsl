@@ -49,7 +49,7 @@ fn color_of(in: VsOut) -> vec4<f32> {
     if in.lit != 0u {
         rgb = shade(rgb, in.world_pos, in.normal, 0.35);
     }
-    return vec4<f32>(rgb, texel.a);
+    return vec4<f32>(apply_fog(rgb, in.world_pos), texel.a);
 }
 
 @fragment

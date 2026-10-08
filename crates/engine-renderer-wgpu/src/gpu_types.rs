@@ -19,6 +19,7 @@ pub struct GpuGlobals {
     view_proj: [f32; 16],
     camera_pos: [f32; 4],
     ambient: [f32; 4],
+    fog: [f32; 4],
     counts: [u32; 4],
     lights: [GpuLight; MAX_LIGHTS],
 }
@@ -34,6 +35,7 @@ impl GpuGlobals {
             view_proj: scene.view.view_proj.to_cols_array(),
             camera_pos: scene.view.position.extend(1.0).to_array(),
             ambient: [ar, ag, ab, 0.0],
+            fog: scene.fog,
             counts: [scene.lights.len().min(MAX_LIGHTS) as u32, 0, 0, 0],
             lights,
         }
@@ -80,9 +82,9 @@ mod tests {
 
     #[test]
     fn layouts_match_wgsl() {
-        // WGSL: Light = 4 x vec4; Globals = mat4 + 3 x vec4 + 16 lights.
+        // WGSL: Light = 4 x vec4; Globals = mat4 + 4 x vec4 + 16 lights.
         assert_eq!(core::mem::size_of::<GpuLight>(), 64);
-        assert_eq!(core::mem::size_of::<GpuGlobals>(), 64 + 48 + 16 * 64);
+        assert_eq!(core::mem::size_of::<GpuGlobals>(), 64 + 64 + 16 * 64);
         assert_eq!(core::mem::size_of::<GpuSpriteInstance>(), 112);
         assert_eq!(core::mem::size_of::<GpuMeshInstance>(), 96);
     }

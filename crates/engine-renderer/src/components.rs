@@ -218,6 +218,21 @@ impl Light {
     }
 }
 
+/// Distance fog, stored as a world resource. Blends shaded color toward `color` with true camera
+/// distance (`1 - exp(-(density * distance)^2)`), which gives depth cues and hides the far edge of
+/// the world. Match the camera's clear color for a seamless horizon. Density 0 disables it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Fog {
+    pub color: Color,
+    pub density: f32,
+}
+
+impl Default for Fog {
+    fn default() -> Self {
+        Self { color: Color::WHITE, density: 0.0 }
+    }
+}
+
 /// Scene-wide base illumination. Stored as a world resource.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct AmbientLight {

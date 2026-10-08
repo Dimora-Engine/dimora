@@ -3,7 +3,7 @@ use engine_math::{Mat4, Rect, Vec2, Vec3};
 use engine_world::{Entity, GlobalTransform, Visibility, World};
 
 use crate::camera::{Camera, CameraView};
-use crate::components::{AmbientLight, Light, LightKind, Mesh, Sprite, SpriteBlend, TileMap};
+use crate::components::{AmbientLight, Fog, Light, LightKind, Mesh, Sprite, SpriteBlend, TileMap};
 use crate::frustum::Frustum;
 use crate::scene::*;
 
@@ -21,6 +21,7 @@ pub fn extract_scene(world: &World, assets: &AssetManager, viewport: Vec2) -> Op
 
     let ambient = world.try_resource::<AmbientLight>().map_or(AmbientLight::default(), |a| *a);
     let ambient = [ambient.color.r, ambient.color.g, ambient.color.b].map(|c| c * ambient.intensity);
+    let fog = world.try_resource::<Fog>().map_or(Fog::default(), |f| *f);
     let lights = extract_lights(world, &view);
     stats.lights = lights.len() as u32;
 
@@ -106,6 +107,7 @@ pub fn extract_scene(world: &World, assets: &AssetManager, viewport: Vec2) -> Op
         view,
         clear_color: camera.clear_color,
         ambient,
+        fog: [fog.color.r, fog.color.g, fog.color.b, fog.density],
         lights,
         meshes,
         cutout_sprites: SpriteLayer::from_ordered(cutout),
