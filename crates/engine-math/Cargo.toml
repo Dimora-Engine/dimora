@@ -1,0 +1,9 @@
+[package]
+name = "engine-math"
+description = "Small, dependency-free math types for the 2.5D engine."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]

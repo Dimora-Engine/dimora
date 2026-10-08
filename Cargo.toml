@@ -2,15 +2,6 @@
 resolver = "2"
 members = [
     "crates/engine-math",
-    "crates/engine-core",
-    "crates/engine-world",
-    "crates/engine-assets",
-    "crates/engine-animation",
-    "crates/engine-renderer",
-    "crates/engine-renderer-wgpu",
-    "crates/engine-platform",
-    "crates/engine",
-    "examples/basic_2_5d",
 ]
 
 [workspace.package]
