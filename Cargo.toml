@@ -6,6 +6,7 @@ members = [
     "crates/engine-world",
     "crates/engine-assets",
     "crates/engine-renderer",
+    "crates/engine-renderer-wgpu",
 ]
 
 [workspace.package]

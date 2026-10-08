@@ -1,0 +1,19 @@
+//! wgpu backend for `engine-renderer`.
+//!
+//! Input is a [`engine_renderer::RenderScene`] plus the [`engine_assets::AssetManager`] (to
+//! resolve textures and meshes into GPU resources). It never sees the ECS.
+//!
+//! * [`GpuContext`]: instance/adapter/device/queue.
+//! * [`SceneRenderer`]: pipelines, GPU caches and the frame encoder. Target-agnostic.
+//! * [`WindowRenderer`]: a `SceneRenderer` bound to a window surface.
+//! * [`SceneRenderer::render_to_rgba`]: headless rendering, used for tests and screenshots.
+
+mod gpu;
+mod gpu_types;
+mod scene_renderer;
+mod window;
+
+pub use gpu::{GpuContext, RenderError};
+pub use scene_renderer::{FrameStats, SceneRenderer};
+pub use window::WindowRenderer;
+pub use wgpu;
