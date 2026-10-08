@@ -185,6 +185,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "engine-animation"
+version = "0.1.0"
+dependencies = [
+ "engine-assets",
+ "engine-core",
+ "engine-math",
+ "engine-world",
+]
+
+[[package]]
 name = "engine-assets"
 version = "0.1.0"
 dependencies = [
