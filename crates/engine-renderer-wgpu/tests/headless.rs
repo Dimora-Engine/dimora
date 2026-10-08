@@ -189,3 +189,49 @@ fn meshes_cull_back_faces_so_their_interior_is_hidden() {
     let img = render(&gpu, &mut r, &mut w, &a);
     assert!(is_blue(px(&img, W / 2, H / 2)), "{:?}", px(&img, W / 2, H / 2));
 }
+
+fn red_sprite(size: f32) -> Sprite {
+    Sprite::new("quad")
+        .with_size(Vec2::splat(size))
+        .with_anchor(Vec2::splat(0.5))
+        .with_tint(Color::rgb(1.0, 0.0, 0.0))
+        .unlit()
+        .cutout()
+}
+
+#[test]
+fn camera_viewport_confines_the_image_to_its_rectangle() {
+    let Some((gpu, mut r)) = setup() else { return };
+    let a = assets();
+    let mut w = World::new();
+    w.spawn((
+        Camera::perspective(60.0).with_clear_color(Color::BLACK).with_viewport(ViewportRect::new(0.0, 0.0, 0.5, 1.0)),
+        Transform::from_xyz(0.0, 0.0, -10.0),
+    ));
+    w.spawn((Transform::IDENTITY, red_sprite(3.0)));
+    let img = render(&gpu, &mut r, &mut w, &a);
+    // The world origin is the centre of the camera's rectangle (the left half), not of the target.
+    assert!(is_red(px(&img, W / 4, H / 2)), "{:?}", px(&img, W / 4, H / 2));
+    assert!(!is_red(px(&img, 3 * W / 4, H / 2)), "nothing is drawn outside the viewport");
+    assert!(!is_red(px(&img, W / 2 + 1, H / 2)));
+}
+
+#[test]
+fn billboards_face_the_camera_but_fixed_quads_go_edge_on() {
+    let Some((gpu, mut r)) = setup() else { return };
+    let a = assets();
+    let render_with = |gpu: &GpuContext, r: &mut SceneRenderer, sprite: Sprite| {
+        let mut w = World::new();
+        // Camera on the -X side, looking along +X: a quad in the world XY plane is seen edge-on.
+        w.spawn((
+            Camera::perspective(60.0).with_clear_color(Color::BLACK),
+            Transform::from_xyz(-10.0, 0.0, 0.0).with_rotation(Quat::from_rotation_y(core::f32::consts::FRAC_PI_2)),
+        ));
+        w.spawn((Transform::IDENTITY, sprite));
+        render(gpu, r, &mut w, &a)
+    };
+    let fixed = render_with(&gpu, &mut r, red_sprite(4.0).fixed());
+    let billboard = render_with(&gpu, &mut r, red_sprite(4.0));
+    assert!(!is_red(px(&fixed, W / 2, H / 2)), "a fixed quad seen edge-on has no area");
+    assert!(is_red(px(&billboard, W / 2, H / 2)), "a billboard always faces the view plane");
+}

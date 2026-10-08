@@ -32,7 +32,8 @@ engine-renderer        Backend-agnostic render model: components, projection, ca
 engine-renderer-wgpu   The wgpu backend. Consumes a RenderScene; knows nothing about the ECS.
 engine-platform        winit window + event loop -> engine-core Input/Time. No rendering.
 engine                 Facade: `Game`, schedules, prelude. Wires the crates together.
-examples/basic_2_5d    Demo scene.
+examples/basic_2_5d    Demo scene: tilemap, skeletal character, lights, fog.
+examples/spatial_scene Spatial proof: sprites + meshes at real depths, free camera.
 ```
 
 Dependency direction (arrows = "depends on"):
@@ -48,6 +49,9 @@ engine ──► platform ──► core ──► math
 (`extract`), and everything after that (culling, sorting, batching, GPU submission) works on that
 snapshot. The world never holds GPU resources and the GPU backend never touches the ECS, so a
 second backend, a headless test renderer or a replay tool only needs a `RenderScene`.
+
+The rendering model (world state vs render state, projection, depth vs order, sprite orientation,
+conventions) is specified in [SPATIAL_RENDERING.md](SPATIAL_RENDERING.md).
 
 ## Pipeline per frame
 
@@ -65,11 +69,16 @@ input -> systems (gameplay, animation) -> propagate_transforms
   300, 800 move at different apparent rates when the camera translates, with no per-sprite
   multiplier.
 * **Ordering.** The depth buffer resolves opaque geometry (meshes, tilemaps, cutout sprites).
-  Blended sprites are sorted back-to-front by view-space depth. `(layer, order)` is an *explicit*
-  override applied in addition to depth, default 0, for cases that need deterministic ordering.
+  Blended sprites are sorted back-to-front by view-space depth. `RenderOrder { layer, order }` is
+  an optional component that overrides that for blended sprites only; it is never position.
 * **Batching.** Sprites become instances (model matrix, UV rect, tint, flags) and consecutive
   sprites with the same texture become one instanced draw. A sprite never issues its own GPU
   command.
+* **Sprite orientation.** `Sprite.orientation` is `Billboard` (default; faces the camera's view plane),
+  `Upright` (vertical, turns about +Y) or `Fixed` (the entity's own transform). The quad is generated in
+  extraction, so the shader is the same for all modes.
+* **Camera viewport.** `Camera.viewport` is a normalized rectangle of the render target; the aspect ratio and the
+  GPU viewport/scissor both come from it.
 * **Sprite blend modes.** `Cutout` sprites (and tilemap tiles) are alpha-tested, write depth and need no
   sorting, so they intersect correctly with 3D geometry and with each other. `Alpha` sprites are sorted
   back-to-front and drawn last with depth testing. Parts of a skeletal character are `Cutout` sprites separated by
@@ -98,8 +107,10 @@ input -> systems (gameplay, animation) -> propagate_transforms
 ## Verification
 
 * `engine-math`, `engine-world`, `engine-assets`, `engine-animation`: unit tests.
+* `engine-renderer/tests/camera.rs`: the world -> view -> clip -> NDC -> pixel chain with known points, conventions,
+  sprite orientation geometry, viewport, depth ordering.
 * `engine-renderer/tests/spatial.rs`: parallax emerges from perspective and vanishes under orthographic; sprites
-  sort by real depth; `(layer, order)` overrides; batching never reorders; culling; hierarchy reaches the scene.
+  sort by real depth; ``RenderOrder` overrides; batching never reorders; culling; hierarchy reaches the scene.
 * `engine-renderer-wgpu/tests/headless.rs`: renders offscreen and checks pixels (mesh/sprite depth interleaving,
   interior of meshes culled, point-light falloff depends on depth distance, 5000 sprites = one draw call).
 * The example runs windowed (winit + wgpu surface) and headless (`--screenshot`).
@@ -107,5 +118,5 @@ input -> systems (gameplay, animation) -> propagate_transforms
 ## Not built yet (deliberately)
 
 Shadows, normal maps, IK/blending/mixer, asset bundler and async loading/hot reload (interfaces
-exist: `AssetSource`, revisions, `LoadState`), billboarding, particles, collision, UI, hierarchical
+exist: `AssetSource`, revisions, `LoadState`), axis-constrained/custom sprite orientations, particles, collision, UI, hierarchical
 visibility, mipmaps, frustum-culling acceleration structures, GPU-driven culling.

@@ -16,7 +16,36 @@ crate, three lights and distance fog. All of it is one world. Only the camera pr
 |---|---|
 | ![](docs/perspective.png) | ![](docs/orthographic.png) |
 
-## Run it
+## The spatial proof: `spatial_scene`
+
+![Sprites and meshes at different depths](docs/spatial_scene_occlusion.png)
+
+One world, one camera: four identical figures at Z = 0, 100, 300 and 600, a pillar mesh between figures B and C (B is
+in front of it, C is behind it), a cube mesh cutting through a tree sprite, a translucent sprite blended over the floor,
+all unlit so only the projection shows. Perspective shrinks the figures with depth; orthographic does not. Moving the
+camera produces parallax in perspective and a uniform shift in orthographic, with no per-object parallax value anywhere
+(see [`docs/spatial_scene_parallax.png`](docs/spatial_scene_parallax.png)).
+
+```sh
+cargo run --release -p spatial_scene
+```
+
+| Key | Action |
+|---|---|
+| `W` / `S` | Move the camera in depth |
+| `A` / `D` | Strafe |
+| `Space` / `Shift` | Camera up / down |
+| Arrow keys | Rotate the camera (yaw / pitch) |
+| `P` | Perspective / orthographic |
+| `O` | Cycle sprite orientation: billboard, upright, fixed |
+| `R` / `Esc` | Reset camera / quit |
+
+The rendering model (world vs render state, depth vs order vs position, orientation, conventions) is written up in
+[`docs/SPATIAL_RENDERING.md`](docs/SPATIAL_RENDERING.md).
+
+## Run the larger demo
+
+`basic_2_5d` adds tilemaps, a skeletal character, lights and fog:
 
 ```sh
 cargo run --release -p basic_2_5d
@@ -65,7 +94,9 @@ See `examples/basic_2_5d/src/main.rs` for a complete, working version of this.
 ## Coordinate system
 
 Left-handed, **+Y up, +Z away from the default camera** (into the screen), +X right. "Z = 800" means far away. A camera
-with identity rotation looks down +Z. Sprites lie in their local XY plane and face -Z.
+with identity rotation looks down +Z. Sprites are quads whose facing is chosen by `Sprite.orientation` (billboard by
+default); a `Fixed` sprite lies in its local XY plane and faces -Z. Full conventions are in
+[`docs/SPATIAL_RENDERING.md`](docs/SPATIAL_RENDERING.md).
 
 ## Crates
 
@@ -100,6 +131,9 @@ available.
 The first milestone is complete: a small Rust program can create a spatial 2.5D world and render sprites, tilemaps,
 a skeletal character and basic 3D geometry with a camera, lights and fog.
 
+The second milestone (spatial rendering) added sprite orientation modes, `RenderOrder`, camera viewports, the
+`spatial_scene` example and the camera/projection test suite.
+
 Interfaces exist but are not implemented yet: shadows, normal maps, animation blending / IK / constraints, asset
 bundles and asynchronous loading / hot reload (the manager has load states, revisions and a swappable source),
-billboarding, particles, collision, UI, hierarchical visibility, mipmaps. See the end of `docs/ARCHITECTURE.md`.
+axis-constrained / custom sprite orientations, particles, collision, UI, hierarchical visibility, mipmaps. See the end of `docs/ARCHITECTURE.md`.
