@@ -94,6 +94,16 @@ name = "engine-math"
 version = "0.1.0"
 
 [[package]]
+name = "engine-renderer"
+version = "0.1.0"
+dependencies = [
+ "engine-assets",
+ "engine-core",
+ "engine-math",
+ "engine-world",
+]
+
+[[package]]
 name = "engine-world"
 version = "0.1.0"
 dependencies = [

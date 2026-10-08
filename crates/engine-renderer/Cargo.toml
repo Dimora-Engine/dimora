@@ -1,0 +1,13 @@
+[package]
+name = "engine-renderer"
+description = "Backend-agnostic 2.5D render model: components, projection, extraction, culling, sorting, batching."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+engine-math.workspace = true
+engine-core.workspace = true
+engine-world.workspace = true
+engine-assets.workspace = true

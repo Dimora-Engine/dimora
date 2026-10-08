@@ -5,6 +5,7 @@ members = [
     "crates/engine-core",
     "crates/engine-world",
     "crates/engine-assets",
+    "crates/engine-renderer",
 ]
 
 [workspace.package]
