@@ -1,0 +1,37 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/engine-math",
+    "crates/engine-core",
+    "crates/engine-world",
+    "crates/engine-assets",
+    "crates/engine-animation",
+    "crates/engine-renderer",
+    "crates/engine-renderer-wgpu",
+    "crates/engine-platform",
+    "crates/engine",
+    "examples/basic_2_5d",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[workspace.dependencies]
+engine-math = { path = "crates/engine-math" }
+engine-core = { path = "crates/engine-core" }
+engine-world = { path = "crates/engine-world" }
+engine-assets = { path = "crates/engine-assets" }
+engine-animation = { path = "crates/engine-animation" }
+engine-renderer = { path = "crates/engine-renderer" }
+engine-renderer-wgpu = { path = "crates/engine-renderer-wgpu" }
+engine-platform = { path = "crates/engine-platform" }
+engine = { path = "crates/engine" }
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
