@@ -48,7 +48,7 @@ pub mod prelude {
     pub use engine_math::{Mat4, Quat, Rect, Transform, Vec2, Vec3, Vec4};
     pub use engine_renderer::{
         AmbientLight, Camera, CameraProjection, CameraView, Fog, Light, LightKind, Material, Mesh, Orthographic,
-        Perspective, Projection, Sprite, SpriteBlend, TileMap,
+        Perspective, Projection, RenderOrder, Sprite, SpriteBlend, SpriteOrientation, TileMap, ViewportRect,
     };
     pub use engine_world::{Children, Entity, GlobalTransform, Name, Parent, Schedule, Visibility, World};
 }
