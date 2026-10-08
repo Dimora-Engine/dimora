@@ -180,4 +180,27 @@ mod tests {
         let cam = Transform::looking_at(Vec3::new(0.0, 5.0, -10.0), Vec3::ZERO, Vec3::Y);
         assert!(cam.forward().approx_eq(Vec3::new(0.0, -5.0, 10.0).normalized(), 1e-5));
     }
+
+    #[test]
+    fn axes_follow_the_documented_conventions() {
+        let t = Transform::IDENTITY;
+        assert_eq!((t.right(), t.up(), t.forward()), (Vec3::X, Vec3::Y, Vec3::Z));
+        // Left-handed: X x Y = +Z, and a positive yaw turns forward (+Z) towards +X.
+        assert_eq!(Vec3::X.cross(Vec3::Y), Vec3::Z);
+        let yawed = Transform::IDENTITY.with_rotation(Quat::from_rotation_y(core::f32::consts::FRAC_PI_2));
+        assert!(yawed.forward().approx_eq(Vec3::X, 1e-6));
+    }
+
+    #[test]
+    fn parent_times_child_applies_the_child_first() {
+        let parent =
+            Transform::from_xyz(10.0, 0.0, 0.0).with_rotation(Quat::from_rotation_y(core::f32::consts::FRAC_PI_2));
+        let child = Transform::from_xyz(0.0, 0.0, 2.0);
+        // The child's local +Z offset is rotated into the parent's frame (+Z -> +X), then moved.
+        assert!((parent * child).position.approx_eq(Vec3::new(12.0, 0.0, 0.0), 1e-5));
+        assert!(parent.mul_transform(&child).position.approx_eq((parent * child).position, 1e-6));
+        // Applying the composed transform equals applying child then parent.
+        let p = Vec3::new(1.0, 2.0, 3.0);
+        assert!((parent * child * p).approx_eq(parent.transform_point(child.transform_point(p)), 1e-5));
+    }
 }

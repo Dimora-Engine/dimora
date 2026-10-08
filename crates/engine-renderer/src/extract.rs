@@ -1,5 +1,5 @@
 use engine_assets::AssetManager;
-use engine_math::{Mat4, Rect, Vec2, Vec3};
+use engine_math::{Mat3, Mat4, Quat, Rect, Vec2, Vec3};
 use engine_world::{Entity, GlobalTransform, Visibility, World};
 
 use crate::camera::{Camera, CameraView};
@@ -194,9 +194,14 @@ pub(crate) fn sprite_placement(global: &Mat4, orientation: SpriteOrientation, vi
             (right, Vec3::Y, right.cross(Vec3::Y))
         }
     };
-    // The entity's Y axis, seen in the quad's plane, gives its roll about the facing axis, so a
-    // bone can still swing a billboarded sprite.
-    let roll = (-b.dot(right)).atan2(b.dot(up));
+    // Roll is the entity's twist about its own Z axis (swing-twist decomposition), so tilting or
+    // turning the entity does not leak into a billboard but a bone can still swing the sprite.
+    let rotation = Quat::from_mat3(&Mat3::from_cols(
+        a * (mirror / sx.max(f32::EPSILON)),
+        b / sy.max(f32::EPSILON),
+        c / sz.max(f32::EPSILON),
+    ));
+    let roll = 2.0 * rotation.z.atan2(rotation.w);
     let (sin, cos) = roll.sin_cos();
     let (right, up) = (right * cos + up * sin, up * cos - right * sin);
     Mat4::from_cols(

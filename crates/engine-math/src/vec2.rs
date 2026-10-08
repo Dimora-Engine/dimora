@@ -22,6 +22,9 @@ impl Vec2 {
     pub const fn splat(v: f32) -> Self {
         Self::new(v, v)
     }
+    pub fn approx_eq(self, o: Vec2, eps: f32) -> bool {
+        (self.x - o.x).abs() <= eps && (self.y - o.y).abs() <= eps
+    }
     #[inline]
     pub fn dot(self, o: Vec2) -> f32 {
         self.x * o.x + self.y * o.y

@@ -115,4 +115,41 @@ mod tests {
         propagate_transforms(&mut w);
         assert!(w.component::<GlobalTransform>(child).unwrap().translation().approx_eq(Vec3::new(3.0, 0.0, 1.0), 1e-6));
     }
+
+    #[test]
+    fn reparenting_moves_the_child_into_the_new_parents_space() {
+        let mut w = World::new();
+        let a = w.spawn((Transform::from_xyz(100.0, 0.0, 0.0),));
+        let b = w.spawn((Transform::from_xyz(0.0, 50.0, 0.0),));
+        let child = w.spawn_child(a, (Transform::from_xyz(0.0, 0.0, 1.0),));
+        propagate_transforms(&mut w);
+        assert!(w
+            .component::<GlobalTransform>(child)
+            .unwrap()
+            .translation()
+            .approx_eq(Vec3::new(100.0, 0.0, 1.0), 1e-6));
+        w.set_parent(child, b).unwrap();
+        propagate_transforms(&mut w);
+        assert!(w
+            .component::<GlobalTransform>(child)
+            .unwrap()
+            .translation()
+            .approx_eq(Vec3::new(0.0, 50.0, 1.0), 1e-6));
+    }
+
+    #[test]
+    fn global_transform_equals_the_product_of_the_chain() {
+        let mut w = World::new();
+        let (ta, tb, tc) = (
+            Transform::from_xyz(1.0, 2.0, 3.0).with_rotation(Quat::from_rotation_z(0.4)).with_uniform_scale(1.5),
+            Transform::from_xyz(-2.0, 0.5, 4.0).with_rotation(Quat::from_rotation_x(-0.8)),
+            Transform::from_xyz(0.0, 3.0, -1.0).with_rotation(Quat::from_rotation_y(1.1)).with_uniform_scale(0.5),
+        );
+        let a = w.spawn((ta,));
+        let b = w.spawn_child(a, (tb,));
+        let c = w.spawn_child(b, (tc,));
+        propagate_transforms(&mut w);
+        let expected = ta.to_matrix() * tb.to_matrix() * tc.to_matrix();
+        assert!(w.component::<GlobalTransform>(c).unwrap().matrix.approx_eq(&expected, 1e-4));
+    }
 }
