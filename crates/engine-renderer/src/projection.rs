@@ -118,6 +118,14 @@ impl CameraProjection {
     pub fn perspective(fov_y_degrees: f32) -> Self {
         Self::Perspective(Perspective { fov_y: fov_y_degrees.to_radians(), ..Default::default() })
     }
+    /// Sets the near/far clip distances (view-space units in front of the camera).
+    pub fn with_clip_range(mut self, near: f32, far: f32) -> Self {
+        match &mut self {
+            Self::Orthographic(p) => (p.near, p.far) = (near, far),
+            Self::Perspective(p) => (p.near, p.far) = (near, far),
+        }
+        self
+    }
     pub fn is_perspective(&self) -> bool {
         matches!(self, Self::Perspective(_))
     }

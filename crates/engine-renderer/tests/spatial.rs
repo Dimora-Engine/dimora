@@ -113,10 +113,10 @@ fn blended_sprites_sort_by_real_depth_not_spawn_order() {
 fn explicit_layer_overrides_depth_and_order_breaks_ties() {
     let a = assets();
     let mut w = scene_world();
-    w.spawn((Transform::from_xyz(0.0, 0.0, 5.0), Sprite::new("tex_a_sprite").with_layer(1, 0)));
+    w.spawn((Transform::from_xyz(0.0, 0.0, 5.0), Sprite::new("tex_a_sprite"), RenderOrder::new(1, 0)));
     w.spawn((Transform::from_xyz(0.0, 0.0, 50.0), Sprite::new("tex_a_sprite")));
-    w.spawn((Transform::from_xyz(1.0, 0.0, 50.0), Sprite::new("tex_a_sprite").with_layer(0, 3)));
-    w.spawn((Transform::from_xyz(2.0, 0.0, 50.0), Sprite::new("tex_a_sprite").with_layer(0, -3)));
+    w.spawn((Transform::from_xyz(1.0, 0.0, 50.0), Sprite::new("tex_a_sprite"), RenderOrder::new(0, 3)));
+    w.spawn((Transform::from_xyz(2.0, 0.0, 50.0), Sprite::new("tex_a_sprite"), RenderOrder::new(0, -3)));
     let xs: Vec<(f32, f32)> = extract(&mut w, &a)
         .blended_sprites
         .instances

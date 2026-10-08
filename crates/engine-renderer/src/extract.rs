@@ -3,19 +3,22 @@ use engine_math::{Mat4, Rect, Vec2, Vec3};
 use engine_world::{Entity, GlobalTransform, Visibility, World};
 
 use crate::camera::{Camera, CameraView};
-use crate::components::{AmbientLight, Fog, Light, LightKind, Mesh, Sprite, SpriteBlend, TileMap};
+use crate::components::{
+    AmbientLight, Fog, Light, LightKind, Mesh, RenderOrder, Sprite, SpriteBlend, SpriteOrientation, TileMap,
+};
 use crate::frustum::Frustum;
 use crate::scene::*;
 
-/// Snapshots the world into a [`RenderScene`] for the active camera.
+/// Snapshots the world into a [`RenderScene`] for the active camera. `target_size` is the render
+/// target in pixels; the camera's own viewport rectangle is resolved against it.
 ///
 /// Per frame, in order: pick the camera, gather lights, then for every visible renderable resolve
 /// assets, build its world matrix, frustum-cull, and finally sort and batch. The world is only
 /// read; nothing here touches a GPU. Returns `None` if there is no active camera.
 ///
 /// `transforms` must be up to date: call `engine_world::propagate_transforms` first.
-pub fn extract_scene(world: &World, assets: &AssetManager, viewport: Vec2) -> Option<RenderScene> {
-    let (camera, view) = active_camera(world, viewport)?;
+pub fn extract_scene(world: &World, assets: &AssetManager, target_size: Vec2) -> Option<RenderScene> {
+    let (camera, view) = active_camera(world, target_size)?;
     let frustum = Frustum::from_view_proj(&view.view_proj);
     let mut stats = ExtractStats::default();
 
@@ -28,7 +31,9 @@ pub fn extract_scene(world: &World, assets: &AssetManager, viewport: Vec2) -> Op
     let mut cutout: Vec<SpriteInstance> = Vec::new();
     let mut blended: Vec<(SortKey, SpriteInstance)> = Vec::new();
 
-    for (_, (sprite, global, vis)) in world.query::<(&Sprite, &GlobalTransform, Option<&Visibility>)>().iter() {
+    for (_, (sprite, global, vis, order)) in
+        world.query::<(&Sprite, &GlobalTransform, Option<&Visibility>, Option<&RenderOrder>)>().iter()
+    {
         if matches!(vis, Some(Visibility::Hidden)) {
             continue;
         }
@@ -38,7 +43,8 @@ pub fn extract_scene(world: &World, assets: &AssetManager, viewport: Vec2) -> Op
         };
         let size = sprite.size.unwrap_or_else(|| asset.world_size());
         let anchor = sprite.anchor.unwrap_or(asset.pivot);
-        let model = quad_matrix(&global.matrix, size, anchor);
+        let placement = sprite_placement(&global.matrix, sprite.orientation, &view);
+        let model = quad_matrix(&placement, size, anchor);
         if !quad_visible(&frustum, &model) {
             stats.sprites_culled += 1;
             continue;
@@ -46,7 +52,7 @@ pub fn extract_scene(world: &World, assets: &AssetManager, viewport: Vec2) -> Op
         stats.sprites_visible += 1;
         let instance = SpriteInstance {
             model,
-            uv: flipped_uv(asset.uv, sprite.flip_x, sprite.flip_y),
+            uv: flipped_uv(sub_region(asset.uv, sprite.region), sprite.flip_x, sprite.flip_y),
             tint: sprite.tint.to_array(),
             lit: sprite.lit,
             texture: asset.texture,
@@ -55,7 +61,8 @@ pub fn extract_scene(world: &World, assets: &AssetManager, viewport: Vec2) -> Op
             SpriteBlend::Cutout => cutout.push(instance),
             SpriteBlend::Alpha => {
                 let depth = view.view.transform_point3(quad_center(&model)).z;
-                blended.push((SortKey { layer: sprite.layer, depth, order: sprite.order }, instance));
+                let RenderOrder { layer, order } = order.copied().unwrap_or_default();
+                blended.push((SortKey { layer, depth, order }, instance));
             }
         }
     }
@@ -105,6 +112,7 @@ pub fn extract_scene(world: &World, assets: &AssetManager, viewport: Vec2) -> Op
     Some(RenderScene {
         view,
         clear_color: camera.clear_color,
+        viewport_px: [view.viewport_origin.x, view.viewport_origin.y, view.viewport.x, view.viewport.y],
         ambient,
         fog: [fog.color.r, fog.color.g, fog.color.b, fog.density],
         lights,
@@ -116,12 +124,12 @@ pub fn extract_scene(world: &World, assets: &AssetManager, viewport: Vec2) -> Op
 }
 
 struct SortKey {
-    layer: i16,
+    layer: i32,
     depth: f32,
-    order: i16,
+    order: i32,
 }
 
-fn active_camera(world: &World, viewport: Vec2) -> Option<(Camera, CameraView)> {
+fn active_camera(world: &World, target_size: Vec2) -> Option<(Camera, CameraView)> {
     let mut best: Option<(Entity, Camera, GlobalTransform)> = None;
     for (e, (camera, global)) in world.query::<(&Camera, &GlobalTransform)>().iter() {
         let better = match &best {
@@ -133,7 +141,7 @@ fn active_camera(world: &World, viewport: Vec2) -> Option<(Camera, CameraView)> 
         }
     }
     let (_, camera, global) = best?;
-    Some((camera, CameraView::new(&camera, &global, viewport)))
+    Some((camera, CameraView::new(&camera, &global, target_size)))
 }
 
 fn extract_lights(world: &World, view: &CameraView) -> Vec<LightData> {
@@ -160,6 +168,56 @@ fn extract_lights(world: &World, view: &CameraView) -> Vec<LightData> {
         lights.truncate(MAX_LIGHTS);
     }
     lights
+}
+
+/// The sprite's placement frame: where its origin is and which way its local X/Y/Z axes point,
+/// with the entity's scale folded into the axis lengths.
+///
+/// `Fixed` is the entity's own matrix. The billboard modes rebuild the axes from the camera so the
+/// quad faces the view plane; see [`SpriteOrientation`] for the exact semantics. In every case the
+/// quad ends up as real world-space geometry that the shared view-projection then projects.
+pub(crate) fn sprite_placement(global: &Mat4, orientation: SpriteOrientation, view: &CameraView) -> Mat4 {
+    let origin = global.cols[3].xyz();
+    let (a, b, c) = (global.cols[0].xyz(), global.cols[1].xyz(), global.cols[2].xyz());
+    let (sx, sy, sz) = (a.length(), b.length(), c.length());
+    // A negative determinant means an odd number of mirrors (e.g. `scale.x = -1` to face left).
+    // Billboards rebuild their axes, so the mirror is re-applied to the sprite's X axis.
+    let mirror = if a.cross(b).dot(c) < 0.0 { -1.0 } else { 1.0 };
+    let (right, up, forward) = match orientation {
+        SpriteOrientation::Fixed => return *global,
+        SpriteOrientation::Billboard => (view.right, view.up, view.forward),
+        SpriteOrientation::Upright => {
+            // Right is horizontal and perpendicular to the view direction. Looking straight along
+            // world Y has no defined heading, so fall back to the camera's own right axis.
+            let right = Vec3::Y.cross(view.forward);
+            let right = if right.length_squared() > 1e-8 { right.normalized() } else { view.right };
+            (right, Vec3::Y, right.cross(Vec3::Y))
+        }
+    };
+    // The entity's Y axis, seen in the quad's plane, gives its roll about the facing axis, so a
+    // bone can still swing a billboarded sprite.
+    let roll = (-b.dot(right)).atan2(b.dot(up));
+    let (sin, cos) = roll.sin_cos();
+    let (right, up) = (right * cos + up * sin, up * cos - right * sin);
+    Mat4::from_cols(
+        (right * (sx * mirror)).extend(0.0),
+        (up * sy).extend(0.0),
+        (forward * sz).extend(0.0),
+        origin.extend(1.0),
+    )
+}
+
+fn sub_region(uv: Rect, region: Option<Rect>) -> Rect {
+    match region {
+        None => uv,
+        Some(r) => {
+            let size = uv.size();
+            Rect::new(
+                uv.min + Vec2::new(r.min.x * size.x, r.min.y * size.y),
+                uv.min + Vec2::new(r.max.x * size.x, r.max.y * size.y),
+            )
+        }
+    }
 }
 
 /// World matrix for a quad of `size` whose `anchor` sits at the entity origin.

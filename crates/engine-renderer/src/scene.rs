@@ -87,6 +87,9 @@ pub struct ExtractStats {
 pub struct RenderScene {
     pub view: CameraView,
     pub clear_color: Color,
+    /// `[x, y, width, height]` in pixels (origin top-left): the part of the target this camera
+    /// draws into. Equal to the whole target unless the camera has a sub-viewport.
+    pub viewport_px: [f32; 4],
     /// Ambient RGB with intensity applied.
     pub ambient: [f32; 3],
     /// Fog color (rgb) and density.

@@ -18,8 +18,10 @@ pub mod frustum;
 pub mod projection;
 pub mod scene;
 
-pub use camera::{Camera, CameraView};
-pub use components::{AmbientLight, Fog, Light, LightKind, Material, Mesh, Sprite, SpriteBlend, TileMap};
+pub use camera::{Camera, CameraView, ViewportRect};
+pub use components::{
+    AmbientLight, Fog, Light, LightKind, Material, Mesh, RenderOrder, Sprite, SpriteBlend, SpriteOrientation, TileMap,
+};
 pub use extract::extract_scene;
 pub use frustum::Frustum;
 pub use projection::{CameraProjection, Orthographic, Perspective, Projection, ScreenPosition};

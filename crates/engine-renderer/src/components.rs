@@ -3,7 +3,7 @@
 
 use engine_assets::{AssetHandle, MeshData, SpriteAsset, Texture};
 use engine_core::Color;
-use engine_math::Vec2;
+use engine_math::{Rect, Vec2};
 
 /// How a sprite combines with what is behind it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -16,28 +16,56 @@ pub enum SpriteBlend {
     Cutout,
 }
 
+/// How a sprite quad is oriented in the world. This is a *rendering* decision about the sprite's
+/// geometry; where the sprite is always comes from its `Transform`.
+///
+/// Billboards align to the camera's **view plane** (its right/up axes), not to the camera's
+/// position. Every billboard therefore shares one orientation per frame, so a perspective camera
+/// never skews or rotates individual sprites; they only change position and apparent size.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum SpriteOrientation {
+    /// Faces the camera. The entity's position and scale are used, plus its roll about the view
+    /// axis (so a bone can rotate a sprite in the screen plane). Pitch and yaw of the entity are
+    /// ignored because the camera decides them.
+    #[default]
+    Billboard,
+    /// Faces the camera but stays upright: its quad is vertical and only turns about world +Y,
+    /// so a tilted camera foreshortens it like a real standing object and trees do not lean back.
+    /// Roll within that vertical plane is kept (bones can swing it). The usual choice for
+    /// characters and props standing on a ground plane.
+    Upright,
+    /// A plain quad in the entity's local XY plane, facing local `-Z`, fully oriented by the
+    /// entity's `Transform`. Use for decals, signs and anything that must lie in the world.
+    Fixed,
+}
+
 /// A rectangle of texture placed in the world.
 ///
-/// The sprite lies in its entity's local XY plane, facing local `-Z` (towards the default camera),
-/// positioned by the entity's `Transform` and the pivot. Rotating the transform tilts it in 3D.
+/// The sprite holds no position of any kind: *where* it is comes from the entity's `Transform`,
+/// *how it is projected* from the active camera. The renderer takes `Transform + Sprite + Camera`
+/// and generates a world-space quad (see [`SpriteOrientation`]).
+///
+/// The texture is referenced through a [`SpriteAsset`] (texture + UV rect + natural size + pivot),
+/// so atlases and sprite sheets work by pointing several sprites at one texture.
 #[derive(Clone, Copy, Debug)]
 pub struct Sprite {
     pub asset: AssetHandle<SpriteAsset>,
-    /// Size in local world units; `None` uses the asset's natural size.
+    /// Sub-rectangle of the asset in normalized `[0,1]^2` asset space (`(0,0)` = the asset's
+    /// min-UV corner). Selects a frame of a sheet-like asset; `None` shows the whole asset.
+    pub region: Option<Rect>,
+    /// Size in world units; `None` uses the asset's natural size.
     pub size: Option<Vec2>,
-    /// Pivot `(0,0)` bottom-left .. `(1,1)` top-right; `None` uses the asset's pivot.
+    /// Pivot `(0,0)` bottom-left .. `(1,1)` top-right, the point that sits at the entity's
+    /// position; `None` uses the asset's pivot.
     pub anchor: Option<Vec2>,
     pub flip_x: bool,
     pub flip_y: bool,
     pub tint: Color,
+    pub orientation: SpriteOrientation,
     pub blend: SpriteBlend,
     /// Whether scene lights shade this sprite. Unlit sprites show their texture as-is.
     pub lit: bool,
-    /// Explicit ordering override. Sprites sort by `(layer, depth, order)`; leave both at 0 to let
-    /// spatial depth decide. `layer` dominates depth (use it for e.g. world-space overlays),
-    /// `order` breaks ties between sprites at identical depth.
-    pub layer: i16,
-    pub order: i16,
 }
 
 impl Sprite {
@@ -47,16 +75,20 @@ impl Sprite {
     pub fn from_asset(asset: AssetHandle<SpriteAsset>) -> Self {
         Self {
             asset,
+            region: None,
             size: None,
             anchor: None,
             flip_x: false,
             flip_y: false,
             tint: Color::WHITE,
+            orientation: SpriteOrientation::default(),
             blend: SpriteBlend::Alpha,
             lit: true,
-            layer: 0,
-            order: 0,
         }
+    }
+    pub fn with_region(mut self, region: Rect) -> Self {
+        self.region = Some(region);
+        self
     }
     pub fn with_size(mut self, size: Vec2) -> Self {
         self.size = Some(size);
@@ -74,6 +106,20 @@ impl Sprite {
         self.flip_x = flip;
         self
     }
+    pub fn with_flip_y(mut self, flip: bool) -> Self {
+        self.flip_y = flip;
+        self
+    }
+    pub fn with_orientation(mut self, orientation: SpriteOrientation) -> Self {
+        self.orientation = orientation;
+        self
+    }
+    pub fn upright(self) -> Self {
+        self.with_orientation(SpriteOrientation::Upright)
+    }
+    pub fn fixed(self) -> Self {
+        self.with_orientation(SpriteOrientation::Fixed)
+    }
     pub fn with_blend(mut self, blend: SpriteBlend) -> Self {
         self.blend = blend;
         self
@@ -85,10 +131,31 @@ impl Sprite {
         self.lit = false;
         self
     }
-    pub fn with_layer(mut self, layer: i16, order: i16) -> Self {
-        self.layer = layer;
-        self.order = order;
-        self
+}
+
+/// Optional explicit ordering override for **blended** (transparent) sprites.
+///
+/// This is *not* position and *not* depth. Alpha-blended sprites are drawn back-to-front by
+/// camera-space depth; `RenderOrder` is applied on top of that when you need a deterministic
+/// result the depth cannot give you (e.g. a world-space marker that must always draw over
+/// everything else, or two coplanar sprites):
+///
+/// * `layer` dominates depth: all of layer 0 draws before any of layer 1.
+/// * within a layer, sprites sort by depth, far to near.
+/// * `order` breaks ties between sprites at the same depth.
+///
+/// Entities without this component behave as `RenderOrder::default()` (0, 0), which leaves depth
+/// in charge. Opaque geometry (meshes, cutout sprites, tiles) is resolved by the GPU depth buffer
+/// and ignores it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RenderOrder {
+    pub layer: i32,
+    pub order: i32,
+}
+
+impl RenderOrder {
+    pub const fn new(layer: i32, order: i32) -> Self {
+        Self { layer, order }
     }
 }
 
@@ -110,6 +177,10 @@ impl Default for Material {
 impl Material {
     pub fn color(base_color: Color) -> Self {
         Self { base_color, ..Self::default() }
+    }
+    /// A flat color shown as-is: lights do not shade it (distance fog still applies).
+    pub fn unlit(base_color: Color) -> Self {
+        Self { base_color, lit: false, ..Self::default() }
     }
     pub fn textured(texture: &str) -> Self {
         Self { base_texture: Some(AssetHandle::from_name(texture)), ..Self::default() }

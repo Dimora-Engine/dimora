@@ -123,17 +123,20 @@ fn build_world(world: &mut World, perspective: bool) -> Demo {
         (14.0, 58.0),
     ];
     for (x, z) in tree_spots {
-        world.spawn((Transform::from_xyz(x, 0.0, z), Sprite::new("tree").cutout()));
+        world.spawn((Transform::from_xyz(x, 0.0, z), Sprite::new("tree").cutout().upright()));
     }
     for (x, z) in [(-2.0, 5.0), (4.5, 8.0), (-8.5, 14.0), (7.0, 17.0), (0.5, 24.0)] {
-        world.spawn((Transform::from_xyz(x, 0.0, z), Sprite::new("rock").cutout()));
+        world.spawn((Transform::from_xyz(x, 0.0, z), Sprite::new("rock").cutout().upright()));
     }
     // Thousands of tufts: all on one texture, so they cost a single draw call.
     for i in 0..3000u32 {
         let h = i.wrapping_mul(2_654_435_761);
         let x = ((h >> 8) & 0xFFF) as f32 / 4095.0 * 60.0 - 30.0;
         let z = ((h.wrapping_mul(40503) >> 6) & 0xFFF) as f32 / 4095.0 * 55.0 - 4.0;
-        world.spawn((Transform::from_xyz(x, 0.0, z), Sprite::new("tuft").with_size(Vec2::splat(0.5)).cutout()));
+        world.spawn((
+            Transform::from_xyz(x, 0.0, z),
+            Sprite::new("tuft").with_size(Vec2::splat(0.5)).cutout().upright(),
+        ));
     }
 
     // Real 3D geometry in the same world.

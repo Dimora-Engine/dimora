@@ -136,7 +136,12 @@ pub fn spawn(world: &mut World, position: Vec3) -> Character {
             bone,
             (
                 Transform::from_position(part.offset),
-                Sprite::new("white").with_size(part.size).with_anchor(part.anchor).with_tint(part.color).cutout(),
+                Sprite::new("white")
+                    .with_size(part.size)
+                    .with_anchor(part.anchor)
+                    .with_tint(part.color)
+                    .cutout()
+                    .upright(),
             ),
         );
     }
@@ -145,7 +150,7 @@ pub fn spawn(world: &mut World, position: Vec3) -> Character {
         root,
         (
             Transform::from_xyz(0.0, 0.03, 0.0).with_rotation(Quat::from_rotation_x(PI / 2.0)),
-            Sprite::new("blob").with_size(Vec2::new(1.0, 0.6)).with_anchor(Vec2::splat(0.5)).unlit(),
+            Sprite::new("blob").with_size(Vec2::new(1.0, 0.6)).with_anchor(Vec2::splat(0.5)).unlit().fixed(),
         ),
     );
     Character { root, walk: walk_h, idle: idle_h }

@@ -330,6 +330,11 @@ impl SceneRenderer {
                 multiview_mask: None,
             });
             pass.set_bind_group(0, &self.globals_bind_group, &[]);
+            let [vx, vy, vw, vh] = scene.viewport_px;
+            let (x, y) = (vx.min(size.0 as f32 - 1.0), vy.min(size.1 as f32 - 1.0));
+            let (w, h) = (vw.min(size.0 as f32 - x).max(1.0), vh.min(size.1 as f32 - y).max(1.0));
+            pass.set_viewport(x, y, w, h, 0.0, 1.0);
+            pass.set_scissor_rect(x as u32, y as u32, w as u32, h as u32);
 
             // Opaque meshes: consecutive instances sharing (mesh, texture) merge into one draw.
             pass.set_pipeline(&self.mesh_pipeline);
