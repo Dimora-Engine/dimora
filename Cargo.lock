@@ -3,5 +3,12 @@
 version = 4
 
 [[package]]
+name = "engine-core"
+version = "0.1.0"
+dependencies = [
+ "engine-math",
+]
+
+[[package]]
 name = "engine-math"
 version = "0.1.0"
