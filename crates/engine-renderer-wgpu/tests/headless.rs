@@ -61,9 +61,17 @@ fn spawn_scene(w: &mut World, cube_z: f32) {
     // Big red cutout sprite at z=10, blue cube in the middle at cube_z.
     w.spawn((
         Transform::from_xyz(0.0, 0.0, 10.0),
-        Sprite::new("quad").with_size(Vec2::splat(12.0)).with_anchor(Vec2::splat(0.5)).with_tint(Color::rgb(1.0, 0.0, 0.0)).unlit().cutout(),
+        Sprite::new("quad")
+            .with_size(Vec2::splat(12.0))
+            .with_anchor(Vec2::splat(0.5))
+            .with_tint(Color::rgb(1.0, 0.0, 0.0))
+            .unlit()
+            .cutout(),
     ));
-    w.spawn((Transform::from_xyz(0.0, 0.0, cube_z), Mesh::new("cube").with_material(Material { lit: false, ..Material::color(Color::rgb(0.0, 0.0, 1.0)) })));
+    w.spawn((
+        Transform::from_xyz(0.0, 0.0, cube_z),
+        Mesh::new("cube").with_material(Material { lit: false, ..Material::color(Color::rgb(0.0, 0.0, 1.0)) }),
+    ));
 }
 
 #[test]
@@ -92,9 +100,16 @@ fn blended_sprites_interleave_with_meshes_by_depth() {
     // Blended (default) sprite *behind* a cube must not draw over it.
     w.spawn((
         Transform::from_xyz(0.0, 0.0, 10.0),
-        Sprite::new("quad").with_size(Vec2::splat(12.0)).with_anchor(Vec2::splat(0.5)).with_tint(Color::rgb(1.0, 0.0, 0.0)).unlit(),
+        Sprite::new("quad")
+            .with_size(Vec2::splat(12.0))
+            .with_anchor(Vec2::splat(0.5))
+            .with_tint(Color::rgb(1.0, 0.0, 0.0))
+            .unlit(),
     ));
-    w.spawn((Transform::from_xyz(0.0, 0.0, 5.0), Mesh::new("cube").with_material(Material { lit: false, ..Material::color(Color::rgb(0.0, 0.0, 1.0)) })));
+    w.spawn((
+        Transform::from_xyz(0.0, 0.0, 5.0),
+        Mesh::new("cube").with_material(Material { lit: false, ..Material::color(Color::rgb(0.0, 0.0, 1.0)) }),
+    ));
     let img = render(&gpu, &mut r, &mut w, &a);
     assert!(is_blue(px(&img, W / 2, H / 2)));
     assert!(is_red(px(&img, W / 2 + 25, H / 2)));
@@ -138,10 +153,39 @@ fn thousands_of_sprites_cost_one_draw_call() {
         w.spawn((Transform::from_xyz(x, y, 12.0), Sprite::new("quad").with_size(Vec2::splat(0.15)).unlit().cutout()));
     }
     // And a rotated 3D sprite, to show sprites are tiltable spatial objects.
-    w.spawn((Transform::from_xyz(0.0, 0.0, 8.0).with_rotation(Quat::from_rotation_y(1.0)), Sprite::new("quad").unlit()));
+    w.spawn((
+        Transform::from_xyz(0.0, 0.0, 8.0).with_rotation(Quat::from_rotation_y(1.0)),
+        Sprite::new("quad").unlit(),
+    ));
     let img = render(&gpu, &mut r, &mut w, &a);
     let stats = r.stats();
     assert_eq!(stats.sprite_instances, 5001);
     assert_eq!(stats.draw_calls, 2, "one cutout batch + one blended batch");
     assert!(img.chunks(4).any(|p| p[0] > 200), "something was drawn");
+}
+
+#[test]
+fn meshes_cull_back_faces_so_their_interior_is_hidden() {
+    let Some((gpu, mut r)) = setup() else { return };
+    let mut a = assets();
+    a.insert("big_cube", MeshData::cuboid(Vec3::splat(4.0)));
+    let mut w = world_with_camera();
+    // A red sprite *inside* the cube (between its front face at z=8 and back face at z=12). With
+    // correct culling the cube's front face hides it; with inverted culling only the back faces
+    // draw and the sprite would show through.
+    w.spawn((
+        Transform::from_xyz(0.0, 0.0, 10.0),
+        Sprite::new("quad")
+            .with_size(Vec2::splat(1.0))
+            .with_anchor(Vec2::splat(0.5))
+            .with_tint(Color::rgb(1.0, 0.0, 0.0))
+            .unlit()
+            .cutout(),
+    ));
+    w.spawn((
+        Transform::from_xyz(0.0, 0.0, 10.0),
+        Mesh::new("big_cube").with_material(Material { lit: false, ..Material::color(Color::rgb(0.0, 0.0, 1.0)) }),
+    ));
+    let img = render(&gpu, &mut r, &mut w, &a);
+    assert!(is_blue(px(&img, W / 2, H / 2)), "{:?}", px(&img, W / 2, H / 2));
 }

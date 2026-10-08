@@ -5,6 +5,7 @@ use engine_math::Vec2;
 /// Physical keys the engine cares about. The platform layer maps its native key codes to these,
 /// which keeps gameplay code independent of the windowing library.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[rustfmt::skip]
 pub enum Key {
     A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z,
     Digit0, Digit1, Digit2, Digit3, Digit4, Digit5, Digit6, Digit7, Digit8, Digit9,
@@ -22,8 +23,14 @@ pub enum MouseButton {
 /// A device event, as produced by the platform layer.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum InputEvent {
-    Key { key: Key, pressed: bool },
-    MouseButton { button: MouseButton, pressed: bool },
+    Key {
+        key: Key,
+        pressed: bool,
+    },
+    MouseButton {
+        button: MouseButton,
+        pressed: bool,
+    },
     /// Cursor position in window pixels, origin top-left.
     MouseMoved(Vec2),
     Scroll(f32),

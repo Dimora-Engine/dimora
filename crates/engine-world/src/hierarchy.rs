@@ -59,19 +59,15 @@ impl GlobalTransform {
 /// Run once per frame after gameplay/animation systems and before extraction. There is no dirty
 /// tracking yet: the cost is linear in the number of transformed entities.
 pub fn propagate_transforms(world: &mut World) {
-    let missing: Vec<Entity> = world
-        .entities
-        .query::<&Transform>()
-        .without::<&GlobalTransform>()
-        .iter()
-        .map(|(e, _)| e)
-        .collect();
+    let missing: Vec<Entity> =
+        world.entities.query::<&Transform>().without::<&GlobalTransform>().iter().map(|(e, _)| e).collect();
     for e in missing {
         let _ = world.entities.insert_one(e, GlobalTransform::default());
     }
 
     let mut stack: Vec<(Entity, Mat4)> = Vec::new();
-    for (e, (local, global)) in world.entities.query::<(&Transform, &mut GlobalTransform)>().without::<&Parent>().iter() {
+    for (e, (local, global)) in world.entities.query::<(&Transform, &mut GlobalTransform)>().without::<&Parent>().iter()
+    {
         global.matrix = local.to_matrix();
         stack.push((e, global.matrix));
     }

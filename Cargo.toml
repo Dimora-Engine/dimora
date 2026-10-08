@@ -10,6 +10,7 @@ members = [
     "crates/engine-renderer-wgpu",
     "crates/engine-platform",
     "crates/engine",
+    "examples/basic_2_5d",
 ]
 
 [workspace.package]

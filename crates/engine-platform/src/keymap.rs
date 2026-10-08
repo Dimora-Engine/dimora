@@ -2,6 +2,7 @@ use engine_core::Key;
 use winit::keyboard::{KeyCode, PhysicalKey};
 
 /// Maps physical key positions (layout independent: WASD stays WASD on AZERTY) to engine keys.
+#[rustfmt::skip]
 pub fn map_key(key: PhysicalKey) -> Option<Key> {
     let PhysicalKey::Code(code) = key else { return None };
     use KeyCode::*;

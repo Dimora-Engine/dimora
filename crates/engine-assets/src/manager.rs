@@ -4,7 +4,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::{
-    Asset, AssetError, AssetHandle, AssetId, AssetSource, FileSystemSource, MemorySource, MeshData, SpriteAsset, Texture,
+    Asset, AssetError, AssetHandle, AssetId, AssetSource, FileSystemSource, MemorySource, MeshData, SpriteAsset,
+    Texture,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -249,7 +250,8 @@ mod tests {
 
     #[test]
     fn deferred_loading_from_a_source() {
-        let mut m = AssetManager::new(MemorySource::default().with("tex/a.png", png_bytes()).with("bad.png", vec![1, 2, 3]));
+        let mut m =
+            AssetManager::new(MemorySource::default().with("tex/a.png", png_bytes()).with("bad.png", vec![1, 2, 3]));
         let ok = m.load::<Texture>("tex/a.png");
         let bad = m.load::<Texture>("bad.png");
         let missing = m.load::<Texture>("nope.png");

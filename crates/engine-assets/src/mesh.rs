@@ -32,7 +32,7 @@ pub struct MeshData {
 
 impl MeshData {
     pub fn new(vertices: Vec<Vertex>, indices: Vec<u32>) -> Self {
-        assert!(indices.len() % 3 == 0, "indices must form triangles");
+        assert!(indices.len().is_multiple_of(3), "indices must form triangles");
         assert!(indices.iter().all(|&i| (i as usize) < vertices.len()), "index out of range");
         let (mut lo, mut hi) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
         for v in &vertices {
@@ -64,7 +64,9 @@ impl MeshData {
         let (mut vertices, mut indices) = (Vec::new(), Vec::new());
         for (n, u, v) in faces {
             let base = vertices.len() as u32;
-            for (su, sv, uv) in [(-1.0, -1.0, [0.0, 1.0]), (1.0, -1.0, [1.0, 1.0]), (1.0, 1.0, [1.0, 0.0]), (-1.0, 1.0, [0.0, 0.0])] {
+            for (su, sv, uv) in
+                [(-1.0, -1.0, [0.0, 1.0]), (1.0, -1.0, [1.0, 1.0]), (1.0, 1.0, [1.0, 0.0]), (-1.0, 1.0, [0.0, 0.0])]
+            {
                 let p = (n + u * su + v * sv) * h;
                 vertices.push(Vertex::new(p, n, uv));
             }
@@ -96,7 +98,11 @@ impl MeshData {
         for i in 0..=segments {
             let a = i as f32 / segments as f32 * TAU;
             let (s, c) = a.sin_cos();
-            vertices.push(Vertex::new(Vec3::new(c * radius, 0.0, s * radius), -Vec3::Y, [0.5 + c * 0.5, 0.5 + s * 0.5]));
+            vertices.push(Vertex::new(
+                Vec3::new(c * radius, 0.0, s * radius),
+                -Vec3::Y,
+                [0.5 + c * 0.5, 0.5 + s * 0.5],
+            ));
         }
         for i in 0..segments {
             indices.extend([cap, cap + 2 + i, cap + 1 + i]);

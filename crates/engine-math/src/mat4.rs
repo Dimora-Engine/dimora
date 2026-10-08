@@ -46,7 +46,12 @@ impl Mat4 {
     }
 
     pub fn from_mat3(m: &Mat3) -> Self {
-        Self::from_cols(m.cols[0].extend(0.0), m.cols[1].extend(0.0), m.cols[2].extend(0.0), Vec4::new(0.0, 0.0, 0.0, 1.0))
+        Self::from_cols(
+            m.cols[0].extend(0.0),
+            m.cols[1].extend(0.0),
+            m.cols[2].extend(0.0),
+            Vec4::new(0.0, 0.0, 0.0, 1.0),
+        )
     }
 
     /// `T * R * S`: scale first, then rotate, then translate.

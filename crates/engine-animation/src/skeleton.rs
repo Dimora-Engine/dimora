@@ -16,7 +16,9 @@ pub struct BoneDef {
 pub enum SkeletonError {
     DuplicateName(String),
     /// A bone's parent must appear before it, which keeps evaluation a single forward pass.
-    ParentNotDefined { bone: String },
+    ParentNotDefined {
+        bone: String,
+    },
 }
 
 impl core::fmt::Display for SkeletonError {
@@ -160,7 +162,8 @@ mod tests {
         let skeleton = arm();
         let mut pose = Pose::rest(&skeleton);
         pose.local[1].rotation = Quat::from_rotation_z(0.8);
-        let root_transform = Transform::from_xyz(3.0, 0.0, 40.0).with_rotation(Quat::from_rotation_y(0.4)).with_uniform_scale(2.0);
+        let root_transform =
+            Transform::from_xyz(3.0, 0.0, 40.0).with_rotation(Quat::from_rotation_y(0.4)).with_uniform_scale(2.0);
 
         let mut world = World::new();
         let root = world.spawn((root_transform,));

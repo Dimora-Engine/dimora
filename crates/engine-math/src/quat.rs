@@ -91,16 +91,36 @@ impl Quat {
         let trace = m00 + m11 + m22;
         let q = if trace > 0.0 {
             let s = (trace + 1.0).sqrt() * 2.0;
-            Quat::new((m.at(2, 1) - m.at(1, 2)) / s, (m.at(0, 2) - m.at(2, 0)) / s, (m.at(1, 0) - m.at(0, 1)) / s, 0.25 * s)
+            Quat::new(
+                (m.at(2, 1) - m.at(1, 2)) / s,
+                (m.at(0, 2) - m.at(2, 0)) / s,
+                (m.at(1, 0) - m.at(0, 1)) / s,
+                0.25 * s,
+            )
         } else if m00 > m11 && m00 > m22 {
             let s = (1.0 + m00 - m11 - m22).sqrt() * 2.0;
-            Quat::new(0.25 * s, (m.at(0, 1) + m.at(1, 0)) / s, (m.at(0, 2) + m.at(2, 0)) / s, (m.at(2, 1) - m.at(1, 2)) / s)
+            Quat::new(
+                0.25 * s,
+                (m.at(0, 1) + m.at(1, 0)) / s,
+                (m.at(0, 2) + m.at(2, 0)) / s,
+                (m.at(2, 1) - m.at(1, 2)) / s,
+            )
         } else if m11 > m22 {
             let s = (1.0 + m11 - m00 - m22).sqrt() * 2.0;
-            Quat::new((m.at(0, 1) + m.at(1, 0)) / s, 0.25 * s, (m.at(1, 2) + m.at(2, 1)) / s, (m.at(0, 2) - m.at(2, 0)) / s)
+            Quat::new(
+                (m.at(0, 1) + m.at(1, 0)) / s,
+                0.25 * s,
+                (m.at(1, 2) + m.at(2, 1)) / s,
+                (m.at(0, 2) - m.at(2, 0)) / s,
+            )
         } else {
             let s = (1.0 + m22 - m00 - m11).sqrt() * 2.0;
-            Quat::new((m.at(0, 2) + m.at(2, 0)) / s, (m.at(1, 2) + m.at(2, 1)) / s, 0.25 * s, (m.at(1, 0) - m.at(0, 1)) / s)
+            Quat::new(
+                (m.at(0, 2) + m.at(2, 0)) / s,
+                (m.at(1, 2) + m.at(2, 1)) / s,
+                0.25 * s,
+                (m.at(1, 0) - m.at(0, 1)) / s,
+            )
         };
         q.normalize()
     }

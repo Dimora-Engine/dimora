@@ -105,7 +105,11 @@ impl SceneRenderer {
             entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
                 visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None },
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
                 count: None,
             }],
         });
@@ -221,7 +225,11 @@ impl SceneRenderer {
                 compilation_options: Default::default(),
                 targets: &[Some(wgpu::ColorTargetState { format, blend: None, write_mask: wgpu::ColorWrites::ALL })],
             }),
-            primitive: wgpu::PrimitiveState { cull_mode: Some(wgpu::Face::Back), front_face: wgpu::FrontFace::Cw, ..Default::default() },
+            primitive: wgpu::PrimitiveState {
+                cull_mode: Some(wgpu::Face::Back),
+                front_face: wgpu::FrontFace::Ccw,
+                ..Default::default()
+            },
             depth_stencil: Some(depth_state(true)),
             multisample: wgpu::MultisampleState::default(),
             multiview_mask: None,
@@ -259,7 +267,14 @@ impl SceneRenderer {
     }
 
     /// Records and submits one frame into `target`.
-    pub fn render(&mut self, gpu: &GpuContext, scene: &RenderScene, assets: &AssetManager, target: &wgpu::TextureView, size: (u32, u32)) {
+    pub fn render(
+        &mut self,
+        gpu: &GpuContext,
+        scene: &RenderScene,
+        assets: &AssetManager,
+        target: &wgpu::TextureView,
+        size: (u32, u32),
+    ) {
         gpu.queue.write_buffer(&self.globals, 0, bytemuck::bytes_of(&GpuGlobals::from_scene(scene)));
 
         for layer in [&scene.cutout_sprites, &scene.blended_sprites] {
@@ -392,12 +407,22 @@ impl SceneRenderer {
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
-        let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("readback") });
+        let mut encoder =
+            gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("readback") });
         encoder.copy_texture_to_buffer(
-            wgpu::TexelCopyTextureInfo { texture: &texture, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
+            wgpu::TexelCopyTextureInfo {
+                texture: &texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
             wgpu::TexelCopyBufferInfo {
                 buffer: &readback,
-                layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(padded), rows_per_image: Some(height) },
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(padded),
+                    rows_per_image: Some(height),
+                },
             },
             size,
         );
@@ -448,7 +473,8 @@ impl SceneRenderer {
         }
         let Some(tex) = assets.get(handle) else { return };
         let sampler = &self.samplers[(tex.filter == TextureFilter::Linear) as usize];
-        let mut gpu_tex = upload_texture(gpu, &self.texture_layout, sampler, tex.width, tex.height, &tex.rgba, "asset texture");
+        let mut gpu_tex =
+            upload_texture(gpu, &self.texture_layout, sampler, tex.width, tex.height, &tex.rgba, "asset texture");
         gpu_tex.revision = revision;
         self.textures.insert(handle.id(), gpu_tex);
     }
@@ -469,7 +495,8 @@ impl SceneRenderer {
             contents: bytemuck::cast_slice(&mesh.indices),
             usage: wgpu::BufferUsages::INDEX,
         });
-        self.meshes.insert(handle.id(), GpuMesh { revision, vertices, indices, index_count: mesh.indices.len() as u32 });
+        self.meshes
+            .insert(handle.id(), GpuMesh { revision, vertices, indices, index_count: mesh.indices.len() as u32 });
     }
 }
 
@@ -494,11 +521,23 @@ fn sprite_instances(layer: &SpriteLayer) -> Vec<GpuSpriteInstance> {
     layer
         .instances
         .iter()
-        .map(|i| GpuSpriteInstance { model: i.model.to_cols_array(), uv: i.uv, tint: i.tint, flags: [i.lit as u32, 0, 0, 0] })
+        .map(|i| GpuSpriteInstance {
+            model: i.model.to_cols_array(),
+            uv: i.uv,
+            tint: i.tint,
+            flags: [i.lit as u32, 0, 0, 0],
+        })
         .collect()
 }
 
-fn placeholder(gpu: &GpuContext, layout: &wgpu::BindGroupLayout, sampler: &wgpu::Sampler, rgba: [u8; 4], size: u32, label: &str) -> GpuTexture {
+fn placeholder(
+    gpu: &GpuContext,
+    layout: &wgpu::BindGroupLayout,
+    sampler: &wgpu::Sampler,
+    rgba: [u8; 4],
+    size: u32,
+    label: &str,
+) -> GpuTexture {
     upload_texture(gpu, layout, sampler, size, size, &rgba.repeat((size * size) as usize), label)
 }
 
@@ -523,7 +562,12 @@ fn upload_texture(
         view_formats: &[],
     });
     gpu.queue.write_texture(
-        wgpu::TexelCopyTextureInfo { texture: &texture, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
+        wgpu::TexelCopyTextureInfo {
+            texture: &texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
         rgba,
         wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(4 * width), rows_per_image: Some(height) },
         size,

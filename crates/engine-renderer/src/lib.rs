@@ -23,4 +23,6 @@ pub use components::{AmbientLight, Fog, Light, LightKind, Material, Mesh, Sprite
 pub use extract::extract_scene;
 pub use frustum::Frustum;
 pub use projection::{CameraProjection, Orthographic, Perspective, Projection, ScreenPosition};
-pub use scene::{ExtractStats, LightData, MeshInstance, RenderScene, SpriteBatch, SpriteInstance, SpriteLayer, MAX_LIGHTS};
+pub use scene::{
+    ExtractStats, LightData, MeshInstance, RenderScene, SpriteBatch, SpriteInstance, SpriteLayer, MAX_LIGHTS,
+};

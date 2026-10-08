@@ -90,7 +90,9 @@ pub fn animate_system(world: &mut World) {
             }
         }
         for track in &clip.tracks {
-            let (Some(sample), Some(&entity)) = (track.sample(player.time), skeleton.bones.get(track.bone)) else { continue };
+            let (Some(sample), Some(&entity)) = (track.sample(player.time), skeleton.bones.get(track.bone)) else {
+                continue;
+            };
             if let Ok(mut t) = world.component_mut::<Transform>(entity) {
                 *t = sample;
             }

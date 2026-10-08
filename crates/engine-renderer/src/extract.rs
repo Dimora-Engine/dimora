@@ -97,9 +97,8 @@ pub fn extract_scene(world: &World, assets: &AssetManager, viewport: Vec2) -> Op
 
     // Far to near: larger view depth first. Stable, so equal keys keep ECS iteration order, which
     // is deterministic for a given sequence of spawns.
-    blended.sort_by(|(a, _), (b, _)| {
-        a.layer.cmp(&b.layer).then(b.depth.total_cmp(&a.depth)).then(a.order.cmp(&b.order))
-    });
+    blended
+        .sort_by(|(a, _), (b, _)| a.layer.cmp(&b.layer).then(b.depth.total_cmp(&a.depth)).then(a.order.cmp(&b.order)));
     // Opaque sprites do not need ordering for correctness; group by texture to minimise batches.
     cutout.sort_by_key(|i| i.texture.id());
 
@@ -217,7 +216,9 @@ fn extract_tilemap(
             let min = Vec2::new(col as f32 * cell.x, row as f32 * cell.y) + inset;
             let max = Vec2::new((col + 1) as f32 * cell.x, (row + 1) as f32 * cell.y) - inset;
             let origin = Vec3::new(x as f32 * map.tile_size.x, y as f32 * map.tile_size.y, 0.0);
-            let model = *global * Mat4::from_translation(origin) * Mat4::from_scale(Vec3::new(map.tile_size.x, map.tile_size.y, 1.0));
+            let model = *global
+                * Mat4::from_translation(origin)
+                * Mat4::from_scale(Vec3::new(map.tile_size.x, map.tile_size.y, 1.0));
             if !quad_visible(frustum, &model) {
                 stats.sprites_culled += 1;
                 continue;

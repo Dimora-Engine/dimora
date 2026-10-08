@@ -147,7 +147,8 @@ mod tests {
 
     #[test]
     fn composition_matches_matrix_product() {
-        let (a, b) = (sample(), Transform::from_position(Vec3::new(0.5, 1.0, -2.0)).with_rotation(Quat::from_rotation_x(0.4)));
+        let (a, b) =
+            (sample(), Transform::from_position(Vec3::new(0.5, 1.0, -2.0)).with_rotation(Quat::from_rotation_x(0.4)));
         assert!((a * b).to_matrix().approx_eq(&(a.to_matrix() * b.to_matrix()), 1e-4));
         let p = Vec3::new(1.0, 2.0, 3.0);
         assert!((a * b * p).approx_eq(a * (b * p), 1e-4));
@@ -163,7 +164,8 @@ mod tests {
 
     #[test]
     fn lerp_endpoints_and_midpoint() {
-        let (a, b) = (Transform::IDENTITY, Transform::from_xyz(10.0, 0.0, 4.0).with_rotation(Quat::from_rotation_y(1.0)));
+        let (a, b) =
+            (Transform::IDENTITY, Transform::from_xyz(10.0, 0.0, 4.0).with_rotation(Quat::from_rotation_y(1.0)));
         assert_eq!(a.lerp(&b, 0.0).position, a.position);
         let mid = a.lerp(&b, 0.5);
         assert!(mid.position.approx_eq(Vec3::new(5.0, 0.0, 2.0), 1e-6));

@@ -47,10 +47,8 @@ pub mod prelude {
     pub use engine_core::{Color, Input, Key, MouseButton, Time};
     pub use engine_math::{Mat4, Quat, Rect, Transform, Vec2, Vec3, Vec4};
     pub use engine_renderer::{
-        AmbientLight, Camera, Fog, CameraProjection, CameraView, Light, LightKind, Material, Mesh, Orthographic, Perspective,
-        Projection, Sprite, SpriteBlend, TileMap,
+        AmbientLight, Camera, CameraProjection, CameraView, Fog, Light, LightKind, Material, Mesh, Orthographic,
+        Perspective, Projection, Sprite, SpriteBlend, TileMap,
     };
-    pub use engine_world::{
-        Children, Entity, GlobalTransform, Name, Parent, Schedule, Visibility, World,
-    };
+    pub use engine_world::{Children, Entity, GlobalTransform, Name, Parent, Schedule, Visibility, World};
 }

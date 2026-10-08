@@ -28,7 +28,8 @@ fn project_x(camera: Camera, cam_pos: Vec3, point: Vec3) -> f32 {
     let mut w = World::new();
     camera_at(&mut w, camera, cam_pos);
     propagate_transforms(&mut w);
-    let (_, (c, g)) = w.query::<(&Camera, &engine_world::GlobalTransform)>().iter().next().map(|(e, (c, g))| (e, (*c, *g))).unwrap();
+    let (_, (c, g)) =
+        w.query::<(&Camera, &engine_world::GlobalTransform)>().iter().next().map(|(e, (c, g))| (e, (*c, *g))).unwrap();
     CameraView::new(&c, &g, VIEWPORT).project(point).unwrap().pixels.x
 }
 
@@ -116,11 +117,15 @@ fn explicit_layer_overrides_depth_and_order_breaks_ties() {
     w.spawn((Transform::from_xyz(0.0, 0.0, 50.0), Sprite::new("tex_a_sprite")));
     w.spawn((Transform::from_xyz(1.0, 0.0, 50.0), Sprite::new("tex_a_sprite").with_layer(0, 3)));
     w.spawn((Transform::from_xyz(2.0, 0.0, 50.0), Sprite::new("tex_a_sprite").with_layer(0, -3)));
-    let xs: Vec<(f32, f32)> =
-        extract(&mut w, &a).blended_sprites.instances.iter().map(|i| {
+    let xs: Vec<(f32, f32)> = extract(&mut w, &a)
+        .blended_sprites
+        .instances
+        .iter()
+        .map(|i| {
             let origin = i.model.transform_point3(Vec3::new(0.5, 0.0, 0.0));
             (origin.x, origin.z)
-        }).collect();
+        })
+        .collect();
     // Layer 0 first (equal depth: order -3, 0, 3), then layer 1 last even though it is nearer.
     assert_eq!(xs, vec![(2.0, 50.0), (0.0, 50.0), (1.0, 50.0), (0.0, 5.0)]);
 }
@@ -139,7 +144,10 @@ fn sprites_batch_by_texture_without_reordering() {
     // A thousand sprites on one texture are a single draw.
     let mut w = scene_world();
     for i in 0..1000 {
-        w.spawn((Transform::from_xyz((i % 40) as f32 * 0.1, 0.0, 20.0 + (i / 40) as f32), Sprite::new("tex_a_sprite").cutout()));
+        w.spawn((
+            Transform::from_xyz((i % 40) as f32 * 0.1, 0.0, 20.0 + (i / 40) as f32),
+            Sprite::new("tex_a_sprite").cutout(),
+        ));
     }
     let scene = extract(&mut w, &a);
     assert_eq!(scene.cutout_sprites.instances.len(), 1000);
@@ -191,12 +199,11 @@ fn children_inherit_transforms_into_the_scene() {
 fn tilemap_expands_to_culled_cutout_instances() {
     let a = assets();
     let mut w = scene_world();
-    let map = TileMap::new("tex_a", 1, 1, Vec2::ONE, 8, 8).filled_with(|x, y| if (x + y) % 2 == 0 { 0 } else { TileMap::EMPTY });
+    let map =
+        TileMap::new("tex_a", 1, 1, Vec2::ONE, 8, 8)
+            .filled_with(|x, y| if (x + y) % 2 == 0 { 0 } else { TileMap::EMPTY });
     // Lay it on the ground (rotate so local +Y points deeper into the scene).
-    w.spawn((
-        Transform::from_xyz(-4.0, -3.0, 5.0).with_rotation(Quat::from_rotation_x(FRAC_PI_2)),
-        map,
-    ));
+    w.spawn((Transform::from_xyz(-4.0, -3.0, 5.0).with_rotation(Quat::from_rotation_x(FRAC_PI_2)), map));
     let scene = extract(&mut w, &a);
     assert_eq!(scene.cutout_sprites.instances.len(), 32);
     assert_eq!(scene.cutout_sprites.batches.len(), 1);
@@ -207,13 +214,17 @@ fn tilemap_expands_to_culled_cutout_instances() {
 fn lights_are_extracted_in_world_space_and_capped() {
     let a = assets();
     let mut w = scene_world();
-    w.spawn((Transform::looking_at(Vec3::ZERO, Vec3::new(0.0, -1.0, 1.0), Vec3::Y), Light::directional(engine_core::Color::WHITE, 2.0)));
+    w.spawn((
+        Transform::looking_at(Vec3::ZERO, Vec3::new(0.0, -1.0, 1.0), Vec3::Y),
+        Light::directional(engine_core::Color::WHITE, 2.0),
+    ));
     for i in 0..40 {
         w.spawn((Transform::from_xyz(i as f32, 0.0, 10.0), Light::point(engine_core::Color::WHITE, 1.0, 5.0)));
     }
     let scene = extract(&mut w, &a);
     assert_eq!(scene.lights.len(), MAX_LIGHTS);
-    let sun = scene.lights.iter().find(|l| l.kind == LightKind::Directional).expect("directional light survives the cap");
+    let sun =
+        scene.lights.iter().find(|l| l.kind == LightKind::Directional).expect("directional light survives the cap");
     assert!(sun.direction.approx_eq(Vec3::new(0.0, -1.0, 1.0).normalized(), 1e-5));
     assert_eq!(sun.color, [2.0, 2.0, 2.0]);
 }
