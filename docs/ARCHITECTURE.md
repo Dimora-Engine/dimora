@@ -16,6 +16,8 @@ Left-handed, Y up, **+Z points away from the default camera** (into the screen):
 * A sprite lies in its local XY plane and faces `-Z` (towards the default camera).
 * Quaternion rotations are the usual right-hand-rule rotations about the given axis.
 * Clip space follows wgpu/D3D: NDC z in `[0, 1]`.
+* Mesh triangles are wound so `(c - a) x (b - a)` points along the outward normal (checked by tests); the GPU
+  pipeline declares them `FrontFace::Ccw` with back-face culling. Sprites are two-sided.
 
 ## Crates
 
@@ -68,6 +70,13 @@ input -> systems (gameplay, animation) -> propagate_transforms
 * **Batching.** Sprites become instances (model matrix, UV rect, tint, flags) and consecutive
   sprites with the same texture become one instanced draw. A sprite never issues its own GPU
   command.
+* **Sprite blend modes.** `Cutout` sprites (and tilemap tiles) are alpha-tested, write depth and need no
+  sorting, so they intersect correctly with 3D geometry and with each other. `Alpha` sprites are sorted
+  back-to-front and drawn last with depth testing. Parts of a skeletal character are `Cutout` sprites separated by
+  small real Z offsets (far arm slightly behind the torso, eyes slightly in front of the face); the depth buffer
+  resolves the overlap, so a character needs no per-part ordering metadata.
+* **Fog.** A `Fog` resource blends shaded color toward a fog color by true camera distance, which is a depth cue
+  and hides the world's far edge.
 * **Lighting.** Lights are spatial (`Light` + `Transform`). Sprites and meshes are shaded by the
   same per-pixel shader in world space (sprites have a world-space normal from their orientation),
   so a point light's falloff includes depth. Directional, point and spot lights plus ambient are
@@ -85,6 +94,15 @@ input -> systems (gameplay, animation) -> propagate_transforms
 | Hierarchy | `Parent` + `Children` components, `GlobalTransform` computed by a system | Bones and sprite attachments are plain entities in the same hierarchy as everything else. |
 | Assets | Typed `AssetHandle<T>` holding a stable name hash | Components can be built before anything is loaded (`Sprite::new("player")`); the renderer resolves lazily and falls back to a placeholder. Sources (filesystem now, bundle later) sit behind `AssetSource`. |
 | Sprite geometry | Unit quad + per-instance model matrix | Size, pivot and orientation are baked into one matrix, so sprites, tiles and skeleton parts all go through the same instanced path. |
+
+## Verification
+
+* `engine-math`, `engine-world`, `engine-assets`, `engine-animation`: unit tests.
+* `engine-renderer/tests/spatial.rs`: parallax emerges from perspective and vanishes under orthographic; sprites
+  sort by real depth; `(layer, order)` overrides; batching never reorders; culling; hierarchy reaches the scene.
+* `engine-renderer-wgpu/tests/headless.rs`: renders offscreen and checks pixels (mesh/sprite depth interleaving,
+  interior of meshes culled, point-light falloff depends on depth distance, 5000 sprites = one draw call).
+* The example runs windowed (winit + wgpu surface) and headless (`--screenshot`).
 
 ## Not built yet (deliberately)
 
