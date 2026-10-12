@@ -88,8 +88,8 @@ AssetHandle<T> (a name hash)                             GPU vertex/index buffer
 * `extract_scene` reads the world and produces a `RenderScene`: the camera view, instance lists and
   batches. It contains no ECS or asset-manager references.
 * `engine-renderer-wgpu` consumes a `RenderScene` and owns every GPU object. Its texture and mesh
-  caches are keyed by `(AssetId, revision)`, so a reloaded asset is re-uploaded and a deleted entity
-  never leaks a GPU resource that the world still points at.
+  caches are keyed by `AssetId` and remember the asset revision, so a reloaded asset is re-uploaded.
+  The caches are never evicted today (tracked as KI-4 in TASKS.md; milestone M2).
 * The world never issues a `RenderPass` call. The renderer decides how to draw what exists.
 
 Because the seam is a plain struct, a second backend, a headless recorder or a replay tool needs
@@ -139,8 +139,10 @@ aspect ratio comes from the viewport rectangle, not the window, so a camera in h
 not stretched. The same `view_proj` drives CPU projection (`CameraView::project`, picking
 rays, culling) and the GPU, so the two cannot disagree.
 
-The `Projection` trait is the extension point. Anything expressible as a view-to-clip matrix
-(isometric, oblique, side-scroller) works with culling, picking and the GPU unchanged.
+The `Projection` trait describes the extension point: anything expressible as a view-to-clip matrix
+(isometric, oblique, side-scroller) would work with culling, picking and the GPU unchanged. Today
+`Camera` stores the closed `CameraProjection` enum rather than an arbitrary `impl Projection`, so a
+new projection currently needs a new enum variant (KI-11 in TASKS.md).
 
 ### Orthographic
 
