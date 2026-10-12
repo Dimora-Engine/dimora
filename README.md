@@ -128,12 +128,15 @@ available.
 
 ## Status
 
-The first milestone is complete: a small Rust program can create a spatial 2.5D world and render sprites, tilemaps,
-a skeletal character and basic 3D geometry with a camera, lights and fog.
+Dimora is early. The foundation (math, ECS wrapper, transforms and hierarchy, asset manager, platform loop) and
+the spatial renderer (perspective and orthographic cameras, depth-sorted sprites and meshes, sprite orientation
+modes, forward lighting and fog, camera viewports) exist and are covered by tests. Basic tilemaps and a skeletal animation data model
+exist but are limited (see ROADMAP.md). There are no particles, collision, audio, UI, shadows,
+scene serialization, asset bundling or editor.
 
-The second milestone (spatial rendering) added sprite orientation modes, `RenderOrder`, camera viewports, the
-`spatial_scene` example and the camera/projection test suite.
+What is done, what is not, and what comes next is tracked with evidence in:
 
-Interfaces exist but are not implemented yet: shadows, normal maps, animation blending / IK / constraints, asset
-bundles and asynchronous loading / hot reload (the manager has load states, revisions and a swappable source),
-axis-constrained / custom sprite orientations, particles, collision, UI, hierarchical visibility, mipmaps. See the end of `docs/ARCHITECTURE.md`.
+* [`ROADMAP.md`](ROADMAP.md): milestones with prerequisites, acceptance criteria and deferred work.
+* [`TASKS.md`](TASKS.md): current milestone, known issues, blockers and the next three tasks.
+* [`docs/DECISIONS.md`](docs/DECISIONS.md): open architecture decisions, when each is needed and what it blocks.
+* [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md): the architecture as it exists, separated from what is proposed.
