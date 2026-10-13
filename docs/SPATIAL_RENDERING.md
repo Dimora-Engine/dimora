@@ -49,7 +49,9 @@ for every object.
 
 ## Conventions
 
-These are fixed and used everywhere, including shaders.
+These are fixed and used everywhere, including shaders. `+Y` up with an `XZ` ground plane is the current engine
+convention (provisional, [ADR-0004](adr/0004-one-spatial-world-many-camera-configurations.md)); it is not
+configurable per game, and a movement plane is a gameplay choice, not the ground plane.
 
 | Item | Convention |
 |---|---|

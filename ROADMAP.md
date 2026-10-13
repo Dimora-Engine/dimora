@@ -442,13 +442,15 @@ baseline. Camera projection stays separate from gameplay orientation and visual 
 - Camera configurations decision (D-48), mechanisms only: the owner has decided the principles (ADR-0004,
   2026-10-13: gameplay orientation is data and not derived only from the camera or sprite; spatial depth,
   transparency sorting, render layers or queues and explicit order stay distinct; no occlusion framework until
-  a scene needs one). Still to decide: which gameplay-orientation values are stored, the coplanar ordering
-  mechanism, sprite orientation per view. Decide before M7 and M8 build on it.
+  a scene needs one). The `+Y` up / `XZ` ground convention is kept as a provisional engine convention. Left to
+  decide: the coplanar ordering mechanism and `Upright` semantics for steep views, **chosen only from what the
+  test scene shows**; the gameplay-orientation components wait for M7 and M8 requirements. Decide the first two
+  before M7 and M8 build on them.
 - Tilemap chunking with cached instances.
 - Render debugging, first slice: debug draw (lines, boxes, spheres, rays, camera frusta; depth-tested) and a
   depth-visualisation view, as the minimal debugging primitives for M7.
-- Depth convention (D-07). Pixel-art policy (D-06): opt-in per camera or sprite (texel snapping, integer
-  scaling, MSAA off). It is **lowest priority here** and never a default; no other configuration may depend on it.
+- Depth convention (D-07). Pixel-art policies (D-06): texture-level filtering, and texel snapping at whichever
+  level the chosen technique needs, validated by a prototype before any API is fixed. It is **lowest priority here** and never a default; no other configuration may depend on it.
 - Benchmarks (a small timing binary, no new dependency) for extraction and render CPU time with N
   sprites/meshes/tiles; record results and budgets in `docs/PERFORMANCE.md`.
 
