@@ -1,17 +1,23 @@
 # Tasks: current development state
 
-Last audited: 2026-10-12 at commit `6ad872f` (Linux). Re-verified on macOS on 2026-10-13 from `a0b4662`
-(baseline) and again after task T1 (see "Verification record (macOS)"). The roadmap was expanded on
-2026-10-13 (three character representations, a UI runtime, gameplay scripting); that was a documentation
-change. Nothing is marked
-done here without evidence from the repository or a recorded test run. Long-range plan: [ROADMAP.md](ROADMAP.md). Architecture:
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Open decisions: [docs/DECISIONS.md](docs/DECISIONS.md).
+Last audited: 2026-10-13 at commit `4857158` (Linux, `scripts/check.sh` exit 0, 138 tests, no GPU test
+skipped; macOS results from T1 to T3 are recorded below). Nothing is marked done here without evidence from
+the repository or a recorded test run. This file holds the **current milestone, task acceptance criteria,
+known issues and evidence**. Where things sit in the whole plan: [ROADMAP.md](ROADMAP.md). What each system
+does today: [docs/CAPABILITIES.md](docs/CAPABILITIES.md). Product intent: [docs/VISION.md](docs/VISION.md).
+Architecture and risks: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Open decisions:
+[docs/DECISIONS.md](docs/DECISIONS.md).
 
 ## Current milestone
 
-**M2. Foundation hardening and CI** (in progress: T1, T2 and T3 done). Priority 1
-in the ordering rules: fix the defects the audit found in the existing foundation, and make the build
-reproducible, before adding features.
+**M2. Foundation hardening and CI: closed for planning.** T1, T2 and T3 are done. Two items are carried
+because they wait on the owner, not on code: licence files (KI-17) and CI (D-22, B-1). Neither blocks M3a.
+
+**Next: M3a, the frame model** (full scope and acceptance criteria in [ROADMAP.md](ROADMAP.md#m3-frame-model-input-and-platform-not-started)).
+It is first because collision, animation, scenes, UI and scripting all need defined stages, commands and
+events, and because the threading, mutation and public-API risks (R-5, R-7, R-8) are cheapest to settle
+before more systems exist. **Not started. Begin only when the owner approves the milestone;** the
+design-note task below comes first and merges no engine code.
 
 ## Completed work
 
@@ -155,9 +161,9 @@ yet reproduced.
 | B-2 | GPU tests need an adapter: Metal on macOS (always present on a Mac), a Vulkan driver on Linux; fresh Linux VMs do not have one (`sudo apt install mesa-vulkan-drivers`) | Resolved by T1: documented in README, and `DIMORA_REQUIRE_GPU=1` (set by `scripts/check.sh`) makes the absence a failure |
 | B-3 | ~~D-03 (despawn semantics) and D-04 (GPU cache lifetime) are unmade~~ **Resolved 2026-10-13**: the owner accepted the proposed defaults for both (recorded in DECISIONS.md and ARCHITECTURE.md) | None |
 
-## Next three tasks
+## M2 tasks T1 to T3 (done)
 
-All three are inside M2, ordered by dependency and by how much they unblock. **T1, T2 and T3 are done
+All three were inside M2, ordered by dependency and by how much they unblock. **T1, T2 and T3 are done
 (2026-10-13, macOS arm64; evidence above).** D-03 and D-04 were accepted by the owner on 2026-10-13. No numbered
 task is left in M2; what remains is under "Remaining work in M2" (licence files, CI). After M2 the roadmap continues with M3 (input and scheduling); sprite-sheet
 animation (M8) cannot start before M3 and M5.
@@ -224,11 +230,32 @@ Done on macOS arm64 (2026-10-13); see "Task T3 results" for the evidence and its
    hook, or `AssetId` construction with a chosen value.
 4. Existing hierarchy tests are unchanged and pass.
 
-## Remaining work in M2 (after T1-T3)
+## Carried from M2 (owner input needed)
 
-- Licence files matching `Cargo.toml` (KI-17).
-- Choose the code host and add CI configuration that runs `scripts/check.sh` (B-1, D-22).
-- Re-run the audit table in ROADMAP.md and update this file when M2 is complete.
+- Licence files matching `Cargo.toml` (KI-17): needs the owner to confirm the licence and holder.
+- Choose the code host and add CI configuration that runs `scripts/check.sh` (B-1, D-22). A Windows build
+  is also unverified (KI-27) and is the first thing CI should add.
+- The capability audit table now lives in [docs/CAPABILITIES.md](docs/CAPABILITIES.md); update its rows in
+  the same commit as any change that moves a system's status.
+
+## Next tasks: M3a, the frame model (not started)
+
+Ordered by dependency. Each task is small enough to verify on its own. The milestone-level acceptance
+criteria (ordering test, command and event tests, interpolation test, logging test, byte-identical example
+screenshots, ADRs) are in ROADMAP.md under M3a and are not repeated here.
+
+| Task | Content | Prerequisite | Done when |
+|---|---|---|---|
+| M3a-1 | **Design note, prototype and ADRs** for D-44, D-01, D-10, D-45, D-47, D-21, and D-02 ("deferred to profiling" is acceptable). A throwaway prototype of stages plus a command buffer is run against the `RefCell` resources (KI-9). No engine code is merged | Owner approval | The ADRs exist and name their revisit conditions; the prototype's findings are written down; the deleted prototype is not in the tree |
+| M3a-2 | Named stages and `before`/`after` ordering; `Game::step` stops hard-wiring engine stages (KI-10) | M3a-1 | Out-of-order registration test, cycle-is-an-error test, examples ported with byte-identical screenshots |
+| M3a-3 | `Commands` flushed at stage boundaries; typed event channels cleared per frame (KI-9) | M3a-2 | Command-while-iterating test; event visible later the same frame and gone the next |
+| M3a-4 | Logging facade; asset failure, skipped renderable and surface loss each log once with the cause named (R-13) | M3a-1 | Capturing-logger test: one record naming the asset |
+| M3a-5 | Fixed-step alpha exposed and opt-in transform interpolation (R-3) | M3a-2 | 60 Hz fixed versus 144 Hz render test; simulation still reads the un-interpolated `Transform` |
+| M3a-6 | No new public `hecs` types; write the three-tier rule (D-45) into ARCHITECTURE.md | M3a-1 | `engine/src/lib.rs` re-exports reviewed; the rule is in the docs |
+
+M3b (input actions, scale factor, vsync, fullscreen) starts after M3a-3. M4, M5 and M6 are the next
+milestones; M7 (collision) and M8 (sprite sheets) follow M3a, M4, M5 and M6, then M9 (stable character and
+scene API with a playable slice).
 
 ## Planned systems and their state
 
@@ -247,7 +274,8 @@ in the current scope.
 
 ## Not in scope now
 
-Everything from M3 onward. In particular: no new rendering features, no collision, no editor work, and no
-work on UI, scripting or any of the three character representations until M2 is finished and the plan is
+Everything after M3a. In particular: no new rendering features, no collision, no editor work, and no
+work on UI, scripting or any of the three character representations until M3a is finished and the plan is
 re-read. These systems are deliberately not being started together: each has its own milestone,
-prerequisites and decisions.
+prerequisites and decisions. Decisions that data formats or public APIs will bake in are made before their
+first consumer (see [docs/DECISIONS.md](docs/DECISIONS.md#what-to-resolve-first)).

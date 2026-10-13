@@ -1,8 +1,9 @@
 # Architecture
 
-Status: describes the code as of commit `6ad872f` (audited 2026-10-12; code unchanged since). Everything
-outside the two sections "Proposed future architecture" and "Proposed boundaries" exists in the
-repository today. Those two sections are proposals: nothing in them is implemented. Sections that describe
+Status: describes the code as of commit `4857158` (re-audited 2026-10-13, after M2 tasks T1 to T3).
+Everything outside the sections "Proposed future architecture" and "Proposed boundaries" exists in the
+repository today, except that "Cross-system requirements and risks" mixes requirements (what must hold) with
+verified current state; each item says which is which. Those two sections are proposals: nothing in them is implemented. Sections that describe
 weaknesses are as important as sections that describe strengths; the roadmap
 ([ROADMAP.md](../ROADMAP.md)) is ordered around them.
 
@@ -11,11 +12,12 @@ weaknesses are as important as sections that describe strengths; the roadmap
 Every visible thing (sprite, skeleton part, tile, 3D mesh) is an entity with a real 3D `Transform`.
 A camera and a projection decide how that world appears on screen. There is no integer z-index in
 the model: parallax, occlusion and lighting come from positions. The rendering model is specified
-in detail in [SPATIAL_RENDERING.md](SPATIAL_RENDERING.md); this file covers the whole engine.
+in detail in [SPATIAL_RENDERING.md](SPATIAL_RENDERING.md); this file covers the whole engine. The product
+intent is in [VISION.md](VISION.md); what each system does today is in [CAPABILITIES.md](CAPABILITIES.md).
 
 ## Crates and responsibilities
 
-About 7,500 lines of Rust in nine library crates and two examples.
+About 8,000 lines of Rust in nine library crates and two examples.
 
 | Crate | Responsibility | Depends on (workspace) | External |
 |---|---|---|---|
@@ -200,13 +202,121 @@ Each is verified by reading the code or by a test run; identifiers refer to the 
     has no text events, and any texture change re-uploads the whole texture, which a glyph atlas cannot
     afford.
 
+## Cross-system requirements and risks
+
+The systems in [CAPABILITIES.md](CAPABILITIES.md) are only useful if they hold together. This section
+states, for each integration question, what is true today (checked in code or by a test), the requirement,
+and the gap. It then lists the architectural risks that would be expensive to fix late. Requirements
+here are binding on milestone designs; open choices point to a decision in [DECISIONS.md](DECISIONS.md).
+
+### Integration requirements
+
+**1. Sprites and meshes under one camera and one set of conventions.**
+*Today:* true and tested. Both are entities with a `GlobalTransform`; extraction projects both with one
+`view_proj`; one `Depth32Float` buffer; GPU tests show a nearer mesh occluding a sprite and the reverse
+(`nearer_mesh_occludes_sprite_and_farther_mesh_does_not`), blended sprites interleaving with meshes
+(`blended_sprites_interleave_with_meshes_by_depth`), and `sprites_and_meshes_share_one_spatial_world`.
+*Requirement:* any new renderable (tile, particle, skinned mesh, world-UI quad) enters through the same
+transform, camera and depth contract and declares one **transparency class**: opaque, cutout, or blended.
+*Gap:* the class is encoded in the `RenderScene` shape rather than as data, see R-1.
+
+**2. Depth, transparency, render layers and occlusion.** The rule to preserve: *depth decides
+visibility; a transparency class decides the pass; sort keys exist only for blended content.* Opaque
+and cutout content needs no ordering. Blended content is ordered by `(RenderOrder.layer, view depth,
+RenderOrder.order)`; `RenderOrder` is a narrow override, not a layer system. Shadows, particles and
+skinned meshes must pick a class and may not introduce a second ordering concept. Screen-space UI is
+outside this model (painter's order, no depth). Open: blended meshes and intersecting blended quads
+(D-05, KI-14).
+
+**3. Character animation, attachment and world transforms.** Bones and sockets are entities in the
+world, so an attached sword or particle emitter is an ordinary child and follows `propagate_transforms`.
+The order that must hold: gameplay writes intent and state, animation evaluates a pose, the pose is
+applied to bone entities, transforms propagate, extraction reads. Two consequences to design now:
+(a) any IK that needs world positions (foot placement on ground queries, look-at) needs world transforms
+that are valid *after* propagation, so the frame needs a documented point for a second apply and
+propagate, or IK works on local data only; (b) camera-relative directional frames (D-31) read the camera
+transform from the previous propagation (a one-frame latency to document). Animation evaluation must not
+depend on the renderer or the world (D-34), and the visual subtree must never write the gameplay root's
+transform (D-28).
+
+**4. Tilemaps, physics and spatial queries.** One coordinate system: a tilemap is an entity with a
+`Transform`; tiles, colliders and queries are in world space and 3D, so objects at different Z do not
+collide. Colliders belong to the gameplay entity, not to a visual child. Simulation reads `Transform`
+(fixed step), never the interpolated render transform. Debug draw is the way to see all of it.
+*Gap:* nothing stores a previous or render transform for interpolation (R-3).
+
+**5. Screen-space and world-space UI.** Two subsystems with a thin join: the UI runtime owns layout,
+interaction and a plain-data draw list; the backend draws it in an overlay pass. They share the device,
+texture cache, samplers, atlases (the glyph atlas is an ordinary texture) and the instanced-quad
+machinery. They do not share the ordering model, coordinate space, lighting or input routing.
+World-space UI is a UI node anchored to an entity and positioned by projecting through the active camera
+(a behind-camera policy is required); render-to-texture panels are a later option (D-38).
+*Gaps:* no scale factor (KI-24), no sub-rectangle texture update (KI-25), no overlay pass.
+
+**6. Asset loading, referencing and retention.** *Today:* components hold `AssetHandle<T>`, a copyable
+64-bit hash of a name; the manager owns the data; the renderer keeps GPU copies keyed by id and revision;
+nothing is reference counted; removal is explicit (`remove`) and the renderer follows it (T2).
+*Requirement:* every system that holds an asset resolves it through the manager per use (never caches
+derived asset data in a component), unloads are driven by scene unload (M4) and dependency tracking
+(M17), and failures are reported with the asset name (D-21). *Gap:* see R-4.
+
+**7. Scripts and editor tools versus the renderer.** Neither may reach renderer or wgpu internals. Both
+use the same surface: the component registry (names, visibility, field access), commands applied at
+stage boundaries, events, and the action layer. An editor viewport needs camera-to-texture (D-08) and
+picking through the collision/ray queries, not through GPU readback. The surface is listed in
+`docs/API_SURFACE.md` at M9 (not yet written). *Gap:* none of registry, commands, events exists.
+
+**8. Serialization and hot reload shape foundational data.** To be serializable and reloadable,
+components must be plain data with no GPU objects, borrowed references or cached derived values; every
+asset reference must be restorable to an identity that survives rename (D-16); entity references need
+remapping on load (entities are not stable across runs); a field added later needs a default. Hot
+reload needs asset revisions (exist), a dependency graph (planned) and a rule that a reload takes effect
+at a stage boundary. *Today:* components built so far satisfy the plain-data rule, but `Sprite` and
+`Mesh` carry asset handles that hold only a hash, so a serializer cannot recover the name from a handle.
+That is R-4.
+
+**9. Which public APIs must stay stable, which stay internal.** See R-7 and D-45. Proposed tiers,
+to be fixed in M9's `docs/API_SURFACE.md`:
+
+| Tier | Contents | Change rule |
+|---|---|---|
+| **Contract** | Gameplay-facing components (`Transform`, `Name`, `Visibility`, `Camera`, `Sprite`, `Mesh`, `Light` as they stabilise), asset handles, actions, events, commands, the script API, every on-disk format | Changed only through a recorded decision and, for formats, a version bump with migration |
+| **Backend seam** | `RenderScene`, the future UI draw list, `Pose` | Changed with all consumers in one commit; documented |
+| **Internal** | `hecs` types, `World.entities`, schedule internals, `wgpu`/`winit` re-exports, `SceneRenderer` internals, extraction helpers | Free to change; not named in docs or examples as supported |
+
+### Risk register
+
+"Cost" is the likely cost of getting it wrong and finding out late. Items are ordered by how many
+systems they touch. Each cites evidence from this audit.
+
+| Id | Risk | Evidence | Cost if found late | Response |
+|---|---|---|---|---|
+| R-1 | **`RenderScene` is partitioned by primitive type** (meshes, cutout sprites, blended sprites), not by transparency class. A blended mesh, particle or skinned character has no place to sort against blended sprites | `scene.rs`; the pass order in `scene_renderer.rs`; meshes have no blend mode | Moderate to high: extraction, backend passes and tests for all renderables | Decide transparency classes in D-05 at the start of M5, before particles or blended meshes exist |
+| R-2 | **One camera, one target per frame**; `RenderScene` holds a single view | `extract.rs::active_camera`; KI-5 | High: shadows, editor viewports, render-to-texture and minimaps need a list of views | D-08 in M6 turns the scene into a list of camera passes; do not add features that assume one view |
+| R-3 | **No transform timeline.** `Transform` is current state only: no previous state for interpolation, no dirty tracking, a full propagation pass, and a one-frame latency rule for camera-dependent animation | `hierarchy.rs`; KI-9, KI-10, D-02 | Moderate; additive if done early (a `PreviousTransform` or render-transform stage), invasive once gameplay code depends on a single transform | Settle in M3's design note |
+| R-4 | **Asset identity and retention.** Handles are name hashes with no recoverable name, no reference counting, ids change on rename, and the collision guard is per type | `handle.rs`, `manager.rs`; D-16 | High once scene files, sheets or bundles exist | Decide D-16 before any persisted format (sheet descriptors in M8 are the first); keep names in the manager so handles can be serialized by name or id |
+| R-5 | **Mutation model.** Systems mutate the world directly; resources are `RefCell` (double borrow panics); no commands or events | `resources.rs`; KI-9 | Grows with every system written; scripting and scenes cannot be built safely without it | M3 first; write no new systems before it lands |
+| R-6 | **No format versioning policy.** Nothing persisted exists yet, which is the cheap moment to set one | no `serde`, no formats | Very high after the first release | Proposed rule: every persisted format (asset, scene, bundle, save) carries magic or a `version` field from its first line; each version bump ships a migration test; loaders return errors for unknown versions. Record as an ADR before M17 |
+| R-7 | **Public API leakage.** The facade re-exports every crate, including `engine_platform::winit` and `engine_renderer_wgpu::wgpu`; `World.entities` is a public `hecs::World`; `Entity` is hecs's | `engine/src/lib.rs`, `world.rs`, `platform/src/lib.rs` | High after M9 and M18 promise stability | D-45: tiers (above) fixed by M9; no new public hecs types |
+| R-8 | **Threading model undecided.** `World` is `!Sync` (`RefCell` resources), systems are non-`Send` closures, asset data is `Send + Sync`. Fine for single-threaded simulation, but async loading, parallel extraction and scripts all cross this line | `schedule.rs`, `resources.rs`, `Asset` bound | High if parallel systems are wanted later | D-44: state the rule explicitly (single-threaded simulation, parallel loading and later parallel extraction on `Send` data) so M3's scheduler is designed for it |
+| R-9 | **Numeric determinism.** `f32` throughout; trigonometry comes from the platform libm and can differ between operating systems, so state hashes for replay may differ across OSes. World size is small enough for `f32` positions today | `engine-math`; M9 replay criterion | Moderate; surfaces as a flaky cross-OS replay test | Policy at M3: replay equality is required on one platform; cross-platform equality is not promised unless simulation avoids platform trig |
+| R-10 | **Animation write path and bone cost.** `animate_system` writes straight onto bone entities; entity-per-bone makes propagation scale with bone count | `clip.rs`; D-33, D-34 | Moderate; contained inside `engine-animation` if the evaluator stays world-free | D-34 first in M11; D-33 by measurement |
+| R-11 | **Material and texture format baked in.** `Material` is a component field, textures are always sRGB, no mipmaps, no sub-rect updates, batching keyed by texture only | `components.rs`, `scene_renderer.rs`; KI-6, KI-25 | Moderate: normal maps, glyph atlases and shadows depend on it | M5, before M8/M10/M14 |
+| R-12 | **Logical versus physical pixels.** The code uses physical pixels everywhere; no scale factor | KI-24 | Moderate, spread across viewport, pointer, UI and screenshots | Forward scale factor and logical size in M3's platform slice, not at M10 |
+| R-13 | **No diagnostics.** No logging; failures are silent or polled | zero logging calls in the workspace | Low now, rising with every call site | Add the facade in M3 (D-21 split) |
+| R-14 | **Verification is narrow.** No CI; GPU tests skip unless `DIMORA_REQUIRE_GPU=1`; Windows never built; pixel tests tolerate small differences across adapters | TASKS.md; KI-3, KI-27 | Rises steadily; regressions on untested platforms found by users | CI (D-22) as soon as a host is chosen; a Windows build early |
+
+Expensive redesigns, ranked by likelihood times cost, if nothing changes: **R-4 (asset identity)**, **R-1
+and R-2 (render model shape)**, **R-5 and R-8 (mutation and threading)**, **R-7 and R-6 (API and format
+promises)**. Everything else is local to one system.
+
 ## Decisions already made
 
 These are settled; revisit only with a concrete problem.
 
 | Decision | Choice | Why / trade-off |
 |---|---|---|
-| ECS | `hecs` wrapped by `engine_world::World` | Small archetype ECS with no app framework; gameplay goes through our `World`, so storage is swappable. `bevy_ecs` is more capable (scheduling, change detection) but would shape the engine around its conventions. Cost: we must build scheduling, events and change tracking ourselves |
+| ECS | `hecs` wrapped by `engine_world::World` | Small archetype ECS with no app framework; gameplay goes through our `World`. **Caveat (R-7): the wrapper does not hide `hecs` today** (`World.entities` is public, `query`/`get` return hecs types, `Entity` is hecs's), so swapping storage would be a breaking change unless D-45 closes that. `bevy_ecs` is more capable (scheduling, change detection) but would shape the engine around its conventions. Cost: we must build scheduling, events and change tracking ourselves |
 | Graphics | `wgpu` | One API over Vulkan/Metal/DX12 |
 | Windowing | `winit` 0.30 (`ApplicationHandler`) | Standard; surfaces work with wgpu |
 | Math | Own `f32` crate | Small, deterministic, shaped for `Transform`/`Quat` |

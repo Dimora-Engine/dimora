@@ -1,33 +1,65 @@
-# Architecture decision backlog
+# Architecture decision backlog and records
 
-This is the list of architectural decisions that are **not yet made**, when each is needed, and what
-waits on it. It is not a design for the answers. Where a default is proposed it is a starting point
-for the decision, not a commitment.
-
-Settled decisions live in [ARCHITECTURE.md](ARCHITECTURE.md#decisions-already-made). They are not
-reopened unless the current implementation exposes a concrete problem; the rule for reopening is at
-the bottom of this file.
+This file is the **backlog**: decisions that are open, proposed or recently made, when each is needed and
+what waits on it. It is not a design for the answers. Where a default is proposed it is a starting point
+for the decision, not a commitment. Each *made* decision is recorded as a short ADR in [adr/](adr/) (format
+below); settled decisions that describe current code also appear in
+[ARCHITECTURE.md](ARCHITECTURE.md#decisions-already-made). They are not reopened unless the current
+implementation exposes a concrete problem; the rule for reopening is at the bottom of this file.
 
 Milestone ids (`M2`, ...) refer to [../ROADMAP.md](../ROADMAP.md). Known-issue ids (`KI-n`) refer to
-[../TASKS.md](../TASKS.md).
+[../TASKS.md](../TASKS.md). Risk ids (`R-n`) refer to the register in
+[ARCHITECTURE.md](ARCHITECTURE.md#cross-system-requirements-and-risks). The product principles that
+decisions are weighed against are in [VISION.md](VISION.md).
 
 ## How to use this file
 
 * Decide **at the latest** by the "Needed by" milestone, and before the first task in that milestone
   that depends on the answer.
-* A decision is closed by moving it to the ARCHITECTURE.md table with the chosen option and the
-  trade-off accepted, and marking it `Decided` here with the commit.
 * Prefer the option that keeps the next milestone small. Do not decide earlier than needed: an early
-  answer made without a working feature to test it against is the likeliest to be wrong.
+  answer made without a working feature to test it against is the likeliest to be wrong. The exception
+  is anything a **data format, public API or cross-system contract** will bake in: those are decided
+  before the first consumer is written, with a prototype if the answer is uncertain.
+* A backlog entry stays short: problem, options, leaning, needed-by, blocks. When a decision is made,
+  **write an ADR** (`docs/adr/NNNN-slug.md`, from [adr/TEMPLATE.md](adr/TEMPLATE.md)), replace the entry's
+  body with a link, mark it `Decided` here, and update ARCHITECTURE.md if it changes how the code is
+  described. Do not decide in a commit message or a chat.
+* Status values: **Open**, **Proposed** (a default exists, awaiting acceptance), **Provisional** (accepted
+  so work can proceed; the ADR names the evidence that triggers a revisit), **Decided** (settled).
 
-Status values: **Open**, **Proposed** (a default exists, awaiting acceptance), **Decided**.
+### Decision record format (ADR)
+
+One file per decision, numbered in order of acceptance, kept short (a page, not an essay). Required
+sections, in this order: context and problem; requirements and constraints; options considered, each with
+advantages and disadvantages; decision and rationale; consequences and follow-up; evidence and revisit
+conditions. Header fields: status (Proposed, Provisional, Settled or Superseded), date, backlog id,
+who decided, what it affects. A Provisional ADR must state its revisit condition. A superseded ADR is
+never edited or deleted: the new ADR links back and the old one's status changes. Decisions already
+embodied in code before this process (the table in ARCHITECTURE.md: `hecs`, `wgpu`, `winit`, handedness,
+and so on) are not back-filled; they get an ADR only if reopened. Write an ADR for anything that
+affects several systems, a public API, a file format, performance budgets or compatibility; small local
+choices belong in code comments or the PR.
+
+### What to resolve first
+
+Ordered by how many systems, APIs and formats a decision touches and how costly a late change is (see
+the risk register). **Prototype where the answer depends on a measurement; do not guess.**
+
+| Tier | Decisions | Why now | How to resolve |
+|---|---|---|---|
+| **1. Before M3 code** | D-44 threading, D-01 scheduling, D-10 events and commands, D-02 change detection, D-45 public API tiers, D-47 format versioning, D-21 (logging half) | Every later system is written against the frame, mutation and threading model; R-5, R-7, R-8 get more expensive with every system added | One design note and a throwaway stage-and-commands prototype in `M3`'s first task. D-02 is allowed to stay "none until profiled" |
+| **2. Before M4/M5** | D-18 (registry shape), D-16 (asset identity), D-05 (alpha classes and materials), D-27 (units) | Persisted data, render model and sprite sizing hang on them; R-1, R-4 | D-16 by a small prototype of a name table plus id; D-05 with a GPU test of a blended mesh against a blended sprite |
+| **3. Before M6** | D-08 multi-camera and targets, D-25 projection, D-06 pixel policy, D-07 depth | Shape of `RenderScene` and the pass list; R-2 | Prototype two cameras into one target |
+| **4. Before M9** | D-28, D-29 (vocabulary), D-30, D-31, D-11 (record) | Define the character and scene API that M10 to M18 depend on | Built against M8's sprite-sheet implementation and the second consumer |
+| **5. Only at their milestone, after a spike** | D-40 scripting runtime, D-09 physics library, D-24 UI model, D-12, D-14, D-15, D-33, D-35, D-36 | They need measurements or a working neighbour; deciding early would be invention | Each milestone's first task is the spike |
+| **6. Defer, low impact** | D-19 bundle format, D-20 editor technology, D-26 orientations, D-23 platform/crates.io part | Nothing depends on them until late | Revisit when their milestone is next |
 
 ## Summary
 
 | Id | Decision | Needed by | Blocks | Status |
 |---|---|---|---|---|
-| D-03 | Despawn semantics for entities with children | M2 (T3) | M2 hierarchy fix, M4 | Decided (2026-10-13) |
-| D-04 | GPU cache lifetime | M2 (T2) | M2 eviction, M17 unload | Decided (2026-10-13) |
+| D-03 | Despawn semantics for entities with children | M2 (T3) | M2 hierarchy fix, M4 | Decided, [ADR-0001](adr/0001-despawn-removes-the-subtree.md) (2026-10-13) |
+| D-04 | GPU cache lifetime | M2 (T2) | M2 eviction, M17 unload | Decided, [ADR-0002](adr/0002-gpu-cache-lifetime.md) (2026-10-13) |
 | D-22 | Code host and CI provider | M2 | CI config, release | Open (credentials) |
 | D-23 | Platform targets, MSRV policy, crates.io | M2 (MSRV), M24 | M24 | MSRV part decided in T1 (1.90); platforms and crates.io still Open |
 | D-01 | Scheduling model | M3 | M3, M7, M8, M10, M15 | Open |
@@ -68,36 +100,23 @@ Status values: **Open**, **Proposed** (a default exists, awaiting acceptance), *
 | D-43 | Script hot reload, state, debugging | M18 | M18, M19 | Open |
 | D-19 | Bundle format | M21 | M21, M24 | Open |
 | D-20 | Editor technology | M22 | M22 | Open |
-| D-21 | Logging and profiling crates | M20 | M20, M23 | Open |
+| D-21 | Logging and profiling crates | **Logging: M3**; profiling: M20 | M3 and every error path; M20, M23 | Open (split by the 2026-10-13 audit) |
+| D-44 | Threading and `Send`/`Sync` model | M3 (design note) | M3, M17, M18, M23 | Open |
+| D-45 | Public API tiers; how much of `hecs`, `winit`, `wgpu` is public | M3 (rule), M9 (list) | M9, M18, M22 | Open |
+| D-46 | Save games and persisted game state | M18 (shape), M19 | M18, M19, M24 | Open |
+| D-47 | Versioning policy for every persisted format | Before M17 | M17, M19, M21, D-46 | Proposed |
 
 ## Needed during M2 (hardening)
 
 ### D-03 Despawn semantics for entities with children
 
-* **Problem.** `World::despawn` on a parent leaves the children alive with a `Parent` pointing at a dead
-  entity (KI-8). `propagate_transforms` then treats them inconsistently.
-* **Options.** (a) Recursive despawn of the subtree. (b) Detach: children survive and become roots,
-  keeping their world transform. (c) Make the caller choose (`despawn` vs `despawn_recursive`).
-* **Proposed default.** (a) for `despawn`, because bones and attachments are owned by their parent
-  and orphaned bones are never wanted; offer (b) as an explicit `detach_children` call.
-* **Needed by.** M2 task T3.
-* **Blocks.** The hierarchy fix; scene unload in M4 depends on the answer.
-* **Decided 2026-10-13 (owner accepted the proposed default).** `despawn` removes the whole subtree; the
-  explicit `detach_children` call keeps children as roots with their world transform. Implemented in T3 (`despawn_recursive` removed).
+**Decided 2026-10-13: [ADR-0001](adr/0001-despawn-removes-the-subtree.md).** `despawn` removes the subtree;
+`detach_children` keeps children as roots. Implemented in T3.
 
 ### D-04 GPU cache lifetime
 
-* **Problem.** The wgpu caches keyed by `AssetId` are never evicted (KI-4), and `AssetManager` has no
-  `remove`.
-* **Options.** (a) Evict when the asset is removed from the manager. (b) Also evict entries unused for
-  N frames. (c) Explicit `release` only.
-* **Proposed default.** (a) plus (b) with a small N, so a removed asset is freed promptly and an asset
-  that is merely off-screen is not re-uploaded every frame.
-* **Needed by.** M2 task T2.
-* **Blocks.** Eviction; asset unload for scenes (M4) and hot reload (M17).
-* **Decided 2026-10-13 (owner accepted the proposed default).** Both (a) and (b): a cached GPU texture or
-  mesh is evicted when its asset is gone from the manager, and when it has not been used for a configurable
-  number of frames. Implemented in T2.
+**Decided 2026-10-13: [ADR-0002](adr/0002-gpu-cache-lifetime.md).** Evict on asset removal and after N idle
+frames. Implemented in T2.
 
 ### D-22 Code host and CI provider
 
@@ -484,6 +503,11 @@ this text with results.
 
 * **Problem.** `AssetId` is an FNV-1a hash of the name; collisions are not detected (KI-12) and
   there is no dependency graph for cascading reload.
+* **Added by the 2026-10-13 audit (R-4).** `AssetHandle<T>` holds only the hash, so a serializer cannot
+  recover a name from a handle, nothing is reference counted, and an id changes when a name changes.
+  Whatever is chosen must say what a scene file or bundle stores for an asset reference, how rename
+  works, and who keeps an asset alive. The first persisted asset format (M8 sheet descriptors, in M17)
+  must not ship before this is decided.
 * **Options.** Keep name hashes with a collision guard (M2 adds the guard); stable GUIDs with a
   name index; path-derived ids.
 * **Needed by.** M17, though the collision guard landed in M2 (T3, per asset type). Fonts (M10) and sprite
@@ -511,10 +535,67 @@ this text with results.
   crate; a separate application; a web UI.
 * **Needed by.** M22, after D-24 and D-18. **Blocks.** M22 only.
 
+## Added by the 2026-10-13 audit
+
+These are cross-system decisions the earlier backlog did not list (and D-21, which the audit re-timed).
+Each is open; none has a chosen answer. Leanings are starting points.
+
 ### D-21 Logging and profiling crates
 
-* **Options.** `log` plus a backend, or `tracing`; a profiling scope macro with a feature flag.
-* **Needed by.** M20. **Blocks.** M20 and M23 measurement.
+* **Problem.** The workspace has no logging at all (verified: no `log`, `tracing` or `println!` in library
+  code). A failed asset load is visible only to code that polls the asset's state. Every error path added
+  before a facade exists will have to be revisited (R-13).
+* **Split by the 2026-10-13 audit.** *Logging* (a facade and where errors go) is needed by **M3**.
+  *Profiling scopes and tooling* stay in M20.
+* **Options.** `log` plus a backend, or `tracing` (spans help profiling later but are a heavier
+  dependency). A facade crate of our own is not worth it. Decide against D-17's dependency rule.
+* **Needed by.** Logging M3; profiling M20. **Blocks.** Asset-failure reporting, script errors (M18),
+  the M20 overlay, M23 measurement.
+
+### D-44 Threading and `Send`/`Sync` model
+
+* **Problem.** `World` holds `RefCell` resources and systems are non-`Send` closures, so the simulation is
+  single-threaded by construction, while assets are `Send + Sync` and M17 plans worker-pool loading, M23
+  parallel extraction, and M18 a script runtime that may not be thread-safe. The rule is implicit
+  (R-8). A scheduler designed in M3 without it may need redoing.
+* **Options.** (a) Declare simulation single-threaded on the main thread; parallelism only for asset
+  decode and (later) extraction over `Send` snapshots. (b) Design the scheduler now for parallel systems
+  with declared access. (c) Leave implicit.
+* **Leaning.** (a), stated in an ADR with the rule "anything crossing threads is plain `Send` data".
+  (b) would need access declarations the `RefCell` resources cannot give (see D-01).
+* **Needed by.** The M3 design note. **Blocks.** M3, M17, M18, M23.
+
+### D-45 Public API tiers
+
+* **Problem.** The facade re-exports every crate, including `winit` and `wgpu`; `World.entities` is a
+  public `hecs::World` and `Entity` is hecs's (R-7). Nothing says which items a game, a script facade, UI
+  bindings or the editor may depend on.
+* **Options.** (a) Three tiers (contract, backend seam, internal) written down now and enforced at M9's
+  `docs/API_SURFACE.md`; stop adding public hecs types immediately. (b) Wrap `hecs` fully (own `Entity`,
+  query types). (c) Accept that the engine exposes `hecs` and document it.
+* **Leaning.** (a) now, (c) as a possible honest outcome for the ECS if wrapping proves costly. The
+  decision to make is whether storage swappability is a goal at all; the code does not provide it today.
+* **Needed by.** The rule by M3; the list by M9. **Blocks.** M9, M18, M22.
+
+### D-46 Save games and persisted game state
+
+* **Problem.** Scene files (M19) are authored content. Save games are runtime state written by shipped
+  games, which players keep across engine upgrades. No milestone owns them; M18's script API already
+  promises a "typed game-state store".
+* **Options.** (a) A game-state store resource plus a save API with its own versioned format. (b) Save
+  by serializing the world with the scene machinery. (c) Leave to each game.
+* **Leaning.** (a): saves must not depend on entity ids or scene internals. Decide with D-47.
+* **Needed by.** The store's shape by M18; the format by M19 or M24. **Blocks.** M18, M19, M24.
+
+### D-47 Versioning policy for persisted formats
+
+* **Problem.** No format exists yet (no `serde`), so a policy is free now and expensive later (R-6).
+* **Proposed.** Every persisted format (asset descriptors, compiled assets, scenes, bundles, saves,
+  settings) carries a magic number or a `version` field from its first line. Loaders reject unknown
+  versions with an error, never a panic. Each version bump ships a migration or a documented break, plus a
+  test that loads a stored older fixture. Ids stored in files are the stable ids of D-16, never entity
+  indices. Pre-1.0 engine versions may break formats, but only with a bump.
+* **Needed by.** Before M17. **Blocks.** M17, M19, M21, D-46.
 
 ## Reopening a settled decision
 
