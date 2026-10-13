@@ -8,13 +8,16 @@ Dimora is a purpose-built Rust engine for **spatial 2.5D games**. Its central pr
 
 It is not a general-purpose Unity clone. Features exist if a spatial 2.5D game needs them.
 
-This roadmap is written against the code as audited on 2026-10-12 (commit `6ad872f`). The current
+This roadmap is written against the code as audited on 2026-10-12 (commit `6ad872f`). It was expanded
+on 2026-10-13 to plan three character representations, a UI runtime and gameplay scripting; that
+change is documentation only and no code has changed since the audit. The current
 state is in [TASKS.md](TASKS.md); how the engine is built is in
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md); open design questions are in
 [docs/DECISIONS.md](docs/DECISIONS.md).
 
 Status values used below: **Done** (evidence cited), **Not started**. Nothing is marked in progress or
-partially done unless TASKS.md shows commits for it. No milestone after M1 is complete.
+partially done unless TASKS.md shows commits for it. No milestone after M1 is complete. Planning a
+system here does not mean it exists: the audit table below is the record of what does.
 
 ## 1. Where the project stands
 
@@ -30,13 +33,19 @@ module existing is not counted.
 | Transform hierarchy | Working on the happy path, 2 verified bugs | Parent/child tests pass; a child of a transform-less or despawned parent stays at the origin (scratch test, 2026-10-12). Full O(n) pass every frame |
 | Camera and projection | Working | 27 tests: view/proj/NDC chain, ortho/perspective known points, viewport, parallax. Two projections only; `Camera` cannot hold a custom `Projection` |
 | Rendering backend (wgpu) | Working | One forward pass, depth buffer, instancing; 7 GPU pixel tests (need a Vulkan adapter). One camera per frame, no render-to-texture |
-| Sprites | Working | Spatial quads; billboard/upright/fixed; flips, region, tint, anchor; cutout and alpha blend; batching (5000 sprites = 1 draw in a test). No sprite-sheet animation, no atlas packer |
+| Sprites | Working | Spatial quads; billboard/upright/fixed; flips, region, tint, anchor; cutout and alpha blend; batching (5000 sprites = 1 draw in a test). No atlas packer. Natural size ignores `region` (KI-21) |
 | 3D meshes | Working, basic | Indexed, instanced, culled, one albedo texture + colour. Only `cuboid` and `cone` generators. No loader, tangents, skinning, transparency |
 | Materials | Placeholder | `Material` = colour + optional albedo + `lit` flag. Not an asset; no alpha modes |
 | Textures | Partial | PNG decode; nearest/linear; clamp only; no mipmaps; always sRGB |
 | Lighting | Working, forward only | Ambient, directional, point, spot (max 16), wrap-lit sprites, fog; 1 GPU test for falloff. **No shadows, no normal maps, no API stubs for either** |
 | Tilemaps | Working, basic | `TileMap` expanded to cutout quads per frame (80x120 in the example); 1 extraction test. No chunking, loader, collision, animated tiles |
-| Skeletal animation | Data model + simple player | Bones are entities; linear TRS keyframes; looping; 4 tests; used by the demo character. No blending, events, IK, skinning, file loading |
+| Skeletal animation (2D) | Data model + simple player | Bones are entities; linear TRS keyframes; looping; 4 tests; used by the demo character. `animate_system` writes sampled transforms straight onto bone entities and only visits entities with a `SkeletonInstance` (KI-22). No blending, events, IK, constraints, skins, file loading |
+| Sprite-sheet animation | Absent | Only building blocks: `Sprite.region/size/anchor` and `SpriteAsset` uv/pivot. No sheet, clip, animator, events, directions, transitions |
+| 3D characters / skinning | Absent | `Vertex` has no joints or weights; no tangents; no model loader (no glTF); no skin asset. A mesh can be a rigid child of a bone, which is attachment, not skinning |
+| Character gameplay layer | Absent | The `basic_2_5d` example calls `AnimationPlayer::play` from its own movement system; nothing separates gameplay state from visual representation |
+| UI | Absent | No font loading, text rendering, layout, widgets, focus or UI render pass. Input has pointer, scroll, arrows, Enter, Escape, Tab but no text input or scale factor (KI-24) |
+| Scripting | Absent | No runtime, no component registry, no command buffer or event channel, no `serde` |
+| Audio | Absent | No decoder, mixer or backend |
 | Particles | Absent | |
 | Collision / gameplay | Absent | |
 | Input | Working, narrow | 47 keys, mouse buttons/position/scroll, edge states, `axis()`; 5 core tests. No actions, gamepad, touch, text, cursor grab, F-keys |
@@ -51,7 +60,7 @@ module existing is not counted.
 | Packaging / release | Absent | `Cargo.toml` declares `MIT OR Apache-2.0` but there are no licence files; crates are `publish = false` |
 | CI / toolchain | Absent | No CI, no `rust-version`, no toolchain pin |
 | Examples | 2, both runnable windowed and headless | `basic_2_5d`, `spatial_scene` |
-| Audio, UI, scripting, networking | Absent, not requested | Audio and UI become relevant at M8 (see "Unscheduled") |
+| Networking | Absent, not planned | See "Unscheduled" |
 
 ### Check results (2026-10-12)
 
@@ -70,50 +79,101 @@ Details and per-crate counts are in TASKS.md.
 ## 2. Ordering rules
 
 1. Correctness of existing foundations (M2).
-2. Small end-to-end working features (M3-M6).
-3. A playable example game (M7-M8).
-4. Distinctive 2.5D functionality (M9-M12).
-5. Asset and developer workflows (M13-M16).
-6. Advanced tools and optional features (M17-M19).
+2. Small end-to-end working features (M3-M8).
+3. A playable example game, and the stable APIs it proves (M7, M9).
+4. Subsystems that sit on those APIs: UI, the other character representations, distinctive 2.5D
+   functionality (M10-M16).
+5. Asset, scripting and developer workflows (M17-M21).
+6. Advanced tools and production readiness (M22-M24).
 
-Do not create a crate for a subsystem until it has code. New crates in this plan: none before M15
-(`dimora-assets` compiler CLI) and M17 (`dimora-editor`).
+Order follows technical dependency, not the length of the list. Where two systems do not depend on each
+other they are marked as parallel tracks below and either order is fine.
 
-### How this maps to the requested stages
+Do not create a crate for a subsystem until it has code. New crates in this plan: none before M10
+(a UI crate, created when it has code), M18 (`dimora-script`), M21 (`dimora-assets` compiler CLI) and M22
+(`dimora-editor`). Audio (M16) and a glTF importer (M12) get a module or crate only when the milestone
+starts, and only if the dependency boundary needs one.
 
-| Requested stage | Milestone | Note |
+### Three character representations
+
+A character is one gameplay entity (transform, collider, gameplay state) with a visual subtree. The
+representation of that visual subtree is replaceable (D-28, ARCHITECTURE.md). All three live in the same
+world and the same depth buffer.
+
+| | A. Sprite sheet | B. Skeletal 2D | C. 3D skinned |
+|---|---|---|---|
+| Milestone | M8 | M11 | M12 |
+| Data | Frames from a grid or irregular atlas, clips, directions | Bones, rest pose, sprite parts, clips | Skinned mesh, 3D skeleton, imported clips |
+| Needs a skeleton | No | Yes | Yes |
+| Evaluator | Frame selection, writes `Sprite` | Pose sampling, blending, IK, writes bones | Same pose machinery as B, plus skin palette |
+| Shared with the others | Control vocabulary only (clip name, speed, loop, parameters, events) | Pose, blending, IK maths with C | Pose, blending, IK maths with B |
+| Gameplay | Identical for all three: M9 character API |  |  |
+
+### How the requested order was applied
+
+| Requested step | Milestone | Note |
 |---|---|---|
-| 1 Core spatial renderer | M0, M1 (Done); residue in M6 | Spatial renderer works; one-camera limit and render targets remain |
-| 2 World and scene management | M4 | |
-| 3 Materials and textures | M5 | |
-| 4 Renderer stabilization | M6 | |
-| 5 Input and update scheduling | M3 | **Moved before 2-4**: collision, animation and scenes all need defined stages |
-| 6 Collision and gameplay | M7, M8 | M8 (playable slice) added |
-| 7 Skeletal animation | M9 | |
-| 8 Tilemaps | M10 | |
-| 9 Unified lighting and shadows | M11 | |
-| 10 Particles | M12 | |
-| 11 Asset management and importers | M13 | |
-| 12 Asset compiler and bundles | M15 | **Moved after scene serialization**: the compiler must understand scene files |
-| 13 Scene serialization | M14 | |
-| 14 Debugging tools | M16 | A minimal line/debug-draw primitive is pulled forward into M6 for collision work |
-| 15 Minimal editor | M17 | |
-| 16 Performance and stability | M18 | Baseline benchmarks start in M6 |
-| 17 Packaging and release | M19 | |
-| (new) | M2 Foundation hardening and CI | Priority 1: known defects and a reproducible build before building on top |
-| (new) | M8 Playable vertical slice | Priority 3: integration test for everything before it; finds gaps early |
+| 1 Spatial renderer and world foundations | M0, M1 (Done); M2, M4, M5, M6 | Hardening, scenes, materials and renderer limits come first |
+| 2 Input and update scheduling | M3 | Moved before scenes and materials: collision, animation and scenes all need defined stages and events |
+| 3 Collision and basic gameplay | M7 | |
+| 4 Sprite-sheet animation | M8 | **Parallel with M7**, not after it: it does not need collision. Both feed M9 |
+| 5 Stable character and scene APIs | M9 | Delivered together with a playable vertical slice, because an API with no consumer is not known to be stable |
+| 6 Basic UI runtime | M10 | After M9 for the bindings; layout, text and rendering can start after M6 |
+| 7 Skeletal 2D animation | M11 | Parallel with M10 |
+| 8 3D characters | M12 | After M11 because it reuses the pose, blending and IK work. Contains a **minimal glTF importer** (pulled forward from step 9): a skinned character cannot be built or tested without model data |
+| 9 Asset importing and compilation | M17 importers; M21 compiler | **Split**: importing generalises M12's importer and gives scripts a reload path; the compiler waits for scene files (M19) |
+| 10 Audio, lighting, shadows, particles | M14 lighting and shadows, M15 particles, M16 audio | Separate milestones; independent of each other. Lighting comes after all three character types so shadows handle all of them. Audio is before scripting because scripts call it |
+| 11 Gameplay scripting | M18 | After M9, M3, M4, M10, M16, M17. **Before** scene serialization, so the scene format can hold script components from the start |
+| 12 Scene serialization and developer tools | M19, M20 | |
+| 13 Minimal editor | M22 | |
+| 14 Production readiness | M23, M24 | |
+| Not in the list | M13 tilemaps | Independent; can run any time after M7 |
+
+The earlier 17-stage list is covered as follows: stages 1 to 6 as above; 7 skeletal animation is M11;
+8 tilemaps M13; 9 lighting and shadows M14; 10 particles M15; 11 asset management M17; 12 compiler M21;
+13 serialization M19; 14 debugging M20; 15 editor M22; 16 performance M23; 17 packaging M24. Two
+milestones are additions: **M2** (known defects and a reproducible build before building more) and **M9**
+(the integration point for gameplay, character and scene APIs).
+
+### Parallel tracks
+
+After the stated prerequisites, these can be built independently and in any order:
+
+| Track | Milestones | Joins at |
+|---|---|---|
+| Gameplay | M7 collision | M9 |
+| Sprite-sheet characters | M8 | M9 |
+| Skeletal 2D | M11 | M12 (shared pose machinery), M14 |
+| UI layout, text, rendering | M10 (from M6) | M9 for game bindings |
+| Tilemaps | M13 | M17 |
+| Particles | M15 | M20 |
+| Audio | M16 | M18 |
+
+Things that must not be parallel: M2 before everything; M3 before M4, M7, M8; M9 before M18; M11 before
+M12; M19 before M21; M17 and M19 before M22.
 
 ### Dependency graph
 
 ```text
 M2 hardening/CI
- ├─► M3 input + scheduling ──┬─► M4 scenes ──┐
- │                           │               ├─► M7 collision ─► M8 playable slice ─┬─► M9 skeletal anim
- └─► M5 materials/textures ─► M6 renderer stabilization ──┘                         ├─► M10 tilemaps
-                                         │                                           ├─► M11 lighting+shadows (also needs M5, M6)
-                                         └─ debug draw ─► M7                         └─► M12 particles
-M4 + M9 + M10 ─► M13 assets/importers ─► M14 scene serialization ─► M15 compiler/bundles
-M14 + M6 ─► M16 debug tools ─► M17 editor        M15 + M17 ─► M18 perf/stability ─► M19 packaging/release
+ ├─► M3 input + scheduling ──┬─► M4 scenes ───────────────┐
+ │                           ├────────────► M8 sprite sheets ──┐
+ └─► M5 materials/textures ──┴─► M6 renderer stabilization    │
+        │ (atlas, sampler)           │ debug draw             │
+        │                            └─► M7 collision ────────┴─► M9 character/scene API + playable slice
+        │                                                         │ (the API freeze point)
+        │      ┌──────────────────────────┬──────────────────────┼───────────────────────┐
+        │      ▼                          ▼                      ▼                       ▼
+        │  M10 UI runtime        M11 skeletal 2D ─► M12 3D     M13 tilemaps       (M8, M11, M12
+        │  (layout/text/render            characters (+glTF)    (also M6, M7)       feed M14)
+        │   may start after M6)           │
+        │      │                          ▼
+        └──────┴───────────────►  M14 lighting+shadows   M15 particles   M16 audio   (parallel)
+M4 + M8 + M11 + M12 + M13 ─► M17 assets/importers (hot reload)
+M3 + M4 + M9 + M10 + M16 + M17 ─► M18 gameplay scripting
+M4 + M17 + M18 ─► M19 scene serialization ─► M21 compiler/bundles
+M6 + M19 ─► M20 debug tools ─► M22 editor (also M10, M19)
+M21 + M22 ─► M23 perf/stability ─► M24 packaging/release
 ```
 
 ---
@@ -167,7 +227,7 @@ more on top.
 
 **Tests/examples.** New unit tests per fix; both examples still render (screenshots compared by eye).
 
-**Deferred.** Coverage tooling, multi-platform CI matrix (M18), release automation (M19).
+**Deferred.** Coverage tooling, multi-platform CI matrix (M23), release automation (M24).
 
 ---
 
@@ -184,7 +244,8 @@ for a real game.
   (`before`/`after` by name). Engine stages stop being hard-wired inside `Game::step` (D-01).
 - Expose the fixed-step alpha and add opt-in transform interpolation for entities moved in the fixed
   stage.
-- Deferred command buffer (`Commands`) flushed at stage boundaries.
+- Deferred command buffer (`Commands`) flushed at stage boundaries, and typed event channels cleared per
+  frame (D-10). Later consumers: collision (M7), animation events (M8, M11), UI (M10), scripts (M18).
 - Input: full key set (F-keys, punctuation, numpad), cursor grab/visibility, an action map (named
   actions and axes bound to keys/buttons), raw mouse delta.
 - Window/frame config: vsync on/off, optional frame cap, fullscreen toggle.
@@ -197,6 +258,8 @@ for a real game.
 - A fixed-step entity moved at 60 Hz with a 144 Hz render rate produces monotonically increasing
   interpolated positions in successive extracted scenes (test through `Game::step` + `extract`).
 - Commands queued while iterating a query apply at the stage end (test).
+- An event sent in one stage is readable by a system in a later stage of the same frame and gone the next
+  frame (test).
 - Action map unit tests cover press, release, axis and rebinding.
 - `spatial_scene` uses actions instead of raw keys.
 
@@ -219,7 +282,8 @@ orphaning entities, and the world knows its component types by name.
 - Hierarchical visibility (a hidden parent hides its subtree).
 - Name/tag lookup.
 - A component registry mapping stable names to component types (no serialization yet); this is the
-  groundwork M14 and M16 need.
+  groundwork M18, M19 and M20 need. Leave room for a per-component, per-field visibility attribute that
+  scripts will use (D-41); no scripting code here.
 - Code-defined prefabs (`fn(&mut World, ...) -> Entity` by convention) and one documented pattern.
 
 **Dependencies.** D-03, D-10, D-18 (registry shape).
@@ -246,8 +310,10 @@ pipeline can build on without rewriting the renderer.
 **Tasks.**
 - Texture: mipmap generation, sampler parameters (filter, wrap, anisotropy), a colour-space flag
   (sRGB vs linear) so data textures are possible.
-- Runtime sprite atlas builder (shelf packing) with padding/extrusion; `SpriteSheet` plus a simple
-  flipbook animation system for sprites.
+- Runtime sprite atlas builder (shelf packing) with padding/extrusion. Sprite sheets and their animation
+  are M8, not here.
+- Update a sub-rectangle of a texture without re-uploading the whole texture (today any change re-uploads
+  it all, KI-25). The first consumer is the UI glyph atlas (M10).
 - `MaterialAsset` (base colour, albedo, reserved normal-map slot, alpha mode opaque/mask/blend, lit,
   double-sided) referenced by handle from sprites and meshes; batching keyed by pipeline and material.
 - Mesh generators: plane, sphere, cylinder.
@@ -260,12 +326,12 @@ pipeline can build on without rewriting the renderer.
   without them.
 - GPU test: a linear-format texture reaches the shader with exact values.
 - Atlas packer unit tests: no overlap, padding respected, deterministic.
-- A flipbook sprite advances frames with `Game::step` (test).
+- GPU test: writing one sub-rectangle of a texture changes only that rectangle and uploads only its bytes.
 - 1,000 sprites sharing a material remain one draw call.
 
-**Tests/examples.** Above, plus an animated sprite-sheet figure in `spatial_scene`.
+**Tests/examples.** Above.
 
-**Deferred.** PBR, custom shaders, texture compression, texture streaming, normal-map shading (M11).
+**Deferred.** PBR, custom shaders, texture compression, texture streaming, normal-map shading (M14).
 
 ---
 
@@ -315,6 +381,8 @@ establish a measured performance baseline.
 - Kinematic move-and-slide controller with swept tests.
 - Trigger enter/exit events through an event channel.
 - Debug visualisation through M6 debug draw.
+- Colliders attach to the gameplay entity, not to a visual child, so a change of character representation
+  (M9) cannot change collision.
 
 **Dependencies.** D-09, D-10.
 
@@ -332,67 +400,317 @@ colliders, navmesh.
 
 ---
 
-## M8. Playable vertical slice: Not started
+## M8. Sprite-sheet animation: Not started
 
-**Objective.** One complete playable game that exercises M3-M7 together and exposes what is missing.
+**Objective.** Characters and props animated by selecting frames from sprite sheets or atlases, with
+no skeleton, cheap enough for many on screen. This is character representation **A**.
 
-**Prerequisites.** M3-M7.
+**Prerequisites.** M3 (animate stage, event channel), M5 (atlas builder, sampler control for pixel
+art). It does **not** need M7: collision and sprite-sheet animation are independent and can be built
+in parallel.
+
+**What exists today (read, not tested for this purpose).** A sprite can already show part of a
+texture: `Sprite.region`, `Sprite.size` and `Sprite.anchor` are per-sprite overrides and `SpriteAsset`
+carries uv/pivot/pixels-per-unit. So frame selection needs no renderer change. One trap: the natural
+size of a sprite comes from the whole asset, not from `region` (`extract.rs`), so an animator must
+write `size` and `anchor` together with `region` or frames are stretched to the sheet's size (KI-21).
+There is no sheet, clip, animator, event or direction concept. The existing `AnimationClip` and
+`AnimationPlayer` are skeletal (bone tracks) and `animate_system` only visits entities that have a
+`SkeletonInstance`; sprite-sheet animation must not reuse or bend them.
 
 **Tasks.**
-- `examples/vertical_slice`: one level, controllable character (existing skeleton), collectibles
-  (triggers), simple hazards/enemies, win/lose, restart via scene reload.
-- Minimal on-screen text through a bitmap font drawn as sprites (no UI system).
-- Input record/replay harness (small) for headless regression runs.
-- Write up engine gaps found and fold them into TASKS.md and this roadmap.
+- `SpriteSheet` asset: a texture plus frames. Two builders: grid (cell size, columns, rows, margin,
+  spacing) and irregular (explicit rects with name, per-frame pivot, trim offset and original size, as
+  atlas packers produce). Built in code; file formats come with M17.
+- `SpriteClip` asset (a new type with a distinct name from the skeletal `AnimationClip`): ordered
+  frames, per-frame duration or a fixed rate, loop mode (loop, once, ping-pong), named events attached
+  to frames. Named animations: a sheet or set maps a name to a clip.
+- `SpriteAnimator` component and one system in the animate stage: advance time with a playback-speed
+  multiplier and pause, pick the frame, write `Sprite.region`, `size`, `anchor` and `flip_x` on the same
+  entity. No per-frame allocation.
+- One-shot playback with a finished signal and optional "then play X".
+- Animation events: fired exactly once per frame crossing, including across a loop wrap and when one
+  step skips several frames; delivered through the M3 event channel.
+- Directional animation sets: a clip per direction (4 or 8) with an optional mirror rule (left from
+  right through `flip_x`). The direction is chosen from the entity's facing **relative to the active
+  camera** (D-31), because in a spatial world the camera can orbit a billboarded character.
+- Simple transitions between named animations: a small table of (from, to, condition on named
+  parameters, or on finish). Float, bool and trigger parameters. No blending (frames cannot blend).
+- Efficiency: sheets share one texture so a crowd stays one draw call per texture; benchmark an
+  animate stage with thousands of animators and record it in `docs/PERFORMANCE.md`.
 
-**Dependencies.** D-11 (audio), D-24 (UI) decisions are made here at the latest.
+**Dependencies.** D-10 (events), D-27 (pixels per unit), D-29 (shared control vocabulary), D-30 (sheet
+and frame data model), D-31 (directions), D-06 (pixel snapping affects frame shimmer).
+
+**Acceptance criteria.**
+- Grid slicing: frame `i` maps to the exact UV rect for given margin and spacing, including the last
+  row (table test). An irregular frame with a trim offset keeps its pivot at the same world position
+  across frames (test on extracted quad positions).
+- Loop, one-shot and ping-pong produce the expected frame-index sequence for a given sequence of time
+  steps (table test); 2x speed halves the period; speed 0 pauses.
+- Events fire once per crossing, also across a loop wrap and across a step that skips frames, and never
+  after a one-shot has ended (test).
+- Stepping at 30 Hz and at 144 Hz shows the same frame at the same simulated time (determinism test).
+- A one-shot returns to a named clip on finish, and a parameter-driven transition fires exactly when
+  its condition becomes true (test).
+- Directional set: a table of (facing, camera yaw) to direction; orbiting the camera around a static
+  entity changes the chosen direction (extraction test).
+- A character with no `Skeleton` or `SkeletonInstance` animates (test); the sprite animator's system
+  never queries them.
+- 5,000 animated sprites on one sheet extract to one draw call (extends the existing batching test).
+- A sheet-animated walker appears in `spatial_scene`.
+
+**Tests/examples.** The above; example update.
+
+**Deferred.** Aseprite/JSON import (M17), frame blending, normal-map sheets (M14), palette swaps and
+shader effects, sprite-sheet packing tools, UI 9-slice.
+
+---
+
+## M9. Character and scene API, and a playable vertical slice: Not started
+
+**Objective.** Fix the character and scene APIs that UI, the other character representations and
+scripting will build on, and prove them with one complete playable game. "Stable" here means: documented,
+covered by tests, used by a real consumer, and changed afterwards only by a recorded decision.
+
+**Prerequisites.** M3, M4, M7, M8.
+
+**Tasks.**
+- Character gameplay layer (D-28): the **gameplay entity** holds `Transform`, the M7 collider and
+  controller, and representation-free gameplay state (intent, facing, a named state, parameters). The
+  **visual** is a child entity subtree owned by a representation. Gameplay requests animation through the
+  shared control vocabulary (D-29) and receives animation events back; it never reads `Sprite`,
+  `SkeletonInstance` or `Mesh`. Colliders stay on the gameplay entity, so swapping a representation can
+  never change collision.
+- Only representation A exists at this point, so the boundary is tested with a second consumer: the
+  existing skeletal `basic_2_5d` character is driven through the same gameplay components by a small
+  adapter. No new skeletal features are added for this.
+- Scene API: scene load, unload and replace (M4), a character prefab convention, scene events.
+- API surface list, `docs/API_SURFACE.md`: which types and functions downstream layers (UI bindings,
+  scripts, editor) may depend on, each linked to its tests. Everything else is internal.
+- `examples/vertical_slice`: one level, a controllable sprite-sheet character, collectibles (triggers),
+  simple hazards and enemies, win/lose, restart by scene reload. Text is still drawn from a bitmap font as
+  sprites; the UI runtime replaces it in M10.
+- Input record/replay harness (small) for headless regression runs.
+- Record the audio decision (D-11) and write up the engine gaps found, with a milestone for each, in
+  TASKS.md.
+
+**Dependencies.** D-28, D-29, D-11 (decision only), D-24 (informed by the slice's HUD needs).
 
 **Acceptance criteria.**
 - The game can be played from start to win and to lose.
-- A recorded input log replays headlessly and produces the same final state hash (test).
-- A 10-minute scripted soak run completes without panics or memory growth beyond a recorded budget.
+- A recorded input log replays headlessly and gives the same final state hash (test).
+- A 10-minute scripted soak run completes with no panics and no memory growth beyond a recorded budget.
+- The same gameplay entity with its visual swapped between the sprite-sheet character and the skeletal
+  `basic_2_5d` rig produces an identical position and collision trace over a scripted input (test).
+- Gameplay code in the slice contains no use of `Sprite`, `SkeletonInstance`, `Mesh` or `AnimationPlayer`
+  (checked by a test that scans the gameplay module's imports, or by crate boundary).
+- `docs/API_SURFACE.md` exists and every listed item links to a test.
 - A gap list exists in TASKS.md with each gap assigned to a milestone.
 
-**Tests/examples.** The example itself, replay test, soak script.
+**Tests/examples.** The example, the replay test, the swap-trace test, the soak script.
 
-**Deferred.** Audio and full UI unless D-11/D-24 pull them in; content beyond one level.
-
+**Deferred.** Audio (M16), a real UI (M10), skeletal and 3D representations beyond the swap-test adapter
+(M11, M12), content beyond one level.
 ---
 
-## M9. Skeletal animation: Not started
+## M10. UI runtime: Not started
 
-**Objective.** Production-usable 2D skeletal animation on the existing `Skeleton`/bone-entity model.
+**Objective.** A dedicated, minimal, code-driven UI runtime as an engine subsystem: screen-space UI
+and UI anchored to entities in the spatial world. Layout and interaction are independent of world
+rendering; only low-level GPU resources are shared. A visual UI editor is explicitly **later** (it
+cannot start before M22 and is not planned until the runtime has proved stable).
 
-**Prerequisites.** M3 (animate stage), M5 (atlas/materials for parts), M8 (a real consumer).
+**Prerequisites.** M3 (actions, events), M5 (sub-region texture update for a glyph atlas, atlas
+packer, samplers), M6 (pass structure and render targets), M9 (stable character and scene API, and a
+real HUD to build). The layout, text and rendering work can start after M6 in parallel with M7 to M9;
+binding UI to game state waits for M9.
+
+**What exists today (read).** Nothing UI-specific. Input has pointer position, buttons, scroll,
+arrows, Enter, Escape and Tab, but no text input, no cursor-left event and no gamepad. The
+code has no use of the window scale factor, and `Viewport` is a single size in pixels, so
+resolution-independent scaling has no foundation (KI-24). Textures re-upload whole on a revision
+change (KI-25). There is no font loading or text rendering. `RenderScene` is world-only.
 
 **Tasks.**
-- Crossfade blending and a small animation state machine.
-- Animation events fired exactly once per key, including across loop wrap.
-- Interpolation modes (step, linear, cubic).
-- Skin/slot swapping (swap part region/material).
-- Optional two-bone IK, only if the slice needs it.
-- Decide and implement part ordering authoring (real-Z offsets already work; add tooling/validation).
-- File format for skeletons and clips defined together with the importers (M13).
+1. Settle D-24 (model), D-37 (text), D-38 (rendering and world UI) and D-39 (input, focus, scaling) in
+   a short design note, using small spikes where a decision depends on a measurement.
+2. Platform: forward the scale factor and its changes; `Viewport` carries physical size, logical size
+   and scale; pointer coordinates map to logical UI space; add cursor-left; text input events only if
+   text fields are in scope (D-39).
+3. Text: font asset (TTF/OTF) loading, glyph rasterisation into a glyph atlas using the M5 sub-region
+   update, single- and multi-line layout with wrapping and alignment. Latin text first; no complex
+   shaping.
+4. Layout: a node tree with anchors, pivots, margins and padding, fixed/percent/fill sizing, and
+   row/column stacks with spacing and alignment. Layout is a pure function from (tree, available size)
+   to rectangles, with no GPU or world dependency, so it is testable on the CPU.
+5. Widgets: panel (colour or 9-slice image), image, label, button (normal, hover, pressed, disabled,
+   focused), scroll area with rectangular clipping. Inventories and dialogue boxes are built from
+   these in the example; they are not separate subsystems.
+6. Interaction: pointer hit-testing with order and clip, hover/press/click events, focus order and
+   directional navigation, activate and cancel through the M3 actions, modal layers, and UI consuming
+   input before gameplay sees it (D-39).
+7. Scaling: reference resolution with fit/expand/fixed/integer modes, plus the device scale factor.
+8. Rendering: each frame the tree produces a plain-data draw list (quads, glyph quads, clip rects, in
+   order). The backend draws it in an overlay pass after the world: no depth, alpha-blended painter's
+   order, scissor clipping, batched by texture. Rectangular clips only; arbitrary masks are deferred.
+9. World-anchored UI: a node anchored to an entity (plus an offset) is positioned each frame by
+   projecting the entity through the active camera, with a stated policy for behind-camera and
+   off-screen (hide or clamp). Health bars, name tags and speech bubbles use this. UI panels that live
+   on a world surface (render-to-texture on a quad) are a follow-up decided by D-38.
+10. A `Style` struct for colours, fonts and spacing; no theming engine.
+11. Example: HUD (score, health), a pause menu with keyboard navigation, a scrolling inventory grid and
+    a dialogue box with revealed text, replacing the bitmap-font text in the M9 slice.
 
-**Dependencies.** D-12.
+**Dependencies.** D-24, D-37, D-38, D-39, D-27 (units), D-16 (font asset ids).
 
 **Acceptance criteria.**
-- Crossfade at 50% equals the lerp of the two sampled poses (unit test).
-- Events fire once at their keyed times, and again after a loop (test).
-- Sampling is independent of frame rate (determinism test).
-- The slice character uses the state machine.
+- Layout golden tests: a table of (tree, size) to exact rectangles covering anchors, stretch, stacks,
+  padding and wrapping; deterministic; the layout code has no GPU or world dependency.
+- Text: layout of a fixture font gives known widths, wrap points and alignment; after the first frame a
+  static screen uploads zero new glyphs (counted).
+- GPU pixel test: a panel with a label renders at the expected rectangle at scale 1 and scale 2 with
+  identical logical layout; a clipped child is cut at the clip edge; scrolling moves content.
+- Interaction tests (no GPU): hit-testing respects order and clip; a click needs press and release
+  inside the same widget; Tab and arrow navigation visits focusables in the expected order and wraps;
+  disabled widgets are skipped; a modal blocks layers below it; a pointer press consumed by UI is not
+  visible to gameplay input.
+- A name tag follows an entity as the camera moves (test using the camera projection) and is hidden
+  behind the camera.
+- The same screen at 800x600 and 1600x1200 with the fit mode has proportional rectangles (test).
+- Building the draw list for a 500-widget screen fits a recorded budget and issues one draw per
+  texture, apart from clip splits (recorded).
+- The slice's HUD, menu, inventory and dialogue run through the UI runtime.
 
-**Tests/examples.** Unit tests above; slice integration.
+**Tests/examples.** Layout, text, interaction and projection tests; GPU pixel tests; `examples/ui_demo`
+or the slice.
 
-**Deferred.** Spine/other importers, mesh skinning (unless D-12 says otherwise), ragdoll, retargeting.
+**Deferred.** Visual UI editor, data-driven UI files (M19 at the earliest), text input fields and IME,
+complex shaping and bidirectional text, rich text, theming and skins, UI animation beyond hover states,
+localisation, accessibility, arbitrary masks, true 3D UI panels unless D-38 chooses render-to-texture.
 
 ---
 
-## M10. Tilemaps: Not started
+## M11. Skeletal 2D animation: Not started
+
+**Objective.** Production-usable 2D skeletal animation on the existing `Skeleton`/bone-entity model, with
+blending, state machines, IK, constraints, equipment and customisable characters. This is character
+representation **B**. Animation evaluation stays separate from GPU rendering.
+
+**Prerequisites.** M3 (animate stage, events), M5 (atlas and materials for parts), M9 (character API).
+It shares event and parameter concepts with M8 but not its evaluator. It is independent of M10.
+
+**What exists today (read, plus 4 unit tests).** `Skeleton` (bones with parent index and rest
+`Transform`), `Pose`, `spawn_skeleton` (one entity per bone), linear TRS `AnimationClip` sampling, and
+`AnimationPlayer`. Evaluation is already GPU-free. But `animate_system` samples a clip and writes the
+result straight onto the bone entities' `Transform`; `Pose` is used only by `Skeleton::world_transforms`
+and tests. There is nothing between sampling and writing where blending or IK could act (KI-22).
+
+**Tasks.**
+- Make evaluation pose-first (D-34): sample clips into a `Pose`, blend, apply constraints and IK, and
+  only then write bone entities. The evaluator has no dependency on the world or the renderer, so it is
+  testable on plain data.
+- Rest poses and structural validation (partly present).
+- Crossfade blending; layered or masked blending by bone set if the slice needs it.
+- An animation state machine. If M8's transition table has the same shape, extract the shared part
+  then and not before (D-29); otherwise keep two.
+- Animation events fired exactly once per key, including across a loop wrap.
+- Interpolation modes (step, linear, cubic).
+- Two-bone IK for limbs and look-at; a small constraint set (rotation limits, look-at) with a defined
+  application order after IK. More only if a character needs it.
+- Equipment and attachment points: named sockets on bones (bones are already addressable by name through
+  `SkeletonInstance::bone`), an attach helper with an offset, and part draw order by real Z offsets
+  (already supported) with validation.
+- Customisable characters: skin and slot swapping (swap a part's region or material), per-slot part
+  variants, per-part tint, and assembly of a character from a definition (skeleton, parts, equipment
+  slots).
+- File format for skeletons and clips defined together with the importers (M17).
+
+**Dependencies.** D-12, D-29, D-32, D-34.
+
+**Acceptance criteria.**
+- Crossfade at 50% equals the lerp/slerp of the two sampled poses (unit test, no world, no GPU).
+- Events fire once at their keyed times, and again after a loop (test).
+- Sampling is independent of frame rate (determinism test).
+- Two-bone IK reaches a reachable target within a tolerance and stretches straight, without NaN, for an
+  unreachable one.
+- Constraints apply in the documented order (test).
+- An attached item follows its bone every frame and is removed with its owner (D-03).
+- Swapping a part's region or material changes the extracted scene without changing any bone transform.
+- The M9 swap-trace test passes with the slice character on a skeletal visual.
+
+**Tests/examples.** Unit tests above; slice integration with a skeletal character.
+
+**Deferred.** Spine and other importers, 2D mesh deformation (unless D-12 chooses it), ragdoll,
+retargeting, physics-driven secondary motion, animation compression.
+---
+
+## M12. 3D characters: Not started
+
+**Objective.** Skinned 3D characters from imported models and animations, living in the **same**
+world, entity model, transforms and gameplay systems as sprite-sheet and 2D skeletal characters. There
+is no second world. This is character representation **C**.
+
+**Prerequisites.** M5 (materials, sampler and colour space), M6 (renderer limits removed, performance
+baseline), M9 (character API), M11 (pose evaluation separated from entity writes, blending, IK). A
+**minimal glTF importer** is part of this milestone because a skinned character cannot be built or
+tested otherwise; the general import pipeline stays in M17.
+
+**What exists today (read).** `Mesh` renders static indexed meshes. `Vertex` is position, normal and
+uv only; there is no joint or weight data, no tangent, no loader, and `MeshData` can be built only in
+code. Bone entities can carry a `Mesh` or `Sprite` as a rigid child, which works as an attachment but
+is not skinning. `Skeleton`, `Pose` and `AnimationClip` already use `Transform` (3D position, `Quat`
+with slerp, 3D scale), so they are already shaped for 3D.
+
+**Tasks.**
+- Skinned vertex layout (joints and weights; kept apart from the static `Vertex` so static meshes do
+  not grow), a skin asset (joint list, inverse bind matrices) and a `SkinnedMesh` component bound to a
+  skeleton instance.
+- Skinning execution per D-35, with the joint palette carried through the extraction seam as plain data
+  in `RenderScene`; the backend still never sees the ECS.
+- 3D skeleton representation per D-32 and D-33: reuse `Skeleton`/`Pose`/`AnimationClip` and the M11
+  blending where they fit, keep skin binding separate.
+- glTF import (D-36): meshes, base-colour materials and textures, node hierarchy, skins, and
+  translation/rotation/scale animation clips. glTF is right-handed with +Y up and +Z as the front of a
+  model; Dimora is left-handed with +Z deeper. The conversion is a documented, tested rule. Malformed
+  files return errors.
+- Attachment points (sockets) for equipment, from D-33.
+- Two-bone IK on the 3D pose where it fits (for example arms). Foot placement needs ground queries
+  from M7 and is optional.
+- A 3D character is a gameplay entity (`Transform`, collider, gameplay components) with a visual child
+  holding `SkinnedMesh`. The M9 gameplay layer is unchanged.
+- Example: a sprite-sheet character, a 2D skeletal character and a 3D skinned character on one stage,
+  driven by the same controller and seen by the same camera.
+
+**Dependencies.** D-32, D-33, D-35, D-36, D-12, D-17 (a glTF dependency must be justified), D-07.
+
+**Acceptance criteria.**
+- glTF fixtures: a cube loads with correct winding and bounds; a two-joint skinned box with a bend
+  animation loads with the expected clip length and channels. An asymmetric fixture shows the
+  documented handedness conversion (front faces the way a Dimora character facing +Z does).
+- Skinning correctness: a posed fixture matches a CPU reference within tolerance after a GPU readback.
+- Blending two imported clips at 50% equals the slerp/lerp of the two sampled poses.
+- A skinned character is correctly occluded by and occludes a sprite-sheet character at different Z
+  (GPU pixel test): one world, one depth buffer.
+- The M9 gameplay trace test passes with the 3D visual swapped in.
+- An attached weapon follows its bone.
+- N skinned characters fit a recorded budget (N and the budget from the M6 baseline).
+- Malformed glTF input returns an error and never panics.
+
+**Tests/examples.** Importer, skinning, handedness and trace tests; the mixed-representation example.
+
+**Deferred.** Morph targets, cloth and physics-driven secondary motion, retargeting, LODs, animation
+compression, skinned crowds through vertex-animation textures, glTF extensions, FBX, PBR materials
+(M14).
+
+---
+
+## M13. Tilemaps: Not started
 
 **Objective.** Tilemaps that scale and integrate with collision, built on the existing instanced path.
 
-**Prerequisites.** M6 (chunking), M7 (collision layer hook), M5 (atlas).
+**Prerequisites.** M6 (chunking), M7 (collision layer hook), M5 (atlas). Independent of the character
+and UI milestones; may run any time after M7.
 
 **Tasks.**
 - Chunked tilemap storage and extraction; per-tile flip/rotate flags; multiple layers at distinct Z.
@@ -410,20 +728,23 @@ colliders, navmesh.
 
 **Tests/examples.** Tests above; slice level uses the chunked map.
 
-**Deferred.** Tiled importer (M13), auto-tiling, hex/isometric grids, infinite/streamed maps.
+**Deferred.** Tiled importer (M17), auto-tiling, hex/isometric grids, infinite/streamed maps.
 
 ---
 
-## M11. Unified lighting and shadows: Not started
+## M14. Unified lighting and shadows: Not started
 
 **Objective.** Sprites and meshes lit and shadowed by the same system, including normal-mapped
 sprites.
 
 **Prerequisites.** M5 (normal-map slot, linear textures), M6 (render targets and multiple passes), D-13.
+Placed after M8, M11 and M12 because shadow casting must handle all three character representations.
 
 **Tasks.**
-- Shadow maps for directional and spot lights; alpha-tested sprite casters.
-- Normal-mapped sprites (tangent frame from the orientation mode).
+- Shadow maps for directional and spot lights; alpha-tested sprite casters (using the current sprite-sheet
+  frame, M8) and skinned-mesh casters (using the joint palette, M12).
+- Normal-mapped sprites (tangent frame from the orientation mode); a normal sheet shares the colour
+  sheet's frame regions.
 - Light culling beyond 16 lights (D-13).
 - Light layers/masks; bias and filtering.
 
@@ -431,7 +752,8 @@ sprites.
 
 **Acceptance criteria.**
 - GPU test: an occluder darkens a receiver, and moving the light removes the shadow.
-- A sprite casts a visible shadow on the ground.
+- A sprite casts a visible shadow on the ground, and the shadow follows the animated frame.
+- A skinned 3D character's shadow changes with its pose (GPU pixel test).
 - GPU test: a normal map changes sprite shading with light angle.
 - 64 lights in a scene stay within the recorded frame budget.
 
@@ -441,15 +763,15 @@ sprites.
 
 ---
 
-## M12. Particles: Not started
+## M15. Particles: Not started
 
 **Objective.** CPU-simulated particles in the same spatial world.
 
-**Prerequisites.** M3 (stages), M5 (materials), M6 (budgets), M8 (consumer).
+**Prerequisites.** M3 (stages), M5 (materials), M6 (budgets), M9 (consumer).
 
 **Tasks.** Emitter component (rate, lifetime, velocity, gravity, colour/size curves), seeded
 deterministic RNG, particles emitted into the existing instanced sprite path with depth testing,
-emitters following hierarchy, per-system sort policy (D-15).
+emitters following hierarchy (including attachment sockets from M11), per-system sort policy (D-15).
 
 **Acceptance criteria.**
 - Same seed gives the same particle state frame by frame (test).
@@ -462,18 +784,56 @@ emitters following hierarchy, per-system sort policy (D-15).
 
 ---
 
-## M13. Asset management and importers: Not started
+## M16. Audio: Not started
+
+**Objective.** Sound effects and music, with positional sound taken from the entity's real position in
+the spatial world. Needed before scripting so that scripts and animation events have audio to call.
+
+**Prerequisites.** M3 (events), M7 (collision events as triggers), M8 (animation events, such as
+footsteps), D-11.
+
+**Tasks.**
+- Audio backend per D-11, behind a small interface with a null backend so tests and CI need no device.
+- `AudioSource` component (asset, volume, pitch, looping, spatial flag) and an `AudioListener` on the
+  camera or another entity; distance attenuation and panning computed from the left-handed listener
+  basis.
+- Buses (master, music, effects) with volumes.
+- Decoders for the formats chosen in D-17 (whole-asset decode; streaming is deferred).
+- Triggering from animation events (M8, M11) and collision events (M7).
+
+**Dependencies.** D-11, D-17, D-10.
+
+**Acceptance criteria.**
+- Attenuation and pan math have table tests, including a listener rotated by yaw.
+- With the null backend, spawning a source starts a voice, a one-shot ends and releases it, a looping
+  source continues, and despawning the entity stops it.
+- Bus gain changes scale output (test on the mixer's output buffer).
+- The whole test suite passes on a machine with no audio device.
+- Manual: the slice plays footsteps on animation events and a sound on pickup.
+
+**Tests/examples.** Mixer and math unit tests; slice integration.
+
+**Deferred.** Effects and reverb, mixing graphs, HRTF, streamed music with seeking, middleware
+integration.
+
+---
+
+## M17. Asset management and importers: Not started
 
 **Objective.** Real content workflows: files on disk, async loading, hot reload, stable ids.
 
-**Prerequisites.** M5, M9/M10 data shapes, decisions D-16 to D-18.
+**Prerequisites.** M5, and the data shapes from M8 (sprite sheets), M10 (fonts), M11 (skeletons and
+clips), M12 (models) and M13 (tilemaps); decisions D-16 to D-18. M12 already contains a minimal glTF
+importer; this milestone generalises it.
 
 **Tasks.**
 - Stable asset identity and dependency graph with cascading reload/unload (D-16).
 - Worker-pool async loading with main-thread apply.
 - File-watcher hot reload.
-- Importers: PNG (exists), glTF meshes/materials, sprite-atlas JSON (Aseprite-style), Tiled tilemaps,
-  skeleton and clip format.
+- Importers: PNG (exists), glTF (generalising M12's: async, dependency tracking, reload), sprite-sheet
+  descriptors (grid and Aseprite-style JSON) for M8, fonts for M10, audio for M16, Tiled tilemaps, and a
+  skeleton and clip format for M11.
+- Script files as assets with reload notifications (consumed by M18).
 - Loading errors surface as logged errors plus the existing magenta placeholder.
 
 **Dependencies.** D-16, D-17, D-18.
@@ -483,23 +843,89 @@ emitters following hierarchy, per-system sort policy (D-15).
 - Editing a PNG on disk changes the running example without restart (integration test using reload).
 - Changing a texture reloads dependent sprites (test).
 - 1,000 assets load on workers without a frame-time spike beyond a recorded budget.
-- A glTF cube loads with correct winding and bounds.
+- A glTF cube loads with correct winding and bounds, through the async and reload path.
+- A sprite sheet loaded from an Aseprite-style JSON plus PNG has the same frames as the code-built sheet
+  (test); editing the JSON reloads the running animation.
+- Replacing a font file re-renders the running UI text.
 
 **Tests/examples.** Importer unit tests with fixture files; reload integration test.
 
-**Deferred.** Bundles (M15), compression, DCC plugins.
+**Deferred.** Bundles (M21), compression, DCC plugins.
 
 ---
 
-## M14. Scene serialization: Not started
+## M18. Gameplay scripting: Not started
+
+**Objective.** One embedded scripting runtime for gameplay logic, over a deliberately small, versioned
+script API. Scripts are not a way to reach engine internals. Scripting starts only after the core
+gameplay APIs have stopped moving (M9), and after the subsystems scripts call exist: events and
+commands (M3), the component registry (M4), animation (M8, M11), UI (M10), audio (M16) and hot reload
+(M17).
+
+**Prerequisites.** M3, M4, M9, M10, M16, M17, and the decisions D-40 to D-43. At least one of M8 and M11
+must exist for the animation API to be real.
+
+**What exists today.** Nothing: no scripting, no component registry, no command buffer or events, no
+`serde`. Those gaps are why scripting is scheduled late; building it now would force an API onto code
+that is about to change.
+
+**Tasks.**
+1. Evaluation spike (throwaway, not shipped): implement the same small set of behaviours (a patrol, a
+   trigger-opened door, a UI button callback) with the top two candidates from D-40, and measure
+   call overhead, memory, build impact, error output and hot reload. Record the results and decide D-40.
+   Exactly one runtime ships; no second language, no custom language.
+2. Create the `dimora-script` crate (not before this milestone). The core engine crates never depend
+   on it or on the interpreter library.
+3. Script API v1, hand-written and versioned: opaque generation-checked entity handles; components
+   reachable only by registry name and only if marked script-visible, with read and write flags;
+   prefab spawn and despawn; event subscribe and emit; animation intent (play, set parameter);
+   audio play; UI binding (set text, bind button); time; seeded deterministic random; input **actions**
+   (not raw devices); log; a typed game-state store. Every mutation goes through the M3 command buffer
+   and applies at a stage boundary.
+4. Script components with callbacks (`on_spawn`, `on_update`, `on_fixed_update`, `on_event`,
+   `on_despawn`) in one scripting stage at a documented position in the frame.
+5. Errors: compile and run errors carry script name, line and column and a traceback, are logged, and
+   disable only the faulting instance (configurable to abort in development). No panic crosses the
+   boundary.
+6. Sandbox: restricted standard library, an instruction or time budget and a memory cap, no file,
+   network or process access.
+7. Hot reload at a stage boundary, state policy from D-43; a failed reload keeps the previous version.
+8. Convert one slice behaviour (an enemy patrol and a door) to scripts and keep the slice playable.
+   Write `docs/SCRIPTING.md` with the API, capabilities and limits.
+
+**Dependencies.** D-40, D-41, D-42, D-43, D-18, D-10.
+
+**Acceptance criteria.**
+- A script can access only script-visible components; access to anything else, and access to `os`,
+  `io` or file functions, fails with a clear error (sandbox tests).
+- An infinite loop is stopped by the budget within a bounded time and the game keeps running (test).
+- A runtime error message contains the script name and line (test).
+- Editing a script changes behaviour on the next frame with no restart; a syntax error keeps the old
+  behaviour and reports the error (test).
+- Replaying the slice with a scripted enemy gives the same state hash in two runs (determinism test).
+- A mutation requested in a callback is not visible until the stage boundary (test).
+- 1,000 scripted entities' `on_update` fits a recorded budget.
+- The engine builds and its tests pass without the script crate.
+- Every exposed API function has a test.
+
+**Tests/examples.** Sandbox, error, reload, determinism and budget tests; the scripted slice.
+
+**Deferred.** A second language, WebAssembly (only if D-40's criteria for untrusted third-party code
+are met), visual scripting, a debugger protocol, networked scripts, mod distribution and signing,
+script-defined component layouts, scripts extending rendering.
+
+---
+
+## M19. Scene serialization: Not started
 
 **Objective.** Save and load scenes as versioned, diffable text files.
 
-**Prerequisites.** M4 (component registry), M13 (stable ids).
+**Prerequisites.** M4 (component registry), M17 (stable ids), M18 (script components and their state).
 
 **Tasks.** Format and `serde` policy (D-18), component serialization through the registry, entity
 reference remapping, hierarchy, asset references by id, version/migration scaffolding, basic prefab
-instancing, loading scenes in `Game`.
+instancing, loading scenes in `Game`. The registry covers the character, sprite-sheet animator, skeletal,
+skinned-mesh and script components so a scene can hold all three representations and scripted behaviour.
 
 **Acceptance criteria.**
 - Save -> load -> save is byte-identical (deterministic ordering).
@@ -507,23 +933,48 @@ instancing, loading scenes in `Game`.
   `RenderScene`.
 - Unknown components and missing assets produce clear errors, not panics.
 - A migration test upgrades a stored older-version scene.
-- The slice level is a scene file.
+- The slice level is a scene file, including its scripted enemy and its sprite-sheet character.
 
 **Tests/examples.** Round-trip, golden-file and migration tests.
 
-**Deferred.** Binary scene format (M15), nested prefab variants, scripting references.
+**Deferred.** Binary scene format (M21), nested prefab variants, UI tree files (UI stays code-driven
+until the runtime has proved stable).
 
 ---
 
-## M15. Asset compiler and bundles: Not started
+## M20. Debugging tools: Not started
+
+**Objective.** See and poke the running engine.
+
+**Prerequisites.** M6 (debug draw), M10 (UI runtime for the overlay), M19 (component registry for
+reflection).
+
+**Tasks.** Overlay (frame graph, counters), entity inspector (read first, edit second), logging and
+profiling scopes (D-21), screenshot and replay tooling promoted from M9, asset/hot-reload
+notifications. Overlays for what the new subsystems need: colliders (M7), animation state and
+skeleton bones (M8, M11, M12, drawn with debug draw), UI layout bounds (M10), and script errors (M18).
+
+**Acceptance criteria.**
+- A key toggles an overlay with live frame time and draw calls.
+- The inspector lists entities and edits a `Transform` of the running `spatial_scene`.
+- A profiling run writes a trace viewable in a standard viewer.
+
+**Tests/examples.** Inspector unit tests over the registry; manual demo.
+
+**Deferred.** Remote debugging, networked tools.
+
+---
+
+## M21. Asset compiler and bundles: Not started
 
 **Objective.** Ship assets and scenes as one deterministic bundle read through `AssetSource`.
 
-**Prerequisites.** M13, M14.
+**Prerequisites.** M17, M19.
 
 **Tasks.** New `dimora-assets` CLI crate; compile imported assets and scenes; bundle with an id
 index, content hashes and optional compression (D-19); `BundleSource`; incremental cache keyed by
-content hash; reference validation.
+content hash; reference validation. Covers sprite sheets, fonts, audio, models and scripts (as source, or
+bytecode if the chosen runtime supports it).
 
 **Acceptance criteria.**
 - Same inputs produce byte-identical bundles.
@@ -538,32 +989,11 @@ content hash; reference validation.
 
 ---
 
-## M16. Debugging tools: Not started
-
-**Objective.** See and poke the running engine.
-
-**Prerequisites.** M6 (debug draw), M8 (bitmap font), M14 (component registry for reflection).
-
-**Tasks.** Overlay (frame graph, counters), entity inspector (read first, edit second), logging and
-profiling scopes (D-21), screenshot and replay tooling promoted from M8, asset/hot-reload
-notifications.
-
-**Acceptance criteria.**
-- A key toggles an overlay with live frame time and draw calls.
-- The inspector lists entities and edits a `Transform` of the running `spatial_scene`.
-- A profiling run writes a trace viewable in a standard viewer.
-
-**Tests/examples.** Inspector unit tests over the registry; manual demo.
-
-**Deferred.** Remote debugging, networked tools.
-
----
-
-## M17. Minimal editor: Not started
+## M22. Minimal editor: Not started
 
 **Objective.** Edit and save a scene visually.
 
-**Prerequisites.** M6 (camera-to-texture), M14, M16, D-20.
+**Prerequisites.** M6 (camera-to-texture), M10 (UI runtime, if D-20 chooses to use it), M19, M20, D-20.
 
 **Tasks.** `dimora-editor` binary; viewport with fly camera and translate/rotate/scale gizmos;
 hierarchy and inspector panels; asset browser; save/load; play-in-editor on a copy of the world;
@@ -576,19 +1006,20 @@ minimal undo/redo.
 
 **Tests/examples.** Command/undo unit tests; manual walkthrough recorded.
 
-**Deferred.** Tilemap painter, animation editor, plugins, custom tool windows.
+**Deferred.** Visual UI editor, tilemap painter, animation and sprite-sheet editors, script editing,
+plugins, custom tool windows.
 
 ---
 
-## M18. Performance and stability: Not started
+## M23. Performance and stability: Not started
 
 **Objective.** Meet recorded budgets and harden against bad input.
 
-**Prerequisites.** M15, M17 (and baselines from M6).
+**Prerequisites.** M21, M22 (and baselines from M6).
 
 **Tasks.** Transform dirty tracking and/or parallel propagation; culling acceleration structure;
-parallel extraction; memory budgets and leak soak; fuzzing of decoders (PNG path, glTF, scene,
-bundle); audit of `unwrap`/`expect` on external-data paths; benchmark regression thresholds in CI;
+parallel extraction; memory budgets and leak soak; fuzzing of decoders (PNG, glTF, fonts, audio, scene,
+bundle) and of the script API boundary; audit of `unwrap`/`expect` on external-data paths; benchmark regression thresholds in CI;
 testing on Windows, macOS and Linux GPUs.
 
 **Acceptance criteria.**
@@ -603,11 +1034,11 @@ testing on Windows, macOS and Linux GPUs.
 
 ---
 
-## M19. Packaging and release: Not started
+## M24. Packaging and release: Not started
 
 **Objective.** Ship a desktop game and the engine itself.
 
-**Prerequisites.** M15, M18.
+**Prerequisites.** M21, M23.
 
 **Tasks.** Desktop release builds (Windows, macOS, Linux) with a bundle; config and save-game
 directories; log files; versioning policy and changelog; licence files; a project template; docs
@@ -626,10 +1057,11 @@ directories; log files; versioning policy and changelog; licence files; a projec
 
 ## Unscheduled but known
 
-These are outside the requested scope but will matter; each has a decision slot.
+These are outside the current plan; each has a decision slot or a reason.
 
-- **Audio.** A playable game wants sound. Decide at M8 (D-11).
-- **UI.** M8 uses sprite-drawn text only. A real UI system is out of scope until after M17 (D-24).
-- **Gamepad/touch.** After M8.
-- **Web/mobile targets.** After M19 (D-23).
-- **Networking, scripting.** Not planned.
+- **Gamepad and touch input.** After M9. The UI focus model (M10) is built on actions so that a gamepad
+  can drive it later; the device layer itself is not scheduled.
+- **Web and mobile targets.** After M24 (D-23).
+- **Networking.** Not planned. M9's replay determinism and M18's deterministic scripting are prerequisites
+  for ever adding it.
+- **Visual UI editor, data-driven UI files.** After M22 at the earliest.
