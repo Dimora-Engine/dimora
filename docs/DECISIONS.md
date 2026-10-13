@@ -546,6 +546,11 @@ this text with results.
 These are cross-system decisions the earlier backlog did not list (and D-21, which the audit re-timed).
 Each is open; none has a chosen answer. Leanings are starting points.
 
+## Added by the 2026-10-13 audit
+
+These are cross-system decisions the earlier backlog did not list (and D-21, which the audit re-timed).
+Each is open; none has a chosen answer. Leanings are starting points.
+
 ### D-21 Logging and profiling crates
 
 * **Problem.** The workspace has no logging at all (verified: no `log`, `tracing` or `println!` in library
