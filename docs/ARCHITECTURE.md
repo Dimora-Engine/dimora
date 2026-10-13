@@ -224,7 +224,11 @@ transform, camera and depth contract and declares one **transparency class**: op
 **2. Depth, transparency, render layers and occlusion.** The rule to preserve: *depth decides
 visibility; a transparency class decides the pass; sort keys exist only for blended content.* Opaque
 and cutout content needs no ordering. Blended content is ordered by `(RenderOrder.layer, view depth,
-RenderOrder.order)`; `RenderOrder` is a narrow override, not a layer system. Shadows, particles and
+RenderOrder.order)`; `RenderOrder` is a narrow override, not a layer system. Four concepts stay distinct
+(ADR-0004, amended 2026-10-13): spatial depth, transparency sorting, render layers or queues, and explicit
+render order; an arbitrary sort value never replaces spatial depth, deliberate ordering of coplanar content is a
+separate supported override whose mechanism is not yet chosen (D-48), and room is left for sort or occlusion
+policies for isometric styles without building an occlusion framework now. Shadows, particles and
 skinned meshes must pick a class and may not introduce a second ordering concept. Screen-space UI is
 outside this model (painter's order, no depth). Open: blended meshes and intersecting blended quads
 (D-05, KI-14).
@@ -286,9 +290,14 @@ to be fixed in M9's `docs/API_SURFACE.md`:
 | **Internal** | `hecs` types, `World.entities`, schedule internals, `wgpu`/`winit` re-exports, `SceneRenderer` internals, extraction helpers | Free to change; not named in docs or examples as supported |
 
 **10. One world, many camera configurations** ([ADR-0004](adr/0004-one-spatial-world-many-camera-configurations.md);
-confirmed owner direction, mechanisms recommended). A camera is a `Transform` plus a projection; perspective,
-orthographic, isometric (orthographic, rotated), top-down, side-scrolling and custom views are configurations
-of that one model with no per-view renderer, extraction path or world representation. Keep three things
+confirmed owner direction; mechanism decisions accepted or amended 2026-10-13, not yet implemented). A camera is a
+`Transform` plus a projection; perspective, orthographic, isometric (orthographic, rotated), top-down,
+side-scrolling and custom views are configurations of that one model with no per-view renderer, extraction path
+or world representation. Presets for common views are constructors that return a `Camera` and a `Transform` and
+stay fully editable; isometric is an orthographic preset, not a projection type. Style policies (sprite
+orientation, filtering, snapping, fog) live at the object, material, camera, renderer or scene level where each
+belongs, with no universal style type. Gameplay orientation is data, never derived only from the camera or the
+sprite. Keep three things
 separate: *projection* (how the world becomes pixels), *gameplay orientation* (up axis, ground plane,
 facing), *visual style* (snapping, fog, mood). *Today:* the camera maths takes any `Transform` and either of
 two projections, the tilemap is a quad grid in its entity's local XY plane that is laid flat by rotating the
@@ -322,7 +331,7 @@ systems they touch. Each cites evidence from this audit.
 | R-13 | **No diagnostics.** No logging; failures are silent or polled | zero logging calls in the workspace | Low now, rising with every call site | Add the facade in M3 (D-21 split) |
 | R-14 | **Verification is narrower than it looks.** CI now runs on Windows, macOS and Linux (first run green), but only on software or paravirtual adapters, offscreen; GPU tests skip unless `DIMORA_REQUIRE_GPU=1` (CI sets it); windowed and DPI paths, real hardware and performance are unverified; pixel tests use tolerances that held on three rasterisers | TASKS.md "CI results"; KI-3, KI-24, KI-27 | Rises slowly; regressions on real GPUs or windowed paths found by users | Keep CI green and required; add a windowed smoke test when M3b lands the scale factor; real-GPU timing needs a different runner (ADR-0005 option B) |
 | R-15 | **Foundations not yet shaped for the editor.** The editor is a core product goal, but nothing yet carries what it needs: components have no field names, types, ranges or defaults; there are no undoable commands; entities and assets lack stable identities (R-4); no scene format; the renderer draws one view (R-2) so an editor viewport has nowhere to render; `RenderScene` is a one-way snapshot, so picking needs world queries | `components.rs`, `world.rs`, `extract.rs`; CAPABILITIES rows 2, 8, 32, 33, 36 | High: retrofitting field metadata, commands and identities onto many components and systems is the same cost as R-4 and R-5 | Treat editor needs as acceptance criteria of M3 (commands), M4 (registry with field metadata), M6 (camera-to-texture) and M19 (serialization); write no component or system that hides state the editor must edit |
-| R-16 | **Single-view assumptions hide in details.** Evidence: `Upright` sprites are edge-on under a straight-down camera; cutout sprites and tiles at equal depth z-fight and `RenderOrder` orders only blended sprites; the world is +Y up with an XZ ground and nothing says whether gameplay may use another plane; directional animation (D-31) will read the camera; shadow and light code is not yet written and could assume a perspective view; no test renders an isometric, top-down or side view | `components.rs` (`SpriteOrientation`), `extract.rs`, `scene_renderer.rs`; ADR-0004 | High if found late: ordering, orientation and light direction are baked into M7, M8, M13 and M14 | D-48 decided in M6 before M7 and M8; the M6 configuration test scene; M14 tests under three camera configurations |
+| R-16 | **Single-view assumptions hide in details.** Evidence: `Upright` sprites are edge-on under a straight-down camera; cutout sprites and tiles at equal depth z-fight and `RenderOrder` orders only blended sprites; the world is +Y up with an XZ ground and nothing says whether gameplay may use another plane; directional animation (D-31) will read the camera; shadow and light code is not yet written and could assume a perspective view; no test renders an isometric, top-down or side view | `components.rs` (`SpriteOrientation`), `extract.rs`, `scene_renderer.rs`; ADR-0004 | High if found late: ordering, orientation and light direction are baked into M7, M8, M13 and M14 | D-48 mechanisms decided in M6 before M7 and M8 (principles decided by the owner, ADR-0004); the M6 configuration test scene; M14 tests under three camera configurations |
 
 Expensive redesigns, ranked by likelihood times cost, if nothing changes: **R-4 (asset identity)**, **R-1
 and R-2 (render model shape)**, **R-5 and R-8 (mutation and threading)**, **R-7 and R-6 (API and format

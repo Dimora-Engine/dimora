@@ -95,7 +95,7 @@ Primary use cases, in the order the roadmap proves them:
 
 ## Camera configurations and visual styles
 
-*Confirmed direction (owner, 2026-10-13); mechanisms in [ADR-0004](adr/0004-one-spatial-world-many-camera-configurations.md).*
+*Confirmed direction (owner, 2026-10-13); mechanism decisions (presets as constructors, style as per-level policy, gameplay orientation as data, coplanar ordering amended) accepted 2026-10-13 and recorded in [ADR-0004](adr/0004-one-spatial-world-many-camera-configurations.md). None is implemented yet.*
 
 Dimora's defining principle is the unified spatial world, not a look. It must support these views as
 **intended capabilities**, not as a promise to build every one in the next milestone:
@@ -124,7 +124,8 @@ When two options are close, these decide, in this order. Each has a test: a ques
 
 1. **Spatial first.** Position in the world decides visibility, occlusion, parallax and collision. *Does
    this change add a layer or order number that a position could express instead?* Explicit ordering is
-   allowed only as a narrow, documented override (`RenderOrder` for blended sprites). *Does this assume one
+   allowed only as a narrow, documented override (`RenderOrder` for blended sprites today; deliberate ordering of
+   coplanar content is supported as a separate override, never as a stand-in for depth, ADR-0004). *Does this assume one
    camera projection or one view?* If so, it is not spatial-first.
 2. **One contract, many implementations.** Subsystems agree on transforms, camera, depth, handles,
    events and lifetimes, not on one code path. *Does this force two different things through one

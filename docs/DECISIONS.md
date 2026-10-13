@@ -49,7 +49,7 @@ is not approved; nothing marked Recommended may be described elsewhere as decide
 | Id | Topic | Status | Where recorded |
 |---|---|---|---|
 | OD-1 | Editor timing: the full editor stays late, behind a stability gate; developer tooling arrives incrementally; the runtime stays free of editor-specific state | **Confirmed** (2026-10-13) | [ADR-0003](adr/0003-incremental-tooling-editor-later.md), ROADMAP "Incremental developer tooling" |
-| OD-2 | Dimora is not defined by HD-2D or any single view; one spatial world supports orthographic, perspective, isometric, top-down, side-scrolling and custom cameras as intended capabilities; projection is separate from gameplay orientation and style; the showcase is a reusable multi-camera test scene | **Confirmed** as direction (2026-10-13). The mechanisms in the ADR are **Recommended** | [ADR-0004](adr/0004-one-spatial-world-many-camera-configurations.md), D-48 |
+| OD-2 | Dimora is not defined by HD-2D or any single view; one spatial world supports orthographic, perspective, isometric, top-down, side-scrolling and custom cameras as intended capabilities; projection is separate from gameplay orientation and style; the showcase is a reusable multi-camera test scene | **Confirmed** as direction (2026-10-13). Mechanisms, owner response 2026-10-13: camera presets as constructors **Accepted**; style as policy **Accepted with clarification** (per level, no universal style abstraction); gameplay orientation as data **Accepted**; coplanar ordering **Amended** (spatial depth, transparency sorting, render layers or queues and explicit render order stay distinct; no generalised occlusion framework yet). The reusable test scene stays **Recommended**. None of this is implemented | [ADR-0004](adr/0004-one-spatial-world-many-camera-configurations.md), D-48 |
 | OD-3 | Licence: `MIT OR Apache-2.0` | **Proposed, not confirmed.** No licence files are added until the owner approves. Copyright holder also unconfirmed | TASKS.md "Licence audit" (KI-17) |
 | OD-4 | Use GitHub Actions if the repository is hosted on GitHub; validate on Windows, macOS and Linux; Windows early | **Confirmed** as direction (2026-10-13). That GitHub is the long-term host is **assumed** (the repository and its pull requests are on GitHub); the owner has not stated it | [ADR-0005](adr/0005-ci-on-github-actions.md) (Provisional), D-22 |
 | OD-5 | Does a licence also need a contributor policy (a CLA or DCO), given contributions from several authors and AI agents? | **Open** | TASKS.md "Licence audit" |
@@ -87,7 +87,7 @@ the risk register). **Prototype where the answer depends on a measurement; do no
 | D-07 | Depth convention (reverse-Z) | M6 | M6, M14 shadows | Open |
 | D-08 | Multi-camera and render targets | M6 | M6, M14, M22 | Open |
 | D-25 | Custom projections inside `Camera` | M6 (**first in M6**, [ADR-0004](adr/0004-one-spatial-world-many-camera-configurations.md)) | M6, M13 (oblique tiles) | Open |
-| D-48 | Camera configurations: gameplay plane and up axis, coplanar ordering, orientation modes per view | M6 (decide before M7 and M8) | M6, M7, M8, M13, M14 | Open, recommendations in ADR-0004 |
+| D-48 | Camera configurations: gameplay plane and up axis, coplanar ordering, orientation modes per view | M6 (decide before M7 and M8) | M6, M7, M8, M13, M14 | Open. Principles decided by the owner (ADR-0004, 2026-10-13); mechanisms still open (see D-48) |
 | D-26 | Additional sprite orientations | M6 | none hard | Open, low priority |
 | D-09 | Physics: custom or library | M7 | M7, M9 | Open |
 | D-28 | Character gameplay versus visuals | M8 (provisional), M9 | M9, M10, M11, M12, M18 | Open |
@@ -631,13 +631,22 @@ Each is open; none has a chosen answer. Leanings are starting points.
   cutout sprites and tiles at the same depth z-fight, and `RenderOrder` only orders blended sprites, so a
   flat 2D layering needs an ordering that stays spatial; (3) **sprite orientation per view**: `Upright`
   sprites are edge-on under a straight-down camera.
-* **Options.** (1) World +Y up with a ground plane of XZ as the default and a per-game configuration for
-  2D-style movement planes, or a world-level "up" setting. (2) Small Z offsets by convention; a depth bias
-  or `RenderOrder` extended to opaque and cutout content; a layer-to-Z helper. (3) Extend `SpriteOrientation`
-  (see D-26) or document `Billboard` and `Fixed` as the choices for steep views.
-* **Recommended, not approved.** Keep +Y up and XZ ground as the engine default; make plane constraints an
-  M7 movement option; give coplanar content a documented spatial offset helper and a depth bias before adding
-  any layer concept; document orientation choices per view and test them in the configuration test scene.
+* **Decided by the owner (2026-10-13, [ADR-0004](adr/0004-one-spatial-world-many-camera-configurations.md)).**
+  Gameplay orientation is data, separate from world transforms and visual presentation, never derived only
+  from the camera or the sprite, and not stored twice where one value can be derived from another. Coplanar
+  ordering: spatial depth, transparency sorting, render layers or queues and explicit render order are four
+  distinct concepts; spatial visibility stays with transforms, camera depth and the depth test; deliberate
+  ordering of coplanar content is supported as an explicit override and is not presented as depth; room is left
+  for sorting or occlusion policies for isometric and similar styles, and no generalised occlusion framework is
+  built before a scene shows the need.
+* **Still open.** (1) Which components carry gameplay orientation, which values are stored and which derived,
+  and the per-game up axis and ground plane (engine default +Y up, XZ ground). (2) The coplanar mechanism: a
+  documented spatial offset helper, a depth bias, `RenderOrder` extended to opaque and cutout content, or
+  other; and whether any render layer or queue concept is needed beyond the pass split. (3) Sprite orientation
+  per view (`Upright` is edge-on under a straight-down camera; see D-26). (4) Whether isometric needs a sort or
+  occlusion policy, decided from the M6 test scene.
+* **Recommended, not approved.** Keep +Y up and XZ ground as the engine default; make plane constraints an M7
+  movement option; test orientation choices per view in the configuration test scene.
 * **Needed by.** Decided during M6, before M7 and M8 build on it. **Blocks.** M7, M8, M13, M14.
 
 ## Reopening a settled decision

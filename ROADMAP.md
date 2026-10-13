@@ -436,9 +436,14 @@ baseline. Camera projection stays separate from gameplay orientation and visual 
 - **Camera-configuration test scene.** `spatial_scene` (2D sprites at several depths, spatial depth, a
   simple 3D mesh, a ground) viewable through named configurations by one code path: perspective,
   orthographic, isometric (orthographic, rotated), top-down, side view, and one custom projection. Presets
-  are constructors returning a `Camera` and a `Transform`, never modes. It prescribes no visual style.
-- Camera configurations decision (D-48): gameplay plane and up axis, coplanar ordering, sprite orientation
-  per view. Decide before M7 and M8 build on it.
+  are constructors returning a `Camera` and a `Transform`, never modes (accepted, ADR-0004): same camera
+  model and renderer for every one, every setting still editable afterwards, isometric an orthographic preset
+  rather than a projection type. It prescribes no visual style.
+- Camera configurations decision (D-48), mechanisms only: the owner has decided the principles (ADR-0004,
+  2026-10-13: gameplay orientation is data and not derived only from the camera or sprite; spatial depth,
+  transparency sorting, render layers or queues and explicit order stay distinct; no occlusion framework until
+  a scene needs one). Still to decide: which gameplay-orientation values are stored, the coplanar ordering
+  mechanism, sprite orientation per view. Decide before M7 and M8 build on it.
 - Tilemap chunking with cached instances.
 - Render debugging, first slice: debug draw (lines, boxes, spheres, rays, camera frusta; depth-tested) and a
   depth-visualisation view, as the minimal debugging primitives for M7.
@@ -461,6 +466,8 @@ baseline. Camera projection stays separate from gameplay orientation and visual 
   point projects to the pixel `CameraView::project` reports, and a picking ray through that pixel returns to
   the point. A camera-configuration table in `docs/SPATIAL_RENDERING.md` records what each configuration
   guarantees and what it does not.
+- Each preset returns a `Camera` and a `Transform` that can be edited afterwards, and no preset adds an enum
+  variant, mode or code path to extraction or the backend.
 - Switching configuration changes only the camera's `Transform` and projection. A test or review shows no
   configuration-specific branch in extraction or in the wgpu backend.
 - A custom projection supplied by game code renders and picks correctly (GPU test and picking test).

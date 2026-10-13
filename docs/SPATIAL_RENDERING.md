@@ -168,7 +168,8 @@ back, pitched 0.3 rad down), a 96-unit figure at Z = 0, 100, 300 and 600 sits at
 | **GPU depth** | The depth-buffer value after projection (`0..1`, non-linear for perspective) | The GPU, per fragment |
 | **Screen position** | Pixels in the camera's viewport | Derived by projecting a world position |
 | **Transparent-object ordering** | The order alpha-blended things are drawn in, so blending composes correctly | The extractor: back-to-front by view depth |
-| **Explicit render order** | An optional override (`RenderOrder`) | The game, when depth cannot decide |
+| **Render layer or queue** | Which pass, group or camera content belongs to. **Not implemented** beyond the opaque, cutout and blended pass split; not the same thing as `RenderOrder.layer` | The renderer |
+| **Explicit render order** | An optional override (`RenderOrder`), for deliberate ordering where depth cannot decide, such as coplanar content. Never a substitute for depth | The game, when depth cannot decide |
 | **Camera projection** | How view space maps to the image | `Camera.projection` |
 
 Rules that follow:
@@ -186,6 +187,13 @@ Rules that follow:
    component for blended sprites. `layer` dominates depth, `order` breaks ties at equal depth.
    Entities without it are `(0, 0)`, which leaves depth in charge. It does not move anything, does
    not affect opaque geometry, and does not affect projection.
+
+These four ideas (spatial depth, transparency sorting, render layers or queues, explicit order) are kept
+distinct on purpose ([ADR-0004](adr/0004-one-spatial-world-many-camera-configurations.md), decision 4). Today
+`RenderOrder` reaches blended sprites only, so coplanar cutout sprites and tiles at equal depth z-fight; the
+mechanism that will let a game order them deliberately is not chosen yet (D-48). The depth point used for
+sorting is the quad centre; configurable sort or occlusion policies for isometric styles are left room for and
+not built.
 
 Sorting uses the sprite quad's centre, so intersecting blended quads or large blended quads that
 span a wide depth range can mis-order. The usual fix is to make those sprites `Cutout`.

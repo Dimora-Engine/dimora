@@ -211,11 +211,15 @@ Missing from the original category list and now tracked: **save games** (34), **
   | Configuration | Status today |
   |---|---|
   | Perspective, orthographic | Implemented and tested (camera maths, GPU tests, `spatial_scene` `--ortho`) |
-  | Isometric (orthographic, rotated) | The camera takes any `Transform`, so the maths allows it. **No isometric scene, render test or preset exists** |
+  | Isometric (orthographic, rotated) | The camera takes any `Transform`, so the maths allows it. **No isometric scene, render test or preset exists.** Decided (ADR-0004): it will be an orthographic preset, not a projection type |
   | Top-down | **Not demonstrated.** `Upright` sprites are edge-on from above; coplanar cutout content z-fights (R-16, D-48) |
   | Side-scrolling | The default orientation; **no 2D-style game demonstrates it**; same coplanar-ordering gap |
   | Custom projection | `Projection` trait exists; `Camera` stores a closed enum, so game code cannot supply one (KI-11, D-25) |
 
+* **Presets and style policy (ADR-0004; accepted 2026-10-13, nothing implemented).** Camera presets will be constructors
+  over the one camera model and stay editable; style policies sit at the object, material, camera, renderer or
+  scene level with no universal style type. Today: sprite orientation is per `Sprite`, filtering per `Texture`;
+  there are **no camera presets** and no camera-level or renderer-level style policy.
 * **Required.** Multiple cameras with viewports, camera-to-texture, extensible projection (oblique,
   custom), resize safety, and the same behaviour of picking, culling, depth and lighting in every
   configuration. **Planned.** M6, including a reusable camera-configuration test scene (`spatial_scene`
@@ -242,7 +246,7 @@ Missing from the original category list and now tracked: **save games** (34), **
 ### 10. Depth, transparency, occlusion, render ordering
 * **Now.** One `Depth32Float` buffer, standard Z (`Less`). Order inside the single pass: opaque meshes,
   cutout sprites and tiles (depth write), then alpha sprites back to front (depth test, no write).
-  `RenderOrder { layer, order }` overrides blended sprite order only. GPU tests: nearer mesh occludes a
+  `RenderOrder { layer, order }` overrides blended sprite order only. By decision (ADR-0004, amended 2026-10-13) spatial depth, transparency sorting, render layers or queues and explicit order are distinct concepts; a deliberate-ordering mechanism for coplanar opaque and cutout content is **not implemented and not chosen**. GPU tests: nearer mesh occludes a
   sprite, farther does not; blended sprite interleaves with meshes by depth. Limits: blended sprites sort
   by quad centre (KI-14); **meshes cannot be blended**; `RenderScene` is partitioned by primitive type
   (meshes, cutout, blended sprites), not by transparency class, so a blended mesh has no place to sort
