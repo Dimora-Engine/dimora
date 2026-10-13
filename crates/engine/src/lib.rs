@@ -1,7 +1,7 @@
 //! The engine facade.
 //!
 //! Use this crate from a game; it re-exports the pieces and provides [`Game`], a small struct that
-//! owns a [`World`], two [`Schedule`]s and the frame pipeline:
+//! owns a [`World`](engine_world::World), two [`Schedule`](engine_world::Schedule)s and the frame pipeline:
 //!
 //! ```text
 //! time -> asset loads -> fixed-step systems -> update systems -> animation
