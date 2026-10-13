@@ -1,0 +1,49 @@
+---
+description: Rust code quality, testing and documentation standards for Dimora crates and examples.
+globs: "**/*.rs,**/Cargo.toml,scripts/**"
+alwaysApply: false
+---
+
+# Rust quality, testing and documentation
+
+Verification is one command: `scripts/check.sh` (fmt, clippy with `-D warnings`, tests with
+`DIMORA_REQUIRE_GPU=1`, rustdoc with `-D warnings`). It must pass before a change is called done. On Linux
+without a GPU install `mesa-vulkan-drivers`. Do not weaken a check, skip a test or loosen a threshold to get
+green; fix the cause or record the limit in `TASKS.md`.
+
+## Code
+
+- Toolchain and MSRV are pinned (`rust-toolchain.toml`, `rust-version` in `Cargo.toml`). Do not use features
+  newer than the MSRV. Commit `Cargo.lock` changes with the dependency that caused them.
+- Add a dependency only when the task needs it and the decision is recorded (see `docs/DECISIONS.md`, D-17);
+  state its licence and cost. Prefer the standard library and the existing crates.
+- No `unsafe` unless a measurement or an FFI boundary requires it, with a `// SAFETY:` comment. None exists
+  today.
+- No `unwrap` or `expect` on data from files, assets, scripts or devices. Use typed error enums (as
+  `AssetError` does) that name the asset, file or value. `expect` is for violated internal invariants,
+  with a message.
+- Keep crate dependencies pointing downward as in `docs/ARCHITECTURE.md`. Math, world, asset and animation
+  code must not depend on the renderer or the window.
+- Public items are promises. Make things `pub` only when another crate needs them; keep helpers private.
+- Prefer deterministic behaviour: no wall-clock time or unseeded randomness in simulation.
+
+## Tests
+
+- A behaviour change comes with a test that fails without the change. For a bug fix, write the failing test
+  first. Pure logic gets unit tests; rendering gets offscreen pixel tests in `engine-renderer-wgpu/tests`.
+- Tests assert behaviour (a position, a pixel, an error), not that code ran. A test that skips must be able
+  to fail (`DIMORA_REQUIRE_GPU`).
+- New user-visible capabilities get a runnable example or an extension to `spatial_scene` or `basic_2_5d`, and
+  existing examples' headless `--screenshot` output must stay byte-identical unless the change is meant to
+  alter it.
+- Check a new test by breaking the code once and seeing it fail (mutation check); record notable ones in
+  `TASKS.md`.
+
+## Documentation
+
+- Public items get doc comments that say what, units and conventions, and failure behaviour. Run rustdoc with
+  warnings denied.
+- Comments explain intent, constraints or trade-offs. Do not narrate the code or the change.
+- When a task finishes, record the evidence in `TASKS.md` (commands run, results, what was not verified) and
+  update the system's row in `docs/CAPABILITIES.md`. State limits plainly.
+- Commit in small logical steps with messages that say what changed and why.

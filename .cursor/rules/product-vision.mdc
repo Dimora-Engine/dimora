@@ -1,0 +1,35 @@
+---
+description: Dimora product vision, design principles and non-goals. Read before proposing or planning any feature.
+alwaysApply: true
+---
+
+# Dimora product vision
+
+Dimora is a Rust engine for **spatial 2.5D games**. Central principle: 2.5D is a spatial world, not a stack
+of 2D layers. Sprites, tilemaps, 2D rigs, 3D meshes and 3D characters share transforms, camera, depth and
+resource infrastructure. They do not need to share one implementation.
+
+Full text lives in the docs; do not restate it here or in code:
+
+- Vision, principles, non-goals: `docs/VISION.md`
+- What exists today versus planned: `docs/CAPABILITIES.md`
+- Milestone order: `ROADMAP.md`; current milestone and tasks: `TASKS.md`
+
+## Working rules
+
+1. Before changing anything, read `TASKS.md` (current milestone) and the relevant rows of
+   `docs/CAPABILITIES.md`, and inspect the existing code. Reuse and extend existing systems.
+2. Implement only the current approved milestone and task. Do not start the next milestone, and do not add a
+   feature, crate or dependency "for later". If the task seems to need something outside the milestone, stop and
+   record it in `TASKS.md` instead.
+3. Prefer a small end-to-end version with a test and a runnable example over a general abstraction. Extract a
+   shared abstraction only when two real implementations show the same shape.
+4. Position in the world decides visibility, occlusion and parallax. Do not add integer layers or z-indices
+   where a position could express the same thing.
+5. Gameplay does not know about its visual representation, and scripts and tools do not know about renderer
+   internals.
+6. Respect the non-goals in `docs/VISION.md` (no general-purpose 3D engine, no Unity or Godot clone, no
+   physics solver, no networking, no second script language). Going against one needs an ADR with a concrete
+   need.
+7. Status must be honest. Never mark something done because a type or placeholder exists; "done" needs a
+   passing test or a recorded run. Update the status rows in the same commit that changes behaviour.

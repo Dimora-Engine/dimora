@@ -174,11 +174,16 @@ exist but are limited (see ROADMAP.md). There are no particles, collision, audio
 scene serialization, asset bundling or editor.
 
 Planned but not started: three character representations (sprite sheet, skeletal 2D, 3D skinned) over one
-gameplay model, a UI runtime, and gameplay scripting. See `ROADMAP.md` for their order and prerequisites.
+gameplay model, a UI runtime, and gameplay scripting. See `ROADMAP.md` for their order and prerequisites. The current
+milestone is M3a, the frame model (stages, commands, events), not started.
 
-What is done, what is not, and what comes next is tracked with evidence in:
+Each question has one home, so documents do not compete:
 
-* [`ROADMAP.md`](ROADMAP.md): milestones with prerequisites, acceptance criteria and deferred work.
-* [`TASKS.md`](TASKS.md): current milestone, known issues, blockers and the next three tasks.
-* [`docs/DECISIONS.md`](docs/DECISIONS.md): open architecture decisions, when each is needed and what it blocks.
-* [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md): the architecture as it exists, separated from what is proposed.
+* [`docs/VISION.md`](docs/VISION.md): what Dimora is for, its principles, platforms and non-goals.
+* [`docs/CAPABILITIES.md`](docs/CAPABILITIES.md): every system's status **today** (with evidence) versus planned.
+* [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md): how it is built, cross-system requirements and the risk register.
+* [`docs/DECISIONS.md`](docs/DECISIONS.md): open and made decisions; records in [`docs/adr/`](docs/adr/).
+* [`ROADMAP.md`](ROADMAP.md): milestones in dependency order, with prerequisites and acceptance criteria.
+* [`TASKS.md`](TASKS.md): the current milestone, its tasks, known issues, blockers and evidence.
+
+Contributors and agents also follow the project rules in [`.cursor/rules/`](.cursor/rules/).

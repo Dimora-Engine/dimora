@@ -8,73 +8,58 @@ Dimora is a purpose-built Rust engine for **spatial 2.5D games**. Its central pr
 
 It is not a general-purpose Unity clone. Features exist if a spatial 2.5D game needs them.
 
-This roadmap is written against the code as audited on 2026-10-12 (commit `6ad872f`). It was expanded
-on 2026-10-13 to plan three character representations, a UI runtime and gameplay scripting; that
-change is documentation only and no code has changed since the audit. The current
-state is in [TASKS.md](TASKS.md); how the engine is built is in
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md); open design questions are in
-[docs/DECISIONS.md](docs/DECISIONS.md).
+**Document map.** This file *orders* the work. It does not describe what exists or why:
+
+| Question | Where |
+|---|---|
+| What is Dimora for, and what is out of scope? | [docs/VISION.md](docs/VISION.md) |
+| What does each system do today, and what is planned? | [docs/CAPABILITIES.md](docs/CAPABILITIES.md) |
+| How is it built, what must hold across systems, what could be expensive to redo? | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
+| Which decisions are open, which are made and why? | [docs/DECISIONS.md](docs/DECISIONS.md), records in [docs/adr/](docs/adr/) |
+| What is being worked on now, known issues, task acceptance criteria? | [TASKS.md](TASKS.md) |
+
+This roadmap was audited and re-ordered on 2026-10-13 against commit `4857158` (after M2 tasks T1 to T3).
+It had been expanded earlier that day to plan three character representations, a UI runtime and gameplay
+scripting.
 
 Status values used below: **Done** (evidence cited), **In progress**, **Not started**. Nothing is marked in
-progress or partially done unless TASKS.md shows commits for it (M2 is in progress: tasks T1, T2 and T3 are done). No milestone after M1 is complete. Planning a
-system here does not mean it exists: the audit table below is the record of what does.
+progress or partially done unless TASKS.md shows commits for it. No milestone after M1 is complete. Planning
+a system here does not mean it exists: [docs/CAPABILITIES.md](docs/CAPABILITIES.md) is the record of what does.
 
 ## 1. Where the project stands
 
-### Capability audit
+**Implemented and tested:** math and conventions, a thin ECS world with a transform hierarchy, spatial
+sprite and mesh rendering through one camera and one depth buffer (orthographic and perspective),
+forward lighting and fog, an asset manager with revisions, GPU cache eviction and an id-collision guard,
+a winit platform loop, a reproducible toolchain and one verification command (`scripts/check.sh`, 138
+tests on Linux and, per TASKS.md, on macOS).
 
-"Working" means implemented, exercised by an example, and covered by a test unless stated. A type or
-module existing is not counted.
+**Partial:** tilemaps (no chunking), skeletal animation (a data model with one player), input (keys and
+mouse, no actions), assets (PNG only, synchronous), materials and textures (placeholders).
 
-| Area | State | Evidence and limits |
-|---|---|---|
-| Math (`Vec2/3/4`, `Quat`, `Mat3/4`, `Transform`, `Rect`) | Working | 22 unit tests. `f32` only. Non-uniform scale + rotated parent shears (not representable in `Transform`) |
-| ECS / world | Working, thin | `hecs` wrapper, typed resources, hierarchy; 7 tests. No events, change detection, deferred commands |
-| Transform hierarchy | Working on the happy path, 2 verified bugs | Parent/child tests pass; a child of a transform-less or despawned parent stays at the origin (scratch test, 2026-10-12). Full O(n) pass every frame |
-| Camera and projection | Working | 27 tests: view/proj/NDC chain, ortho/perspective known points, viewport, parallax. Two projections only; `Camera` cannot hold a custom `Projection` |
-| Rendering backend (wgpu) | Working | One forward pass, depth buffer, instancing; 7 GPU pixel tests (need a Vulkan adapter). One camera per frame, no render-to-texture |
-| Sprites | Working | Spatial quads; billboard/upright/fixed; flips, region, tint, anchor; cutout and alpha blend; batching (5000 sprites = 1 draw in a test). No atlas packer. Natural size ignores `region` (KI-21) |
-| 3D meshes | Working, basic | Indexed, instanced, culled, one albedo texture + colour. Only `cuboid` and `cone` generators. No loader, tangents, skinning, transparency |
-| Materials | Placeholder | `Material` = colour + optional albedo + `lit` flag. Not an asset; no alpha modes |
-| Textures | Partial | PNG decode; nearest/linear; clamp only; no mipmaps; always sRGB |
-| Lighting | Working, forward only | Ambient, directional, point, spot (max 16), wrap-lit sprites, fog; 1 GPU test for falloff. **No shadows, no normal maps, no API stubs for either** |
-| Tilemaps | Working, basic | `TileMap` expanded to cutout quads per frame (80x120 in the example); 1 extraction test. No chunking, loader, collision, animated tiles |
-| Skeletal animation (2D) | Data model + simple player | Bones are entities; linear TRS keyframes; looping; 4 tests; used by the demo character. `animate_system` writes sampled transforms straight onto bone entities and only visits entities with a `SkeletonInstance` (KI-22). No blending, events, IK, constraints, skins, file loading |
-| Sprite-sheet animation | Absent | Only building blocks: `Sprite.region/size/anchor` and `SpriteAsset` uv/pivot. No sheet, clip, animator, events, directions, transitions |
-| 3D characters / skinning | Absent | `Vertex` has no joints or weights; no tangents; no model loader (no glTF); no skin asset. A mesh can be a rigid child of a bone, which is attachment, not skinning |
-| Character gameplay layer | Absent | The `basic_2_5d` example calls `AnimationPlayer::play` from its own movement system; nothing separates gameplay state from visual representation |
-| UI | Absent | No font loading, text rendering, layout, widgets, focus or UI render pass. Input has pointer, scroll, arrows, Enter, Escape, Tab but no text input or scale factor (KI-24) |
-| Scripting | Absent | No runtime, no component registry, no command buffer or event channel, no `serde` |
-| Audio | Absent | No decoder, mixer or backend |
-| Particles | Absent | |
-| Collision / gameplay | Absent | |
-| Input | Working, narrow | 47 keys, mouse buttons/position/scroll, edge states, `axis()`; 5 core tests. No actions, gamepad, touch, text, cursor grab, F-keys |
-| Application lifecycle | Working | winit 0.30 loop, resize, exit, title; verified manually under Xvfb. Single window; `ControlFlow::Poll`; no fullscreen/vsync options |
-| Time | Working | `Time`, `FixedTimestep` (tested, max 8 steps/frame); `alpha()` unused |
-| Scheduling | Minimal | Sequential `Schedule`; engine stages hard-coded in `Game::step` |
-| Assets | Partial | Typed handles, name-hash ids, load/reload/revisions/dependencies, filesystem + memory sources; 8 tests. Synchronous; PNG is the only decoder; no hot-reload watcher; no ids that survive a rename |
-| Scene serialization | Absent | No `serde` in the workspace |
-| Debug tools | Minimal | Window-title stats (`RenderStats`) only |
-| Editor | Absent | |
-| Asset compiler / bundles | Absent | `AssetSource` trait is the planned plug-in point |
-| Packaging / release | Absent | `Cargo.toml` declares `MIT OR Apache-2.0` but there are no licence files; crates are `publish = false` |
-| CI / toolchain | Partial (T1, 2026-10-13) | Toolchain pinned (`rust-toolchain.toml`), MSRV 1.90 verified on macOS arm64, `scripts/check.sh`, `DIMORA_REQUIRE_GPU`. **No CI** (D-22); MSRV not yet built on Linux/Windows (KI-27) |
-| Examples | 2, both runnable windowed and headless | `basic_2_5d`, `spatial_scene` |
-| Networking | Absent, not planned | See "Unscheduled" |
+**Absent:** scheduling stages, events and commands, scenes, collision, sprite-sheet animation, 3D
+characters, UI, audio, particles, shadows, scripting, serialization, importers, bundles, debug tools, an
+editor, CI, packaging, logging.
 
-### Check results (2026-10-12)
+Per-system status, evidence and limits are in [docs/CAPABILITIES.md](docs/CAPABILITIES.md). The audit that
+produced this order found that the largest long-term risks are not missing features but a few
+cross-system shapes (asset identity, the render scene's structure, the mutation and threading model,
+public API and format promises); the risk register is in
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#cross-system-requirements-and-risks) and drives the "decide
+first" tiers in [docs/DECISIONS.md](docs/DECISIONS.md#what-to-resolve-first).
 
-| Check | Result |
-|---|---|
-| `cargo fmt --check` | Pass |
-| `cargo clippy --workspace --all-targets` | Pass, no warnings |
-| `cargo test --workspace` (stable 1.99.0) | Pass: 99 tests, 0 failures |
-| Same GPU tests with no Vulkan adapter | The 7 GPU tests **skip and still report `ok`** (seen on a fresh VM until `mesa-vulkan-drivers` was installed). With lavapipe: all 7 pass |
-| `cargo build` on rustc 1.83 | **Fail**: dependency `wayland-protocols 0.32.13` needs Cargo `edition2024` |
-| `cargo doc --workspace --no-deps` | 2 warnings (unresolved links in `crates/engine/src/lib.rs`) |
-| CI | None exists |
+### Current milestone and immediate scope
 
-Details and per-crate counts are in TASKS.md.
+* **Now: close M2.** All numbered tasks are done (T1 to T3). Two items remain, both blocked on the owner
+  rather than on code: licence files (KI-17) and CI configuration (D-22, no host chosen). Neither blocks
+  M3, so M2 is closed for planning purposes once they are listed as carried items in TASKS.md.
+* **Next: M3a, the frame model** (see M3 below). It is deliberately the first feature milestone because
+  collision, animation, scenes, UI and scripting all hang off its stages, commands and events, and because
+  three high-cost risks (R-5, R-7, R-8) are cheapest to settle before more systems exist.
+* **Then, in order:** M3b input and platform; M4 scenes and the registry shape; M5 materials and textures;
+  M6 renderer stabilisation. M7 (collision) and M8 (sprite sheets) can proceed in parallel after M3a, M4,
+  M5 and M6 as stated below; M9 is the first point where APIs freeze.
+* **Considered now, built later:** see "Considered now, implemented later" after the dependency graph.
 
 ## 2. Ordering rules
 
@@ -176,6 +161,26 @@ M6 + M19 ─► M20 debug tools ─► M22 editor (also M10, M19)
 M21 + M22 ─► M23 perf/stability ─► M24 packaging/release
 ```
 
+### Considered now, implemented later
+
+Each row is a capability nobody builds yet whose *shape* constrains work in the next few milestones. The
+"consider now" column is a design constraint or a decision, never a task to implement early.
+
+| Future capability | Built in | Consider now, because | Where it is recorded |
+|---|---|---|---|
+| Scene and asset serialization | M19 | Components must stay plain data (no GPU objects, no cached derived values); asset references must be restorable to a stable identity; entity references need remapping | ARCHITECTURE.md requirement 8; D-16, D-18, D-47 |
+| Hot reload | M17 | A reload takes effect at a stage boundary; consumers resolve assets per use instead of caching derived data in components | Requirement 6; D-16 |
+| Scripting | M18 | Commands, events and a component registry must exist first; scripts get a small versioned surface, not `hecs` or renderer types | Requirements 7 and 9; D-40 to D-45 |
+| Multiple cameras and render targets | M6 | `RenderScene` holds one view today; do not add features that assume a single view | R-2; D-08 |
+| Blended meshes, particles, skinned characters | M5, M12, M15 | They need a transparency class in the render model before they exist | R-1; D-05 |
+| Fixed-step interpolation | M3a | No previous-transform data exists; gameplay must keep reading un-interpolated `Transform` | R-3 |
+| UI in screen and world space | M10 | Window scale factor, sub-rectangle texture update and an overlay pass; M3b and M5 carry the prerequisites | R-12, KI-24, KI-25; D-24, D-37 to D-39 |
+| Three character representations | M8, M11, M12 | One gameplay entity with a replaceable visual subtree; gameplay must not name rendering types | D-28 to D-34 |
+| Save games | M18 to M24 | Not a scene file; needs its own versioned format and a state store shaped alongside the script API | D-46, D-47 |
+| Public API stability | M9 | Every re-exported type is a promise; stop adding public `hecs` types now | R-7; D-45 |
+| Gamepad, localisation, accessibility | later | Action maps and text and layout decisions can foreclose them if they assume keyboards, ASCII or fixed pixels | CAPABILITIES.md, additional categories |
+| Cross-platform determinism | M9 | Replay equality is promised on one platform only; platform trigonometry can differ | R-9 |
+
 ---
 
 ## M0. Foundation: Done
@@ -192,7 +197,7 @@ tests for viewport and orientation, `docs/SPATIAL_RENDERING.md`.
 
 ---
 
-## M2. Foundation hardening and CI: In progress (T1 done, see TASKS.md)
+## M2. Foundation hardening and CI: Substantially done (T1 to T3 done; licence files and CI remain, see TASKS.md)
 
 **Objective.** Make the build reproducible and fix the defects found in the audit before building
 more on top.
@@ -232,41 +237,81 @@ more on top.
 
 ---
 
-## M3. Input and update scheduling: Not started
+## M3. Frame model, input and platform: Not started
 
-**Objective.** A deterministic, documented frame with ordered stages, and an input layer sufficient
-for a real game.
+**Objective.** A deterministic, documented frame with ordered stages, safe mutation and events, and an
+input and platform layer sufficient for a real game. Delivered in **two slices** so each can be completed
+and verified: M3a (the frame model; the immediate milestone) and M3b (input and platform). M3b may start
+once M3a's stage and event API is merged; it does not need M3a's interpolation.
 
-**Prerequisites.** M2.
+**Prerequisites.** M2 (closed for planning). Decisions made *before code*, as ADRs from M3a's first task:
+D-44 (threading rule), D-01 (scheduling), D-10 (events and commands), D-02 (change detection; "none until
+profiled" is a valid answer), D-45 (public API tiers, rule only), D-47 (format versioning rule), D-21
+(logging crate).
+
+### M3a. Frame model
 
 **Tasks.**
-- Named stages: input -> fixed update (N steps) -> update -> animate -> post-update (transform
-  propagation) -> extract -> render. User systems attach to a stage, with explicit ordering
-  (`before`/`after` by name). Engine stages stop being hard-wired inside `Game::step` (D-01).
-- Expose the fixed-step alpha and add opt-in transform interpolation for entities moved in the fixed
-  stage.
-- Deferred command buffer (`Commands`) flushed at stage boundaries, and typed event channels cleared per
-  frame (D-10). Later consumers: collision (M7), animation events (M8, M11), UI (M10), scripts (M18).
-- Input: full key set (F-keys, punctuation, numpad), cursor grab/visibility, an action map (named
-  actions and axes bound to keys/buttons), raw mouse delta.
-- Window/frame config: vsync on/off, optional frame cap, fullscreen toggle.
+1. **Design note and ADRs**, with a throwaway prototype of stages plus a command buffer to check the
+   leaning in D-01/D-10 against the `RefCell` resources (KI-9). Records the threading rule (D-44) so the
+   scheduler is built for it. No engine code merged in this task except ADRs and docs.
+2. Named stages: input -> fixed update (N steps) -> update -> animate -> post-update (transform
+   propagation) -> extract -> render. User systems attach to a stage, with explicit ordering
+   (`before`/`after` by name). Engine stages stop being hard-wired inside `Game::step` (D-01).
+3. Deferred command buffer (`Commands`) flushed at stage boundaries, and typed event channels cleared per
+   frame (D-10). Later consumers: collision (M7), animation events (M8, M11), UI (M10), scripts (M18).
+4. Logging facade used by the engine crates (D-21): a failed asset load, a skipped renderable and a lost
+   surface each log once with the asset or cause named.
+5. Expose the fixed-step alpha and add opt-in transform interpolation for entities moved in the fixed
+   stage, without changing what simulation reads (R-3).
+6. Stop adding public `hecs` types; write the three-tier rule from D-45 into ARCHITECTURE.md (the full list
+   waits for M9).
 
-**Dependencies.** D-01, D-02, D-10.
+**Dependencies.** D-44, D-01, D-10, D-02, D-45, D-47, D-21.
 
 **Acceptance criteria.**
 - A test registers systems out of order across stages with `before`/`after` and observes the
-  documented order.
-- A fixed-step entity moved at 60 Hz with a 144 Hz render rate produces monotonically increasing
-  interpolated positions in successive extracted scenes (test through `Game::step` + `extract`).
+  documented order; an impossible ordering (cycle) is an error, not a hang.
 - Commands queued while iterating a query apply at the stage end (test).
 - An event sent in one stage is readable by a system in a later stage of the same frame and gone the next
   frame (test).
+- A fixed-step entity moved at 60 Hz with a 144 Hz render rate produces monotonically increasing
+  interpolated positions in successive extracted scenes (test through `Game::step` + `extract`), and a
+  system reading `Transform` in the fixed stage sees the un-interpolated value.
+- A failed asset load produces exactly one log record containing the asset name (test with a capturing
+  logger).
+- Existing behaviour is unchanged: `scripts/check.sh` passes and the headless screenshots of
+  `basic_2_5d` and `spatial_scene` (perspective and `--ortho`) are byte-identical to those from the
+  commit before M3a.
+- ADRs for D-44, D-01, D-10, D-45, D-47 and D-21 exist, and D-02 is either decided or recorded as
+  "deferred to profiling".
+
+**Tests/examples.** Scheduler unit tests, command and event tests, interpolation test, logging test; both
+examples ported to the stage API (behaviour unchanged).
+
+### M3b. Input and platform
+
+**Tasks.**
+- Input: full key set (F-keys, punctuation, numpad), cursor grab/visibility, raw mouse delta, and an
+  action map (named actions and axes bound to keys and buttons) that does not assume a keyboard, so a
+  gamepad can bind later.
+- Platform: forward the window scale factor and its changes; `Viewport` carries physical size, logical
+  size and scale (moved here from M10: R-12); vsync on/off, optional frame cap, fullscreen toggle.
+
+**Dependencies.** D-10 (input events through the M3a channels), D-39 (scaling model, in outline).
+
+**Acceptance criteria.**
 - Action map unit tests cover press, release, axis and rebinding.
+- A scale-factor change produces a consistent `Viewport` (physical, logical, scale) and pointer
+  coordinates in logical units (test on the pure mapping function; a manual check on a HiDPI display).
 - `spatial_scene` uses actions instead of raw keys.
+- A manual checklist for fullscreen, vsync and cursor grab exists in README or TASKS and was run on at
+  least one OS.
 
-**Tests/examples.** Scheduler unit tests, interpolation test, action map tests; updated examples.
+**Tests/examples.** Action map tests, mapping tests, updated examples.
 
-**Deferred.** Parallel system execution, gamepad, touch, text input/IME, rebinding UI.
+**Deferred (both slices).** Parallel system execution, gamepad, touch, text input/IME, rebinding UI,
+multi-window.
 
 ---
 
