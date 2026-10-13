@@ -1,0 +1,96 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  # The GPU tests must fail, not skip, when a runner has no usable adapter (see README, "Testing").
+  DIMORA_REQUIRE_GPU: "1"
+
+jobs:
+  # The same command a developer runs locally: fmt, clippy -D warnings, tests, rustdoc -D warnings,
+  # on the toolchain pinned in rust-toolchain.toml. Then both examples render headless screenshots.
+  check:
+    name: check (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the pinned toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - name: Install a software Vulkan driver (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mesa-vulkan-drivers
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: scripts/check.sh
+        run: scripts/check.sh
+
+      - name: Record which adapter the GPU tests used
+        run: cargo test -p engine-renderer-wgpu --locked --test headless -- --nocapture --test-threads=1 2>&1 | grep -i -E 'adapter' | sort -u || true
+
+      - name: Example smoke runs (headless screenshots)
+        run: |
+          mkdir -p ci-out
+          cargo run --locked --release -p basic_2_5d -- --screenshot ci-out/basic.png
+          cargo run --locked --release -p spatial_scene -- --screenshot ci-out/spatial.png
+          cargo run --locked --release -p spatial_scene -- --screenshot ci-out/spatial_ortho.png --ortho
+          test -s ci-out/basic.png && test -s ci-out/spatial.png && test -s ci-out/spatial_ortho.png
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: screenshots-${{ matrix.os }}
+          path: ci-out/*.png
+          if-no-files-found: error
+
+  # The minimum supported Rust version is only a claim until it is built (KI-27). Locked graph only.
+  msrv:
+    name: msrv 1.90 (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust 1.90.0
+        run: rustup toolchain install 1.90.0 --profile minimal
+
+      - name: Install a software Vulkan driver (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mesa-vulkan-drivers
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: msrv
+
+      - name: cargo +1.90.0 test --workspace --locked
+        run: cargo +1.90.0 test --workspace --locked
