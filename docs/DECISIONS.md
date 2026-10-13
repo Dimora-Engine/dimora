@@ -531,9 +531,15 @@ this text with results.
 
 ### D-20 Editor technology
 
+* **Context (2026-10-13).** The editor is a core product goal: a user-friendly tool for building spatial
+  worlds, not only for code authors. Its *technology* can wait, but its *requirements* shape earlier
+  decisions (D-10 commands and undo, D-18 registry with field metadata, D-16 stable ids, D-08 camera targets,
+  D-47 formats). Those decisions must list the editor as a consumer.
 * **Options.** Reuse the engine's own UI runtime (M10); an immediate-mode library inside a dedicated
-  crate; a separate application; a web UI.
-* **Needed by.** M22, after D-24 and D-18. **Blocks.** M22 only.
+  crate; a separate application; a web UI. Whichever is chosen must give end users a friendly experience,
+  which weighs against a purely developer-style tool.
+* **Needed by.** M22, after D-24 and D-18; run a short spike when M10 finishes to test the choice and to
+  check whether the editor can start earlier than M22. **Blocks.** M22 and any earlier editor start.
 
 ## Added by the 2026-10-13 audit
 

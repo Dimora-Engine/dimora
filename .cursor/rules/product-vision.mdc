@@ -5,9 +5,11 @@ alwaysApply: true
 
 # Dimora product vision
 
-Dimora is a Rust engine for **spatial 2.5D games**. Central principle: 2.5D is a spatial world, not a stack
-of 2D layers. Sprites, tilemaps, 2D rigs, 3D meshes and 3D characters share transforms, camera, depth and
-resource infrastructure. They do not need to share one implementation.
+Dimora is a Rust game engine built around a unified spatial model for 2.5D game development, combining
+powerful programming APIs with purpose-built visual tools, including a user-friendly editor. Central
+principle: 2.5D is a spatial world, not a stack of 2D layers. Sprites, tilemaps, 2D rigs, 3D meshes and 3D
+characters share transforms, camera, depth and resource infrastructure. They do not need to share one
+implementation. The editor is a core goal, not an optional extra.
 
 Full text lives in the docs; do not restate it here or in code:
 
@@ -24,12 +26,15 @@ Full text lives in the docs; do not restate it here or in code:
    record it in `TASKS.md` instead.
 3. Prefer a small end-to-end version with a test and a runnable example over a general abstraction. Extract a
    shared abstraction only when two real implementations show the same shape.
-4. Position in the world decides visibility, occlusion and parallax. Do not add integer layers or z-indices
+4. Design for the editor now: components are plain, named, serializable data, changes go through commands that
+   can be undone, assets and entities have stable ids. Build no feature that hides state an editor must edit,
+   and no feature that works only in the editor. Do not build the editor ahead of its milestone.
+5. Position in the world decides visibility, occlusion and parallax. Do not add integer layers or z-indices
    where a position could express the same thing.
-5. Gameplay does not know about its visual representation, and scripts and tools do not know about renderer
+6. Gameplay does not know about its visual representation, and scripts and tools do not know about renderer
    internals.
-6. Respect the non-goals in `docs/VISION.md` (no general-purpose 3D engine, no Unity or Godot clone, no
-   physics solver, no networking, no second script language). Going against one needs an ADR with a concrete
+7. Respect the non-goals in `docs/VISION.md` (no general-purpose 3D engine, no Unity or Godot clone, no
+   physics solver, no networking, no second script language). The editor is a goal, not a non-goal. Going against one needs an ADR with a concrete
    need.
-7. Status must be honest. Never mark something done because a type or placeholder exists; "done" needs a
+8. Status must be honest. Never mark something done because a type or placeholder exists; "done" needs a
    passing test or a recorded run. Update the status rows in the same commit that changes behaviour.

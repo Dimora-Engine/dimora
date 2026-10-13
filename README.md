@@ -1,7 +1,13 @@
 # 2.5D engine
 
-A Rust game engine framework for **spatial 2.5D games**: 2D sprites, skeletal 2D characters, tilemaps and real 3D
-meshes living in *one* world, seen through *one* camera and shaded by *one* set of lights.
+Dimora is a Rust game engine built around a unified spatial model for 2.5D game development. It brings 2D sprites,
+tilemaps, skeletal 2D characters, 3D meshes and fully 3D characters into a shared world with coherent transforms,
+cameras, depth and rendering, and aims to make hybrid 2D/3D games natural to build through programming APIs combined
+with purpose-built visual tools, including a user-friendly editor.
+
+**Today** Dimora is a code-driven engine: sprites, tilemaps, a skeletal 2D data model and 3D meshes share one world,
+one camera and one set of lights. The editor and the other character types are planned, not built; see
+[Status](#status).
 
 > **2.5D is a spatial world, not a fake 2D layer system.** Every object has a real `Vec3` position. Depth drives
 > projection, parallax, occlusion and lighting. There is no integer z-index.

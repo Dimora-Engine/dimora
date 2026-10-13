@@ -1,12 +1,16 @@
 # Dimora roadmap
 
-Dimora is a purpose-built Rust engine for **spatial 2.5D games**. Its central principle:
+Dimora is a Rust game engine built around a unified spatial model for 2.5D game development, combining
+powerful programming APIs with purpose-built visual tools, including a user-friendly editor. Its central
+principle:
 
 > **2.5D is a spatial world, not a fake 2D layer system.** Sprites, skeletal characters, tiles,
 > particles and 3D meshes all live in one world with real X/Y/Z, are seen through real cameras, and
 > are lit by one lighting system.
 
-It is not a general-purpose Unity clone. Features exist if a spatial 2.5D game needs them.
+It is not a general-purpose engine: features exist if a spatial 2.5D game needs them. The editor is a core
+product goal (M22), built on foundations that are designed for it from the start (see "Considered now,
+implemented later").
 
 **Document map.** This file *orders* the work. It does not describe what exists or why:
 
@@ -110,13 +114,13 @@ world and the same depth buffer.
 | 10 Audio, lighting, shadows, particles | M14 lighting and shadows, M15 particles, M16 audio | Separate milestones; independent of each other. Lighting comes after all three character types so shadows handle all of them. Audio is before scripting because scripts call it |
 | 11 Gameplay scripting | M18 | After M9, M3, M4, M10, M16, M17. **Before** scene serialization, so the scene format can hold script components from the start |
 | 12 Scene serialization and developer tools | M19, M20 | |
-| 13 Minimal editor | M22 | |
+| 13 Editor (first usable version) | M22 | A core product goal; its foundations are designed in from M3 |
 | 14 Production readiness | M23, M24 | |
 | Not in the list | M13 tilemaps | Independent; can run any time after M7 |
 
 The earlier 17-stage list is covered as follows: stages 1 to 6 as above; 7 skeletal animation is M11;
 8 tilemaps M13; 9 lighting and shadows M14; 10 particles M15; 11 asset management M17; 12 compiler M21;
-13 serialization M19; 14 debugging M20; 15 editor M22; 16 performance M23; 17 packaging M24. Two
+13 serialization M19; 14 debugging M20; 15 editor M22 (first version); 16 performance M23; 17 packaging M24. Two
 milestones are additions: **M2** (known defects and a reproducible build before building more) and **M9**
 (the integration point for gameplay, character and scene APIs).
 
@@ -178,6 +182,7 @@ Each row is a capability nobody builds yet whose *shape* constrains work in the 
 | Three character representations | M8, M11, M12 | One gameplay entity with a replaceable visual subtree; gameplay must not name rendering types | D-28 to D-34 |
 | Save games | M18 to M24 | Not a scene file; needs its own versioned format and a state store shaped alongside the script API | D-46, D-47 |
 | Public API stability | M9 | Every re-exported type is a promise; stop adding public `hecs` types now | R-7; D-45 |
+| The editor (viewport, inspector, undo, play-in-editor) | M22 | Components must be named, plain, serializable data with field metadata; mutations go through undoable commands; entities and assets need stable ids; the editor's viewport is the real renderer, so it needs camera-to-texture and picking through queries | ARCHITECTURE.md requirement 7 and R-15; D-08, D-10, D-18, D-20 |
 | Gamepad, localisation, accessibility | later | Action maps and text and layout decisions can foreclose them if they assume keyboards, ASCII or fixed pixels | CAPABILITIES.md, additional categories |
 | Cross-platform determinism | M9 | Replay equality is promised on one platform only; platform trigonometry can differ | R-9 |
 
@@ -1035,9 +1040,13 @@ bytecode if the chosen runtime supports it).
 
 ---
 
-## M22. Minimal editor: Not started
+## M22. Editor, first usable version: Not started
 
-**Objective.** Edit and save a scene visually.
+**Objective.** The first version of Dimora's user-friendly editor: build, arrange and save a spatial scene
+visually, on the same scene files and components the code uses. This is the start of the editor, not its
+end; it is scheduled here only because it needs scenes, the component registry, serialization and debug
+tools underneath. Those prerequisites are designed for the editor from M3 onward, and the editor is not to be
+treated as optional or as a late add-on.
 
 **Prerequisites.** M6 (camera-to-texture), M10 (UI runtime, if D-20 chooses to use it), M19, M20, D-20.
 
