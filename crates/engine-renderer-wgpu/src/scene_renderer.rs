@@ -19,14 +19,29 @@ pub struct FrameStats {
     pub mesh_instances: u32,
 }
 
+/// Frames a cached texture or mesh may go unused before it is evicted, unless configured otherwise
+/// (see [`SceneRenderer::set_cache_max_idle_frames`]). About two seconds at 60 frames per second.
+pub const DEFAULT_CACHE_MAX_IDLE_FRAMES: u32 = 120;
+
+/// How many assets currently have a GPU copy in the renderer's caches. The built-in placeholder
+/// textures are not counted, so an idle renderer reports zero.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CacheStats {
+    pub textures: usize,
+    pub meshes: usize,
+}
+
 struct GpuTexture {
     revision: u32,
+    /// Value of `SceneRenderer::frame` when a frame last drew with this texture.
+    last_used: u64,
     bind_group: wgpu::BindGroup,
     _texture: wgpu::Texture,
 }
 
 struct GpuMesh {
     revision: u32,
+    last_used: u64,
     vertices: wgpu::Buffer,
     indices: wgpu::Buffer,
     index_count: u32,
@@ -88,6 +103,9 @@ pub struct SceneRenderer {
     mesh_instances: InstanceBuffer,
     depth: Option<(wgpu::TextureView, (u32, u32))>,
     stats: FrameStats,
+    /// Number of `render` calls so far; the clock for idle eviction.
+    frame: u64,
+    cache_max_idle_frames: u32,
 }
 
 impl SceneRenderer {
@@ -254,6 +272,8 @@ impl SceneRenderer {
             mesh_instances: InstanceBuffer::new(device, "mesh instances"),
             depth: None,
             stats: FrameStats::default(),
+            frame: 0,
+            cache_max_idle_frames: DEFAULT_CACHE_MAX_IDLE_FRAMES,
         }
     }
 
@@ -264,6 +284,22 @@ impl SceneRenderer {
     /// Counters from the most recent [`SceneRenderer::render`].
     pub fn stats(&self) -> FrameStats {
         self.stats
+    }
+
+    /// How many textures and meshes are cached on the GPU right now.
+    pub fn cache_stats(&self) -> CacheStats {
+        CacheStats { textures: self.textures.len(), meshes: self.meshes.len() }
+    }
+
+    /// A cached texture or mesh that no frame has drawn with for this many consecutive frames is
+    /// evicted and re-uploaded if it is needed again. Values below 1 are treated as 1; use
+    /// `u32::MAX` to evict only assets that were removed from the manager.
+    pub fn set_cache_max_idle_frames(&mut self, frames: u32) {
+        self.cache_max_idle_frames = frames.max(1);
+    }
+
+    pub fn cache_max_idle_frames(&self) -> u32 {
+        self.cache_max_idle_frames
     }
 
     /// Records and submits one frame into `target`.
@@ -277,6 +313,7 @@ impl SceneRenderer {
     ) {
         gpu.queue.write_buffer(&self.globals, 0, bytemuck::bytes_of(&GpuGlobals::from_scene(scene)));
 
+        self.frame += 1;
         for layer in [&scene.cutout_sprites, &scene.blended_sprites] {
             for batch in &layer.batches {
                 self.ensure_texture(gpu, assets, batch.texture);
@@ -288,6 +325,7 @@ impl SceneRenderer {
                 self.ensure_texture(gpu, assets, t);
             }
         }
+        self.evict_unused(assets);
 
         self.cutout_instances.upload(gpu, &sprite_instances(&scene.cutout_sprites));
         self.blend_instances.upload(gpu, &sprite_instances(&scene.blended_sprites));
@@ -469,25 +507,50 @@ impl SceneRenderer {
         self.depth = Some((texture.create_view(&wgpu::TextureViewDescriptor::default()), size));
     }
 
-    /// Uploads (or re-uploads after a revision bump) the GPU copy of a texture asset. Assets that
-    /// are not loaded get no entry, and draws fall back to a magenta placeholder.
+    /// Drops GPU copies whose asset is gone from the manager and copies no frame has used for
+    /// `cache_max_idle_frames` frames. Runs after this frame's uploads and before drawing, so
+    /// everything the frame needs is already marked as used, and a removed asset can never be
+    /// drawn from a stale copy.
+    fn evict_unused(&mut self, assets: &AssetManager) {
+        let (frame, max_idle) = (self.frame, self.cache_max_idle_frames as u64);
+        let keep = |last_used: u64, exists: bool| exists && frame - last_used < max_idle;
+        self.textures.retain(|id, t| keep(t.last_used, assets.get(AssetHandle::<Texture>::from_id(*id)).is_some()));
+        self.meshes.retain(|id, m| keep(m.last_used, assets.get(AssetHandle::<MeshData>::from_id(*id)).is_some()));
+    }
+
+    /// Uploads (or re-uploads after a revision change) the GPU copy of a texture asset and marks it
+    /// as used this frame. Assets that are not loaded get no entry, and draws fall back to a magenta
+    /// placeholder. Replacing an entry drops the previous GPU copy.
     fn ensure_texture(&mut self, gpu: &GpuContext, assets: &AssetManager, handle: AssetHandle<Texture>) {
         let revision = assets.revision(handle);
-        if revision == 0 || matches!(self.textures.get(&handle.id()), Some(t) if t.revision == revision) {
+        if revision == 0 {
             return;
+        }
+        if let Some(cached) = self.textures.get_mut(&handle.id()) {
+            if cached.revision == revision {
+                cached.last_used = self.frame;
+                return;
+            }
         }
         let Some(tex) = assets.get(handle) else { return };
         let sampler = &self.samplers[(tex.filter == TextureFilter::Linear) as usize];
         let mut gpu_tex =
             upload_texture(gpu, &self.texture_layout, sampler, tex.width, tex.height, &tex.rgba, "asset texture");
         gpu_tex.revision = revision;
+        gpu_tex.last_used = self.frame;
         self.textures.insert(handle.id(), gpu_tex);
     }
 
     fn ensure_mesh(&mut self, gpu: &GpuContext, assets: &AssetManager, handle: AssetHandle<MeshData>) {
         let revision = assets.revision(handle);
-        if revision == 0 || matches!(self.meshes.get(&handle.id()), Some(m) if m.revision == revision) {
+        if revision == 0 {
             return;
+        }
+        if let Some(cached) = self.meshes.get_mut(&handle.id()) {
+            if cached.revision == revision {
+                cached.last_used = self.frame;
+                return;
+            }
         }
         let Some(mesh) = assets.get(handle) else { return };
         let vertices = gpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -500,8 +563,10 @@ impl SceneRenderer {
             contents: bytemuck::cast_slice(&mesh.indices),
             usage: wgpu::BufferUsages::INDEX,
         });
-        self.meshes
-            .insert(handle.id(), GpuMesh { revision, vertices, indices, index_count: mesh.indices.len() as u32 });
+        self.meshes.insert(
+            handle.id(),
+            GpuMesh { revision, last_used: self.frame, vertices, indices, index_count: mesh.indices.len() as u32 },
+        );
     }
 }
 
@@ -586,5 +651,5 @@ fn upload_texture(
             wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(sampler) },
         ],
     });
-    GpuTexture { revision: 0, bind_group, _texture: texture }
+    GpuTexture { revision: 0, last_used: 0, bind_group, _texture: texture }
 }

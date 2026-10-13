@@ -14,6 +14,6 @@ mod scene_renderer;
 mod window;
 
 pub use gpu::{GpuContext, RenderError};
-pub use scene_renderer::{FrameStats, SceneRenderer};
+pub use scene_renderer::{CacheStats, FrameStats, SceneRenderer, DEFAULT_CACHE_MAX_IDLE_FRAMES};
 pub use wgpu;
 pub use window::WindowRenderer;
