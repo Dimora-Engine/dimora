@@ -1,26 +1,130 @@
-//! Renders small scenes offscreen and inspects pixels. Skips (with a message) when the machine has
-//! no usable adapter, e.g. CI without a software Vulkan driver.
+//! Renders small scenes offscreen and inspects pixels.
+//!
+//! When the machine has no usable GPU adapter these tests skip with a message (and still report `ok`),
+//! unless `DIMORA_REQUIRE_GPU=1` is set, in which case a missing adapter fails them. `scripts/check.sh`
+//! sets the variable. The skip-or-fail decision is [`on_gpu_unavailable`], which is a pure function so it
+//! can be tested without removing the GPU.
 
 use engine_assets::{AssetManager, MeshData, SpriteAsset, Texture};
 use engine_core::Color;
 use engine_math::{Quat, Transform, Vec2, Vec3};
 use engine_renderer::*;
-use engine_renderer_wgpu::{GpuContext, SceneRenderer};
+use engine_renderer_wgpu::{GpuContext, RenderError, SceneRenderer};
 use engine_world::{propagate_transforms, World};
 
 const W: u32 = 128;
 const H: u32 = 128;
 
+/// Name of the environment variable that turns "no GPU" from a skip into a failure.
+const REQUIRE_GPU_VAR: &str = "DIMORA_REQUIRE_GPU";
+
+/// What a GPU test does when it cannot get a GPU.
+#[derive(Debug, PartialEq, Eq)]
+enum GpuUnavailable {
+    /// Print the message and return. The test still reports `ok` without having rendered anything.
+    Skip(String),
+    /// Panic with the message.
+    Fail(String),
+}
+
+/// Decides between skipping and failing when `GpuContext::headless()` returned `error`.
+///
+/// `require_gpu` is the value of `DIMORA_REQUIRE_GPU` (`None` when unset); only the exact value `1` makes
+/// the GPU mandatory. `os` is `std::env::consts::OS` and only selects the hint in the failure message.
+fn on_gpu_unavailable(error: &RenderError, require_gpu: Option<&str>, os: &str) -> GpuUnavailable {
+    if require_gpu != Some("1") {
+        return GpuUnavailable::Skip(format!("skipping GPU test: {error}"));
+    }
+    let what = match error {
+        RenderError::NoAdapter(_) => "no GPU adapter was found",
+        _ => "a GPU adapter was found but it could not be used",
+    };
+    let hint = match os {
+        "linux" => {
+            "Install a Vulkan driver, for example the lavapipe software driver: \
+             `sudo apt install mesa-vulkan-drivers`."
+        }
+        "macos" => {
+            "wgpu uses Metal on macOS, so this usually means the process has no GPU access \
+             (a virtual machine or a restricted sandbox) or WGPU_BACKEND excludes Metal."
+        }
+        _ => "Install or enable a GPU driver that wgpu supports (Vulkan, Metal or DX12).",
+    };
+    GpuUnavailable::Fail(format!("{REQUIRE_GPU_VAR}=1 but {what}: {error}. {hint} Unset {REQUIRE_GPU_VAR} to skip."))
+}
+
 fn setup() -> Option<(GpuContext, SceneRenderer)> {
     match GpuContext::headless() {
         Ok(gpu) => {
+            let info = gpu.adapter.get_info();
+            eprintln!("GPU test adapter: {} ({:?}, {:?})", info.name, info.backend, info.device_type);
             let r = SceneRenderer::new(&gpu, wgpu::TextureFormat::Rgba8UnormSrgb);
             Some((gpu, r))
         }
         Err(e) => {
-            eprintln!("skipping GPU test: {e}");
-            None
+            let require = std::env::var(REQUIRE_GPU_VAR).ok();
+            match on_gpu_unavailable(&e, require.as_deref(), std::env::consts::OS) {
+                GpuUnavailable::Skip(message) => {
+                    eprintln!("{message}");
+                    None
+                }
+                GpuUnavailable::Fail(message) => panic!("{message}"),
+            }
         }
+    }
+}
+
+#[cfg(test)]
+mod gpu_requirement {
+    use super::*;
+
+    fn no_adapter() -> RenderError {
+        RenderError::NoAdapter("no backend produced an adapter".into())
+    }
+
+    #[test]
+    fn unset_skips_with_the_existing_message() {
+        let out = on_gpu_unavailable(&no_adapter(), None, "linux");
+        let GpuUnavailable::Skip(message) = out else { panic!("expected Skip, got {out:?}") };
+        assert!(message.starts_with("skipping GPU test"), "{message}");
+    }
+
+    #[test]
+    fn only_the_exact_value_one_requires_a_gpu() {
+        for value in ["0", "", "true", "yes", "2", " 1"] {
+            let out = on_gpu_unavailable(&no_adapter(), Some(value), "linux");
+            assert!(matches!(out, GpuUnavailable::Skip(_)), "value {value:?} gave {out:?}");
+        }
+    }
+
+    #[test]
+    fn required_and_missing_fails_and_says_no_adapter_was_found() {
+        for os in ["linux", "macos", "windows"] {
+            let out = on_gpu_unavailable(&no_adapter(), Some("1"), os);
+            let GpuUnavailable::Fail(message) = out else { panic!("expected Fail on {os}, got {out:?}") };
+            assert!(message.contains("no GPU adapter was found"), "{os}: {message}");
+            assert!(message.contains("DIMORA_REQUIRE_GPU=1"), "{os}: {message}");
+        }
+    }
+
+    #[test]
+    fn linux_failure_suggests_a_vulkan_driver() {
+        let GpuUnavailable::Fail(message) = on_gpu_unavailable(&no_adapter(), Some("1"), "linux") else {
+            panic!("expected Fail")
+        };
+        assert!(message.contains("mesa-vulkan-drivers"), "{message}");
+        let GpuUnavailable::Fail(mac) = on_gpu_unavailable(&no_adapter(), Some("1"), "macos") else {
+            panic!("expected Fail")
+        };
+        assert!(!mac.contains("mesa-vulkan-drivers"), "{mac}");
+    }
+
+    #[test]
+    fn required_with_an_unusable_adapter_also_fails() {
+        let error = RenderError::Device("out of memory".into());
+        let out = on_gpu_unavailable(&error, Some("1"), "linux");
+        let GpuUnavailable::Fail(message) = out else { panic!("expected Fail, got {out:?}") };
+        assert!(message.contains("could not be used") && message.contains("out of memory"), "{message}");
     }
 }
 
