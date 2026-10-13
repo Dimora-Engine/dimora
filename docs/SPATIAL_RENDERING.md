@@ -293,6 +293,6 @@ orthographic everything shifts together.
 ## What this milestone deliberately does not include
 
 Shadows, new lighting features, skeletal-animation changes, physics, particles, post-processing,
-editor and scripting. (The lighting and skeleton code from the previous milestone is untouched; the
+editor and scripting (both planned; see VISION.md). (The lighting and skeleton code from the previous milestone is untouched; the
 spatial example simply opts out of lighting with unlit sprites and materials so that it shows the
 projection and nothing else.)

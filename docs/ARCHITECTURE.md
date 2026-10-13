@@ -305,10 +305,11 @@ systems they touch. Each cites evidence from this audit.
 | R-12 | **Logical versus physical pixels.** The code uses physical pixels everywhere; no scale factor | KI-24 | Moderate, spread across viewport, pointer, UI and screenshots | Forward scale factor and logical size in M3's platform slice, not at M10 |
 | R-13 | **No diagnostics.** No logging; failures are silent or polled | zero logging calls in the workspace | Low now, rising with every call site | Add the facade in M3 (D-21 split) |
 | R-14 | **Verification is narrow.** No CI; GPU tests skip unless `DIMORA_REQUIRE_GPU=1`; Windows never built; pixel tests tolerate small differences across adapters | TASKS.md; KI-3, KI-27 | Rises steadily; regressions on untested platforms found by users | CI (D-22) as soon as a host is chosen; a Windows build early |
+| R-15 | **Foundations not yet shaped for the editor.** The editor is a core product goal, but nothing yet carries what it needs: components have no field names, types, ranges or defaults; there are no undoable commands; entities and assets lack stable identities (R-4); no scene format; the renderer draws one view (R-2) so an editor viewport has nowhere to render; `RenderScene` is a one-way snapshot, so picking needs world queries | `components.rs`, `world.rs`, `extract.rs`; CAPABILITIES rows 2, 8, 32, 33, 36 | High: retrofitting field metadata, commands and identities onto many components and systems is the same cost as R-4 and R-5 | Treat editor needs as acceptance criteria of M3 (commands), M4 (registry with field metadata), M6 (camera-to-texture) and M19 (serialization); write no component or system that hides state the editor must edit |
 
 Expensive redesigns, ranked by likelihood times cost, if nothing changes: **R-4 (asset identity)**, **R-1
 and R-2 (render model shape)**, **R-5 and R-8 (mutation and threading)**, **R-7 and R-6 (API and format
-promises)**. Everything else is local to one system.
+promises)**, and **R-15 (editor-shaped foundations)**, which compounds R-4 and R-5. Everything else is local to one system.
 
 ## Decisions already made
 

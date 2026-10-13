@@ -86,7 +86,7 @@ without it.
 | 33 | Serialization (scenes) | Absent | No `serde`; no component registry | M19 |
 | 34 | Save games and persistent state | Absent, unscheduled | Distinct from scene files | add (M19+) |
 | 35 | Debugging and profiling | Minimal | `RenderStats` in the window title | M20 |
-| 36 | Editor and inspection | Absent | | M22 |
+| 36 | Editor and inspection (core goal) | Absent | Foundations (registry, commands, ids) not yet shaped for it, R-15 | M22 |
 | 37 | Build, CI, packaging | Partial | Pinned toolchain, `check.sh`; no CI, no licence files, no release | M2, M24 |
 | 38 | Docs, examples, tests, onboarding | Partial | Accurate README and docs, 2 examples, 138 tests; no rustdoc guide, no tutorial | M24 |
 
@@ -466,10 +466,19 @@ Missing from the original category list and now tracked: **save games** (34), **
 * **Not initially.** Remote debugging, GPU profiler integration.
 
 ### 36. Editor and inspection
-* **Now.** Absent. **Planned.** M22 after scenes, assets and debug tools exist (D-20). Editor and runtime
-  are separate: the runtime must run with the editor absent, and the editor edits through the component
-  registry and commands, not renderer internals. Undo/redo is command-based.
-* **Not initially.** Visual UI editor, tilemap painter, animation editors, plugins.
+* **Purpose.** A user-friendly editor for building spatial worlds visually, on the same scenes and
+  components as code. A core product goal ([VISION.md](VISION.md)), not an optional extra.
+* **Now.** Absent. **Planned.** First usable version at M22, after scenes, assets and debug tools exist
+  (D-20); the foundations it needs are designed in from M3 (R-15). Editor and runtime are separate: the
+  runtime must run with the editor absent and nothing may be possible only in the editor. The editor edits
+  through the component registry and commands, not renderer internals. Undo/redo is command-based.
+* **Required.** Scene and entity editing with a real-renderer viewport, inspector over registered fields,
+  asset browser, save/load, undo/redo, play-in-editor.
+* **Depends on.** M4 registry, M6 camera-to-texture, M10 (if the UI runtime is reused), M19, M20; D-10, D-16,
+  D-18, D-20.
+* **Later, in order of need.** Tilemap painting, character and animation setup, material and light editing,
+  sprite-sheet and atlas tools; the visual editor for game UI comes after the runtime is stable.
+* **Not initially.** Plugins and custom tool windows, visual scripting.
 
 ### 37. Build, CI, packaging, platform compatibility
 * **Now.** Pinned toolchain (1.99.0), MSRV 1.90, `scripts/check.sh`, `DIMORA_REQUIRE_GPU`. **No CI**
