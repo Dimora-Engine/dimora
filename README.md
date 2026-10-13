@@ -16,6 +16,34 @@ crate, three lights and distance fog. All of it is one world. Only the camera pr
 |---|---|
 | ![](docs/perspective.png) | ![](docs/orthographic.png) |
 
+## Requirements
+
+**Rust.** [`rust-toolchain.toml`](rust-toolchain.toml) pins the development toolchain (stable 1.99.0 with `rustfmt` and
+`clippy`); with [rustup](https://rustup.rs) installed, `cargo` fetches it automatically on first use. The minimum
+supported version is **1.90** (`rust-version` in `Cargo.toml`): `cargo test --workspace --locked` was run on exactly
+1.90.0 on macOS arm64, and older compilers are refused by the locked dependencies (`ordered-float`, via wgpu, needs 1.90
+on Linux and Windows). To try the minimum yourself: `cargo +1.90.0 test --workspace --locked`.
+
+**A GPU adapter.** The renderer and its pixel tests use [wgpu](https://wgpu.rs), which picks the backend per platform:
+
+| Platform | Backend | What you need |
+|---|---|---|
+| macOS | Metal | Nothing to install beyond the Xcode command line tools (`xcode-select --install`). Verified on an Apple M5 |
+| Linux | Vulkan | A Vulkan driver. On a machine without a GPU (VM, CI) install the lavapipe software driver: `sudo apt install mesa-vulkan-drivers` (Debian/Ubuntu) |
+| Windows | DX12 or Vulkan | A normal GPU driver. Not verified by the project yet |
+
+No windowing setup is needed for the tests: they render offscreen. The examples open a normal window.
+
+**Verify a checkout** with one command, the same one CI will run:
+
+```sh
+scripts/check.sh
+```
+
+It runs `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` and
+`cargo doc --workspace --no-deps` with `RUSTDOCFLAGS="-D warnings"`, stops at the first failure and says which step
+failed. It works on macOS and Linux and sets `DIMORA_REQUIRE_GPU=1` for the tests (see [Testing](#testing)).
+
 ## The spatial proof: `spatial_scene`
 
 ![Sprites and meshes at different depths](docs/spatial_scene_occlusion.png)
@@ -51,8 +79,8 @@ The rendering model (world vs render state, depth vs order vs position, orientat
 cargo run --release -p basic_2_5d
 ```
 
-Needs a GPU with Vulkan, Metal or DX12. On a machine without one, a software Vulkan driver works
-(`sudo apt install mesa-vulkan-drivers` on Debian/Ubuntu).
+Needs a GPU adapter (Metal on macOS, Vulkan on Linux, DX12 or Vulkan on Windows); see [Requirements](#requirements),
+including the software Vulkan driver for machines without a GPU.
 
 | Key | Action |
 |---|---|
@@ -118,13 +146,23 @@ Design rationale, trade-offs (why `hecs`, why wgpu, handedness, ordering rules) 
 ## Testing
 
 ```sh
-cargo test --workspace
+cargo test --workspace   # just the tests
+scripts/check.sh         # fmt, clippy, tests and docs, all warnings denied; see Requirements
 ```
 
 Math, hierarchy, assets, projection/parallax, culling, depth sorting and batching are covered by plain unit tests.
 `crates/engine-renderer-wgpu/tests` renders small scenes offscreen and checks pixels (depth interleaving of sprites and
-meshes, face culling, world-space lighting, draw-call counts). Those tests print a message and skip if no GPU adapter is
-available.
+meshes, face culling, world-space lighting, draw-call counts).
+
+**No GPU adapter.** By default those GPU tests print `skipping GPU test: ...` and still report `ok`, which means a
+green run on a machine without a GPU proves nothing about rendering. Set `DIMORA_REQUIRE_GPU=1` and a missing adapter
+makes them fail with a message saying that no GPU adapter was found (on Linux it suggests
+`sudo apt install mesa-vulkan-drivers`). `scripts/check.sh` sets it. Run
+`cargo test -p engine-renderer-wgpu -- --nocapture` to see which adapter the tests used.
+
+To see the failure path on purpose, remove the adapter: on Linux `VK_ICD_FILENAMES=/nonexistent`, on macOS
+`WGPU_BACKEND=vulkan` (Vulkan is not built on macOS, so no adapter is found), for example
+`DIMORA_REQUIRE_GPU=1 WGPU_BACKEND=vulkan cargo test -p engine-renderer-wgpu`.
 
 ## Status
 
