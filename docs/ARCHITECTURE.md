@@ -100,7 +100,9 @@ is exact only for uniform scale.
 * Only `Texture` has a decoder (PNG through `image`). `SpriteAsset`, `MeshData`, `Skeleton` and
   `AnimationClip` implement `Asset` without decoders, so every example builds them in code.
 * The renderer reads asset data through `&AssetManager` during `render` and caches GPU copies keyed
-  by `(AssetId, revision)`; a changed revision re-uploads. **Nothing is ever evicted.**
+  by `(AssetId, revision)`; a changed revision re-uploads. A cached copy is evicted when its asset is removed
+  (`AssetManager::remove`) or when no frame has used it for a configurable number of frames (D-04, T2).
+  Revisions are never reused for an id, even across `remove`, so a stale copy cannot be mistaken for a current one.
 
 ## Rendering flow
 
@@ -154,8 +156,9 @@ system, no system ordering beyond insertion order, no asset-loading pipeline bey
 Each is verified by reading the code or by a test run; identifiers refer to the known-issues table in
 [TASKS.md](../TASKS.md).
 
-1. **Resource lifetime (KI-4).** GPU texture and mesh caches never evict; `AssetManager` has no
-   `remove`. Long sessions and scene switching leak.
+1. **Resource lifetime (KI-4).** Fixed by T2: `AssetManager::remove` exists and the GPU caches evict removed
+   and idle entries. Remaining limit: only textures and meshes are cached per asset, instance buffers only
+   grow, and nothing yet calls `remove` for you (scene unload is M4).
 2. **Hierarchy robustness (KI-7, KI-8).** `propagate_transforms` only walks from entities that have a
    `Transform` and no `Parent`. A child whose parent lacks a `Transform`, or whose parent was
    `despawn`ed (children are not touched), keeps `GlobalTransform` at identity forever. Verified

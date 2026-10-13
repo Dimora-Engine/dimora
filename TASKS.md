@@ -9,7 +9,7 @@ done here without evidence from the repository or a recorded test run. Long-rang
 
 ## Current milestone
 
-**M2. Foundation hardening and CI** (in progress: T1 done; T2 and T3 wait on the decisions in B-3). Priority 1
+**M2. Foundation hardening and CI** (in progress: T1 and T2 done; T3 next). Priority 1
 in the ordering rules: fix the defects the audit found in the existing foundation, and make the build
 reproducible, before adding features.
 
@@ -18,6 +18,7 @@ reproducible, before adding features.
 | Milestone | Evidence |
 |---|---|
 | M0 Foundation | Commits `6b0d016`..`278de15`: math, core, world, assets, renderer, wgpu backend, animation, platform, facade, `basic_2_5d`. All crates build; tests pass (below) |
+| M2 / T2 GPU resource lifetime and `AssetManager::remove` | Commits `884b0ff`, `1d92ce7`, `5d6a199`, `c3c98f8`; evidence under "Task T2 results" below. Verified on macOS only |
 | M2 / T1 Reproducible toolchain and one verification command | Commits `e08033e`, `3a7a95c`, `7fb2c4d`, `3d467b6`, `89b1fa5`; evidence under "Task T1 results" below. Verified on macOS only |
 | M1 Core spatial renderer | Commits `83d9883`..`6ad872f`: sprite orientation, `RenderOrder`, sprite `region`, camera `ViewportRect`, `spatial_scene`, `docs/SPATIAL_RENDERING.md`. `engine-renderer/tests/camera.rs` (27 tests), GPU tests `camera_viewport_confines_the_image_to_its_rectangle` and `billboards_face_the_camera_but_fixed_quads_go_edge_on` pass with a Vulkan adapter. `spatial_scene` run windowed under Xvfb: figure heights shrink with depth in perspective and stay equal in orthographic |
 
@@ -39,7 +40,8 @@ Test counts by crate: `engine-math` 22, `engine-core` 5, `engine-world` 7, `engi
 doctest), `engine-renderer` 2 unit + 27 (`camera.rs`) + 13 (`spatial.rs`), `engine-renderer-wgpu` 1 unit
 + 7 GPU, `engine-animation` 4, `engine-platform` 1, `engine` 1 doctest. The examples have no tests;
 they are exercised by `--screenshot` runs and manually. (This is the 2026-10-12 count of 99. After T1,
-`engine-renderer-wgpu` has 12 in `tests/headless.rs`: 7 GPU plus 5 for `DIMORA_REQUIRE_GPU`, 104 in total.)
+`engine-renderer-wgpu` has 12 in `tests/headless.rs`: 7 GPU plus 5 for `DIMORA_REQUIRE_GPU`, 104 in total. After T2:
+`engine-assets` 16 unit tests, `headless.rs` 18, 118 in total.)
 
 ## Verification record (macOS, 2026-10-13)
 
@@ -76,6 +78,22 @@ Vulkan), and any run with an Intel Mac.
 | 5. README | Required toolchain, per-platform GPU table (Metal on macOS, Vulkan driver and the apt command for lavapipe on Linux), `scripts/check.sh`, `DIMORA_REQUIRE_GPU` and how to force the no-adapter path |
 | 6. No new dependencies; existing tests pass | `Cargo.lock` unchanged by T1 (`git diff a0b4662 -- Cargo.lock` is empty); all 99 earlier tests still pass |
 
+## Task T2 results (2026-10-13, macOS arm64, Apple M5 / Metal, rustc 1.99.0)
+
+Decision D-04 (accepted by the owner): evict when the asset is removed, and when unused for N frames.
+
+| Criterion | Evidence |
+|---|---|
+| 1. `AssetManager::remove` | `remove::<T>(handle) -> bool` forgets the entry (value, state, error, name, revision), its own dependency links, links other assets recorded to it (unless an asset of another type still has that id; links are untyped ids), and any pending load for it. 8 unit tests in `engine-assets`: `get` is `None`, `state` is `Unknown`, `revision` is 0; failed loads; both link directions; same-id-different-type; a cancelled pending load does not resurrect the asset; other pending loads still run |
+| 2. Eviction and counts | `SceneRenderer` counts frames, marks each cached texture/mesh used when a frame draws with it, and after the frame's uploads and before drawing evicts entries whose asset is gone or that went `cache_max_idle_frames` consecutive frames unused (default `DEFAULT_CACHE_MAX_IDLE_FRAMES` = 120, `set_cache_max_idle_frames`, minimum 1, `u32::MAX` disables idle eviction). `cache_stats()` returns `CacheStats { textures, meshes }` (placeholders not counted). `RenderStats.cache` carries it to the facade and window titles |
+| 3. Baseline and re-insert | `removing_assets_returns_the_gpu_caches_to_the_empty_baseline`: fresh renderer `{0, 0}`; after a frame `{2 textures, 1 mesh}`; remove all assets and render: `{0, 0}`, centre pixel is the clear colour; re-insert and render: `{2, 1}` again and the sprite and cube pixels equal the first picture. `a_removed_texture_is_drawn_as_the_placeholder_never_from_a_stale_copy`: white texture removed while its sprite asset remains: the pixel goes from white to the magenta placeholder |
+| 4. Replacement | `a_replaced_asset_is_reuploaded_without_keeping_the_old_copy`: three in-place replacements each draw the new colour and the cache stays at 1 texture. `remove_and_reinsert_between_frames_is_seen_as_a_change`: exposed a real hazard, revisions restarted at 1 after a removal and would have matched a stale cache entry; revisions now come from a per-store counter and are never reused. **Limit:** "no leak" is shown as one cache entry per asset (the old Rust-side GPU objects are dropped on replacement); wgpu's own allocation counts were not measured (that needs wgpu's `counters` feature, which was not enabled) |
+| 5. Examples and 1,000 frames | Headless `--screenshot` of `basic_2_5d`, `spatial_scene` and `spatial_scene --ortho` are **byte-identical** (`cmp`) to the same screenshots taken from the unmodified engine (`f8186d2`), and I looked at the images. `spatial_scene --screenshot out.png --frames 1000` (release): `gpu cache after frame 1: { textures: 3, meshes: 5 }; after frame 1000: { textures: 3, meshes: 5 }`, exit 0 (it exits non-zero if the counts grow). **Not done:** the examples were not run in a window, and the 1,000-frame run has a static camera |
+| Mutation checks | The tests fail when the feature is broken: eviction call removed: 4 GPU tests fail; re-upload on revision change disabled: 1 fails; per-entry revisions (reused after remove): 1 fails |
+
+`scripts/check.sh`: exit 0, **118 tests, 0 failed** (104 before T2, +8 asset tests, +6 GPU tests), no skipped GPU test.
+`cargo +1.90.0 test --workspace --locked` (MSRV, with the KI-26 `SDKROOT` workaround): 118 passed, 0 failed.
+
 ## Known issues
 
 "Verified" means reproduced by running something; "read" means found by reading the code and not
@@ -86,7 +104,7 @@ yet reproduced.
 | KI-1 | ~~No `rust-version` or toolchain pin; the workspace does not build on rustc 1.83~~ **Fixed by T1**: `rust-toolchain.toml` pins 1.99.0, `rust-version = "1.90"` verified on 1.90.0 (macOS only, see "Task T1 results") | Verified | M2 |
 | KI-2 | ~~GPU tests skip silently when no adapter exists and still report `ok`~~ **Fixed by T1** for runs that set `DIMORA_REQUIRE_GPU=1` (`scripts/check.sh` does). Plain `cargo test` still skips and reports `ok` by design | Verified (forced no-adapter run on macOS) | M2 |
 | KI-3 | No CI of any kind | Repository listing | M2 |
-| KI-4 | GPU texture and mesh caches are never evicted; `AssetManager` has no `remove` | Read (`scene_renderer.rs`, `manager.rs`) | M2 |
+| KI-4 | ~~GPU texture and mesh caches are never evicted; `AssetManager` has no `remove`~~ **Fixed by T2** (commits `884b0ff`, `1d92ce7`, `5d6a199`, `c3c98f8`; evidence under "Task T2 results"). Remaining: instance buffers only grow; nothing calls `remove` automatically until scenes exist (M4) | Verified | M2 |
 | KI-5 | Only one camera renders per frame, so `ViewportRect` cannot give split-screen/minimap; no render-to-texture | Read (`extract.rs::active_camera`) | M6 |
 | KI-6 | Textures: no mipmaps, clamp only, always sRGB; `Material` is colour + albedo + `lit`; meshes cannot be transparent | Read | M5 |
 | KI-7 | A child of an entity without a `Transform` stays at the origin | Verified with a scratch test (child expected at x = 5, got 0) | M2 |
@@ -121,11 +139,10 @@ yet reproduced.
 
 ## Next three tasks
 
-All three are inside M2, ordered by dependency and by how much they unblock. **T1 is done (2026-10-13, macOS
-arm64; evidence above).** The next implementation task is **T2 or T3, in either order, but both need the
-owner to accept or change the proposed defaults first: D-04 for T2, D-03 for T3 (B-3).** T3 also needs no
-GPU and has the smallest blast radius; T2 touches the renderer. After M2 the roadmap continues with M3 (input
-and scheduling); sprite-sheet animation (M8) cannot start before M3 and M5.
+All three are inside M2, ordered by dependency and by how much they unblock. **T1 and T2 are done
+(2026-10-13, macOS arm64; evidence above).** D-03 and D-04 were accepted by the owner on 2026-10-13. The next
+implementation task is **T3**. After M2 the roadmap continues with M3 (input and scheduling); sprite-sheet
+animation (M8) cannot start before M3 and M5.
 
 ### T1. Reproducible toolchain and one verification command: DONE
 
@@ -155,9 +172,11 @@ fully trustworthy on a fresh machine.
    `scripts/check.sh`.
 6. No new dependencies. All 99 existing tests still pass.
 
-### T2. GPU resource lifetime and `AssetManager::remove` (KI-4)
+### T2. GPU resource lifetime and `AssetManager::remove` (KI-4): DONE
 
-**Dependencies:** T1 (verification through `scripts/check.sh`); D-04 accepted or changed (B-3).
+Done on macOS arm64 (2026-10-13); see "Task T2 results" for the evidence and its limits.
+
+**Dependencies:** T1 (verification through `scripts/check.sh`); D-04 accepted (2026-10-13).
 
 **Acceptance criteria:**
 
@@ -172,7 +191,7 @@ fully trustworthy on a fresh machine.
 
 ### T3. Hierarchy robustness and asset-id collision guard (KI-7, KI-8, KI-12 part)
 
-**Dependencies:** T1; D-03 accepted or changed (B-3). Independent of T2: either order works.
+**Dependencies:** T1; D-03 accepted (2026-10-13). Independent of T2.
 
 **Acceptance criteria:**
 
