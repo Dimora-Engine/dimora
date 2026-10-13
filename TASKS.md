@@ -1,7 +1,9 @@
 # Tasks: current development state
 
-Last audited: 2026-10-12 at commit `6ad872f`. Nothing is marked done here without evidence from the
-repository or a recorded test run. Long-range plan: [ROADMAP.md](ROADMAP.md). Architecture:
+Last audited: 2026-10-12 at commit `6ad872f`. The roadmap was expanded on 2026-10-13 (three character
+representations, a UI runtime, gameplay scripting); that was a documentation change and the code and tests
+are unchanged since the audit, so the verification record below still describes the code. Nothing is marked
+done here without evidence from the repository or a recorded test run. Long-range plan: [ROADMAP.md](ROADMAP.md). Architecture:
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Open decisions: [docs/DECISIONS.md](docs/DECISIONS.md).
 
 ## Current milestone
@@ -53,15 +55,20 @@ yet reproduced.
 | KI-9 | Resource access is `RefCell`: double borrows panic at runtime; no deferred commands; `hecs` has no events or change detection | Read | M3 |
 | KI-10 | Frame order is hard-wired in `Game::step`; user systems cannot be ordered relative to engine stages; `FixedTimestep::alpha()` is not exposed, so no render interpolation | Read | M3 |
 | KI-11 | `Camera` stores the closed `CameraProjection` enum, not an arbitrary `Projection` | Read | M6 |
-| KI-12 | Assets: synchronous loading; PNG is the only decoder (sprites, meshes, skeletons, clips are code-built); no hot-reload watcher; `AssetId` is a name hash with no collision check and changes on rename | Read | M13 (collision check in M2) |
-| KI-13 | Skeletal animation has no blending, events, IK, skinning or file loading | Read | M9 |
-| KI-14 | Blended sprites sort by quad centre only; large or intersecting blended quads can mis-order | Read | M5/M11 |
-| KI-15 | Input has 47 keys, no gamepad/touch/text/actions/cursor grab, no F-keys | Read | M3 |
+| KI-12 | Assets: synchronous loading; PNG is the only decoder (sprites, meshes, skeletons, clips are code-built); no hot-reload watcher; `AssetId` is a name hash with no collision check and changes on rename | Read | M17 (collision check in M2) |
+| KI-13 | Skeletal animation has no blending, events, IK, skinning or file loading | Read | M11 |
+| KI-14 | Blended sprites sort by quad centre only; large or intersecting blended quads can mis-order | Read | M5/M14 |
+| KI-15 | Input has 47 keys, no gamepad/touch/text/actions/cursor grab, no F-keys | Read | M3 (text and scale factor for UI: M10) |
 | KI-16 | Two rustdoc warnings: unresolved `World` and `Schedule` links in `crates/engine/src/lib.rs` | Verified | M2 |
 | KI-17 | `Cargo.toml` declares `MIT OR Apache-2.0` but no licence files exist | Repository listing | M2 |
 | KI-18 | `Visibility::Hidden` applies to the entity only; it does not hide children | Read (`extract.rs`) | M4 |
 | KI-19 | Performance is unmeasured: extraction is O(renderables) every frame, tilemaps expand per tile per frame, instance buffers are fully rewritten; the only timings available come from a software rasterizer | Read | M6 |
 | KI-20 | Platform: single window, `ControlFlow::Poll`, default present mode; no fullscreen/vsync configuration | Read | M3 |
+| KI-21 | A sprite's natural size comes from the whole `SpriteAsset`, not from `Sprite.region`, so showing a sheet frame without also setting `size` stretches it to the asset's size | Read (`extract.rs`: `sprite.size.unwrap_or_else(|| asset.world_size())`) | M8 |
+| KI-22 | `animate_system` writes sampled transforms directly onto bone entities and only visits entities that have a `SkeletonInstance`; `Pose` is not in the path, so there is no stage for blending or IK, and a skeleton-less sprite cannot be animated by it | Read (`clip.rs`) | M11 (sprite sheets: M8) |
+| KI-23 | `Vertex` is position, normal and uv; no joints, weights or tangents; no model loader; meshes are code-built | Read (`mesh.rs`) | M12 |
+| KI-24 | The platform layer does not forward the window scale factor (no use of it anywhere in the code), `Viewport` is one pixel size, and there are no text-input events, so resolution-independent UI has no foundation | Read (search for `scale_factor` finds nothing) | M10 |
+| KI-25 | Any change to a texture re-uploads the whole texture (cache keyed by `AssetId` and revision); there is no sub-rectangle update, which a glyph atlas needs | Read (`scene_renderer.rs`) | M5 |
 
 ## Blockers
 
@@ -73,9 +80,12 @@ yet reproduced.
 
 ## Next three tasks
 
-All three are inside M2, ordered by dependency and by how much they unblock.
+All three are inside M2, ordered by dependency and by how much they unblock. **The single next implementation task is T1.** After M2 the roadmap continues with M3 (input and
+scheduling); sprite-sheet animation (M8) cannot start before M3 and M5.
 
 ### T1. Reproducible toolchain and one verification command
+
+**Dependencies:** none. D-23 (MSRV policy) is decided in this task by building, not in advance.
 
 Why first: every later task is verified through it, and KI-1/KI-2 mean today's "tests pass" is not
 fully trustworthy on a fresh machine.
@@ -100,6 +110,8 @@ fully trustworthy on a fresh machine.
 
 ### T2. GPU resource lifetime and `AssetManager::remove` (KI-4)
 
+**Dependencies:** T1 (verification through `scripts/check.sh`); D-04 accepted or changed (B-3).
+
 **Acceptance criteria:**
 
 1. `AssetManager::remove::<T>(handle)` removes the entry and its dependency links; `get`/`state` then
@@ -112,6 +124,8 @@ fully trustworthy on a fresh machine.
 5. Both examples still render, and `spatial_scene` shows no growth in cache counts over 1,000 frames.
 
 ### T3. Hierarchy robustness and asset-id collision guard (KI-7, KI-8, KI-12 part)
+
+**Dependencies:** T1; D-03 accepted or changed (B-3). Independent of T2: either order works.
 
 **Acceptance criteria:**
 
@@ -130,7 +144,24 @@ fully trustworthy on a fresh machine.
 - Choose the code host and add CI configuration that runs `scripts/check.sh` (B-1, D-22).
 - Re-run the audit table in ROADMAP.md and update this file when M2 is complete.
 
+## Planned systems and their state
+
+None of these exists. They are in the roadmap so that earlier work does not block them; they are not
+in the current scope.
+
+| System | Milestone | State |
+|---|---|---|
+| Sprite-sheet characters (A) | M8 | Not started. Building blocks only (`Sprite.region/size/anchor`, KI-21) |
+| Skeletal 2D characters (B) | M11 | Data model and a single-clip player exist (4 tests); no blending, IK, events (KI-22) |
+| 3D skinned characters (C) | M12 | Not started (KI-23) |
+| Character gameplay layer and API surface | M9 | Not started |
+| UI runtime | M10 | Not started (KI-24, KI-25) |
+| Gameplay scripting | M18 | Not started; prerequisites (registry, commands, events) missing |
+| Audio | M16 | Not started |
+
 ## Not in scope now
 
-Everything from M3 onward. In particular: no new rendering features, no collision, no editor work
-until M2 is finished and the plan is re-read.
+Everything from M3 onward. In particular: no new rendering features, no collision, no editor work, and no
+work on UI, scripting or any of the three character representations until M2 is finished and the plan is
+re-read. These systems are deliberately not being started together: each has its own milestone,
+prerequisites and decisions.

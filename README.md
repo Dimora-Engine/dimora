@@ -134,6 +134,9 @@ modes, forward lighting and fog, camera viewports) exist and are covered by test
 exist but are limited (see ROADMAP.md). There are no particles, collision, audio, UI, shadows,
 scene serialization, asset bundling or editor.
 
+Planned but not started: three character representations (sprite sheet, skeletal 2D, 3D skinned) over one
+gameplay model, a UI runtime, and gameplay scripting. See `ROADMAP.md` for their order and prerequisites.
+
 What is done, what is not, and what comes next is tracked with evidence in:
 
 * [`ROADMAP.md`](ROADMAP.md): milestones with prerequisites, acceptance criteria and deferred work.
