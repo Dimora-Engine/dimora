@@ -286,7 +286,7 @@ fn hud_system(world: &mut World) {
     let stats = *world.resource::<RenderStats>();
     let player = world.component::<Transform>(demo.player).unwrap().position;
     let title = format!(
-        "2.5D | {} | player ({:.1}, {:.1}, {:.1}) | {} sprites, {} meshes, {} lights | {} draws | {:.0} fps",
+        "2.5D | {} | player ({:.1}, {:.1}, {:.1}) | {} sprites, {} meshes, {} lights | {} draws | gpu cache {} tex {} mesh | {:.0} fps",
         if demo.perspective { "perspective" } else { "orthographic" },
         player.x,
         player.y,
@@ -295,6 +295,8 @@ fn hud_system(world: &mut World) {
         stats.extract.meshes_visible,
         stats.extract.lights,
         stats.frame.draw_calls,
+        stats.cache.textures,
+        stats.cache.meshes,
         if dt > 0.0 { 1.0 / dt } else { 0.0 },
     );
     world.resource_mut::<WindowControl>().title = Some(title);

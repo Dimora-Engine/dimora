@@ -6,7 +6,7 @@ use engine_core::{FixedTimestep, Input, InputEvent, Time};
 use engine_math::Vec2;
 use engine_platform::WindowConfig;
 use engine_renderer::{extract_scene, AmbientLight, ExtractStats, RenderScene};
-use engine_renderer_wgpu::{FrameStats, GpuContext, RenderError, SceneRenderer};
+use engine_renderer_wgpu::{CacheStats, FrameStats, GpuContext, RenderError, SceneRenderer};
 use engine_world::{propagate_transforms, Schedule, World};
 
 /// Startup options.
@@ -56,6 +56,8 @@ pub struct WindowControl {
 pub struct RenderStats {
     pub extract: ExtractStats,
     pub frame: FrameStats,
+    /// GPU copies of textures and meshes held by the renderer after the frame.
+    pub cache: CacheStats,
 }
 
 /// A world plus the frame pipeline that drives it.
@@ -141,7 +143,8 @@ impl Game {
         let (gpu, renderer) = self.headless.as_mut().expect("created above");
         let assets = self.world.resource::<AssetManager>();
         let pixels = renderer.render_to_rgba(gpu, &scene, &assets, width, height)?;
-        *self.world.resource_mut::<RenderStats>() = RenderStats { extract: scene.stats, frame: renderer.stats() };
+        *self.world.resource_mut::<RenderStats>() =
+            RenderStats { extract: scene.stats, frame: renderer.stats(), cache: renderer.cache_stats() };
         Ok(pixels)
     }
 

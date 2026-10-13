@@ -69,8 +69,11 @@ impl App for WindowedGame {
                 return Flow::Exit;
             }
             drop(assets);
-            *self.game.world.resource_mut::<RenderStats>() =
-                RenderStats { extract: scene.stats, frame: renderer.scene.stats() };
+            *self.game.world.resource_mut::<RenderStats>() = RenderStats {
+                extract: scene.stats,
+                frame: renderer.scene.stats(),
+                cache: renderer.scene.cache_stats(),
+            };
         }
         if exit {
             Flow::Exit

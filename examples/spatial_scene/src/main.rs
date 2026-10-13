@@ -20,7 +20,10 @@
 //! ```
 //!
 //! Headless: `cargo run --release -p spatial_scene -- --screenshot out.png [--ortho]
-//! [--cam x,y,z] [--yaw deg] [--pitch deg] [--size WxH] [--orientation billboard|upright|fixed]`
+//! [--cam x,y,z] [--yaw deg] [--pitch deg] [--size WxH] [--orientation billboard|upright|fixed] [--frames N]`
+//!
+//! `--frames N` renders N frames instead of one (the saved image is the last), prints the GPU cache counts
+//! after the first and the last frame, and exits with an error if they grew.
 
 mod art;
 
@@ -119,20 +122,40 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     game.add_system("hud", hud_system);
 
     match value("--screenshot") {
-        Some(path) => screenshot(game, &path, width, height),
+        Some(path) => {
+            let frames = value("--frames").and_then(|v| v.parse().ok()).unwrap_or(1);
+            screenshot(game, &path, width, height, frames)
+        }
         None => game.run(),
     }
 }
 
-fn screenshot(mut game: Game, path: &str, width: u32, height: u32) -> Result<(), Box<dyn std::error::Error>> {
+fn screenshot(
+    mut game: Game,
+    path: &str,
+    width: u32,
+    height: u32,
+    frames: u32,
+) -> Result<(), Box<dyn std::error::Error>> {
     // A few fixed steps so the camera, props and transform hierarchy have settled.
     for _ in 0..3 {
         game.step(Duration::from_millis(100));
     }
-    let pixels = game.render_to_rgba(width, height)?;
+    let mut pixels = game.render_to_rgba(width, height)?;
+    let first = game.world.resource::<RenderStats>().cache;
+    for _ in 1..frames {
+        game.step(Duration::from_millis(16));
+        pixels = game.render_to_rgba(width, height)?;
+    }
     image::save_buffer(path, &pixels, width, height, image::ColorType::Rgba8)?;
     let stats = *game.world.resource::<RenderStats>();
     println!("saved {path}: {:?}", stats);
+    if frames > 1 {
+        println!("gpu cache after frame 1: {first:?}; after frame {frames}: {:?}", stats.cache);
+        if stats.cache.textures > first.textures || stats.cache.meshes > first.meshes {
+            return Err(format!("GPU cache grew over {frames} frames").into());
+        }
+    }
     Ok(())
 }
 
@@ -309,7 +332,7 @@ fn hud_system(world: &mut World) {
         .collect();
     let stats = *world.resource::<RenderStats>();
     let title = format!(
-        "spatial_scene | {} | cam ({:.0}, {:.0}, {:.0}) | {:?} | {} | {} draws",
+        "spatial_scene | {} | cam ({:.0}, {:.0}, {:.0}) | {:?} | {} | {} draws | gpu cache {} tex {} mesh",
         if perspective { "perspective" } else { "orthographic" },
         rig.position.x,
         rig.position.y,
@@ -317,6 +340,8 @@ fn hud_system(world: &mut World) {
         orientation,
         readout.join("  "),
         stats.frame.draw_calls,
+        stats.cache.textures,
+        stats.cache.meshes,
     );
     world.resource_mut::<WindowControl>().title = Some(title);
 }
