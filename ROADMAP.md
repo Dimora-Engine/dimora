@@ -55,7 +55,7 @@ first" tiers in [docs/DECISIONS.md](docs/DECISIONS.md#what-to-resolve-first).
 ### Current milestone and immediate scope
 
 * **Now: close M2.** All numbered tasks are done (T1 to T3). Two items remain, both blocked on the owner
-  rather than on code: licence files (KI-17) and CI configuration (D-22, no host chosen). Neither blocks
+  rather than on code: licence files (KI-17, waiting for the owner to confirm a licence) and owner confirmation of GitHub as host (CI itself is done on the PR branch, see TASKS.md). Neither blocks
   M3, so M2 is closed for planning purposes once they are listed as carried items in TASKS.md.
 * **Next: M3a, the frame model** (see M3 below). It is deliberately the first feature milestone because
   collision, animation, scenes, UI and scripting all hang off its stages, commands and events, and because
@@ -165,6 +165,24 @@ M6 + M19 ─► M20 debug tools ─► M22 editor (also M10, M19)
 M21 + M22 ─► M23 perf/stability ─► M24 packaging/release
 ```
 
+### Incremental developer tooling
+
+Owner direction ([ADR-0003](docs/adr/0003-incremental-tooling-editor-later.md)): the full editor stays at
+M22, but useful tools are delivered where they first pay off, so the engine is built with the tools it will
+need. Each tool reads data the runtime already exposes (registry, diagnostics, events), is read-only first,
+and contains no editor-specific state in the runtime. None of this is built yet.
+
+| Tool | First delivered | Content | Depends on |
+|---|---|---|---|
+| Logging and error reporting | M3a | One facade; asset failures, skipped renderables, lost surfaces named once with the cause | D-21 |
+| Runtime diagnostics | M3a | A `Diagnostics` resource: per-stage and frame timings, entity count, `RenderStats` and cache counts, printed by the examples | M3a stages |
+| Scene and entity inspection | M4 | Read-only text dump of a world, hierarchy and a named entity's registered components and fields | M4 registry (D-18) |
+| Asset validation | M5 (textures, atlases), M17 (importers, dependency graph), M21 (bundle-time) | Reports with the asset name: limits, missing or unused references, malformed data | D-16, D-17 |
+| Render debugging | M6 (debug draw, depth view, camera frusta), M14 (light and shadow views) | Minimal primitives drawn through the real renderer | M6 |
+| On-screen overlay | M10 | Frame time, draw calls and log lines through the UI runtime | M10 |
+| Consolidated debug tools, interactive inspector, profiling | M20 | Edit-capable inspector, profiling scopes, collider and skeleton overlays | M19 |
+| **Editor** | M22 | See the stability gate under M22 | Gate below |
+
 ### Considered now, implemented later
 
 Each row is a capability nobody builds yet whose *shape* constrains work in the next few milestones. The
@@ -175,14 +193,14 @@ Each row is a capability nobody builds yet whose *shape* constrains work in the 
 | Scene and asset serialization | M19 | Components must stay plain data (no GPU objects, no cached derived values); asset references must be restorable to a stable identity; entity references need remapping | ARCHITECTURE.md requirement 8; D-16, D-18, D-47 |
 | Hot reload | M17 | A reload takes effect at a stage boundary; consumers resolve assets per use instead of caching derived data in components | Requirement 6; D-16 |
 | Scripting | M18 | Commands, events and a component registry must exist first; scripts get a small versioned surface, not `hecs` or renderer types | Requirements 7 and 9; D-40 to D-45 |
-| Multiple cameras and render targets | M6 | `RenderScene` holds one view today; do not add features that assume a single view | R-2; D-08 |
+| Multiple cameras, render targets and camera configurations (isometric, top-down, side, custom) | M6 | `RenderScene` holds one view and `Camera` a closed projection enum today; do not add features that assume one view, one projection or one ground plane | R-2, R-16; D-08, D-25, D-48; ADR-0004 |
 | Blended meshes, particles, skinned characters | M5, M12, M15 | They need a transparency class in the render model before they exist | R-1; D-05 |
 | Fixed-step interpolation | M3a | No previous-transform data exists; gameplay must keep reading un-interpolated `Transform` | R-3 |
 | UI in screen and world space | M10 | Window scale factor, sub-rectangle texture update and an overlay pass; M3b and M5 carry the prerequisites | R-12, KI-24, KI-25; D-24, D-37 to D-39 |
 | Three character representations | M8, M11, M12 | One gameplay entity with a replaceable visual subtree; gameplay must not name rendering types | D-28 to D-34 |
 | Save games | M18 to M24 | Not a scene file; needs its own versioned format and a state store shaped alongside the script API | D-46, D-47 |
 | Public API stability | M9 | Every re-exported type is a promise; stop adding public `hecs` types now | R-7; D-45 |
-| The editor (viewport, inspector, undo, play-in-editor) | M22 | Components must be named, plain, serializable data with field metadata; mutations go through undoable commands; entities and assets need stable ids; the editor's viewport is the real renderer, so it needs camera-to-texture and picking through queries | ARCHITECTURE.md requirement 7 and R-15; D-08, D-10, D-18, D-20 |
+| The editor (viewport, inspector, undo, play-in-editor), behind a stability gate | M22 | The runtime stays free of editor state; components must be named, plain, serializable data with field metadata; mutations go through undoable commands; entities and assets need stable ids; the editor's viewport is the real renderer, so it needs camera-to-texture and picking through queries | ARCHITECTURE.md requirement 7 and R-15; D-08, D-10, D-18, D-20 |
 | Gamepad, localisation, accessibility | later | Action maps and text and layout decisions can foreclose them if they assume keyboards, ASCII or fixed pixels | CAPABILITIES.md, additional categories |
 | Cross-platform determinism | M9 | Replay equality is promised on one platform only; platform trigonometry can differ | R-9 |
 
@@ -267,6 +285,8 @@ profiled" is a valid answer), D-45 (public API tiers, rule only), D-47 (format v
    frame (D-10). Later consumers: collision (M7), animation events (M8, M11), UI (M10), scripts (M18).
 4. Logging facade used by the engine crates (D-21): a failed asset load, a skipped renderable and a lost
    surface each log once with the asset or cause named.
+   Also a `Diagnostics` resource with per-stage and frame timings and the existing render and cache counts,
+   readable by any system, printed by the examples (first of the incremental tools above).
 5. Expose the fixed-step alpha and add opt-in transform interpolation for entities moved in the fixed
    stage, without changing what simulation reads (R-3).
 6. Stop adding public `hecs` types; write the three-tier rule from D-45 into ARCHITECTURE.md (the full list
@@ -336,6 +356,8 @@ orphaning entities, and the world knows its component types by name.
   groundwork M18, M19 and M20 need. Leave room for a per-component, per-field visibility attribute that
   scripts will use (D-41); no scripting code here.
 - Code-defined prefabs (`fn(&mut World, ...) -> Entity` by convention) and one documented pattern.
+- Read-only scene and entity inspection: a text dump of the hierarchy and of one entity's registered
+  components and fields, built on the registry (first of the inspection tools; no editor code).
 
 **Dependencies.** D-03, D-10, D-18 (registry shape).
 
@@ -344,6 +366,8 @@ orphaning entities, and the world knows its component types by name.
 - A hidden parent hides all descendants in the extracted scene (test).
 - Despawning any entity cannot leave a dangling `Parent` (test).
 - `spatial_scene` switches between two scenes at runtime.
+- The dump of a known world lists each entity's registered components and fields, and a component that is
+  not registered is reported as such, not omitted silently (test).
 
 **Tests/examples.** Scene lifecycle tests; `spatial_scene` scene-switch demo.
 
@@ -354,7 +378,9 @@ orphaning entities, and the world knows its component types by name.
 ## M5. Materials and textures: Not started
 
 **Objective.** A small but real material and texture model that normal maps, shadows and the asset
-pipeline can build on without rewriting the renderer.
+pipeline can build on without rewriting the renderer. It serves every camera configuration and visual
+style ([ADR-0004](docs/adr/0004-one-spatial-world-many-camera-configurations.md)): nearest and linear
+filtering are equal first-class choices, and nothing here is specific to pixel art or to a perspective view.
 
 **Prerequisites.** M2.
 
@@ -368,7 +394,10 @@ pipeline can build on without rewriting the renderer.
 - `MaterialAsset` (base colour, albedo, reserved normal-map slot, alpha mode opaque/mask/blend, lit,
   double-sided) referenced by handle from sprites and meshes; batching keyed by pipeline and material.
 - Mesh generators: plane, sphere, cylinder.
-- Policy for blended meshes (D-05).
+- Policy for blended meshes (D-05), expressed as a transparency class that does not depend on the
+  projection (R-1).
+- Asset validation, first slice: texture and atlas loads report size beyond device limits, a missing
+  texture and a zero-sized region with the asset name (logging from M3a; see "Incremental developer tooling").
 
 **Dependencies.** D-05, D-27.
 
@@ -379,6 +408,10 @@ pipeline can build on without rewriting the renderer.
 - Atlas packer unit tests: no overlap, padding respected, deterministic.
 - GPU test: writing one sub-rectangle of a texture changes only that rectangle and uploads only its bytes.
 - 1,000 sprites sharing a material remain one draw call.
+- Alpha modes (opaque, mask, blend) and the blended-mesh policy give the same occlusion order under a
+  perspective camera and under an orthographic camera rotated to an isometric orientation (GPU pixel tests).
+- Mipmap and filtering tests include an orthographic camera whose scale changes with zoom, not only a
+  perspective camera that changes it with distance.
 
 **Tests/examples.** Above.
 
@@ -388,22 +421,33 @@ pipeline can build on without rewriting the renderer.
 
 ## M6. Renderer stabilization: Not started
 
-**Objective.** Remove renderer limits that would otherwise become baked into later features, and
-establish a measured performance baseline.
+**Objective.** Remove renderer limits that would otherwise become baked into later features, make the
+unified world demonstrably usable through several camera configurations, and establish a measured performance
+baseline. Camera projection stays separate from gameplay orientation and visual style
+([ADR-0004](docs/adr/0004-one-spatial-world-many-camera-configurations.md)).
 
 **Prerequisites.** M5.
 
 **Tasks.**
-- Render every active camera in `order`, each with its own viewport and clear/load behaviour.
+- Custom projections first: let `Camera` hold more than the two enum variants so oblique and custom
+  projections are possible without a second code path (D-25).
+- Render every active camera in `order`, each with its own viewport and clear/load behaviour (D-08).
 - Camera-to-texture render targets.
-- Custom projections: let `Camera` hold more than the two enum variants (D-25).
+- **Camera-configuration test scene.** `spatial_scene` (2D sprites at several depths, spatial depth, a
+  simple 3D mesh, a ground) viewable through named configurations by one code path: perspective,
+  orthographic, isometric (orthographic, rotated), top-down, side view, and one custom projection. Presets
+  are constructors returning a `Camera` and a `Transform`, never modes. It prescribes no visual style.
+- Camera configurations decision (D-48): gameplay plane and up axis, coplanar ordering, sprite orientation
+  per view. Decide before M7 and M8 build on it.
 - Tilemap chunking with cached instances.
-- Debug draw (lines, boxes, spheres, rays; depth-tested) as the minimal debugging primitive for M7.
-- Pixel-art policy: texel snapping / integer scaling / MSAA (D-06); depth convention (D-07).
+- Render debugging, first slice: debug draw (lines, boxes, spheres, rays, camera frusta; depth-tested) and a
+  depth-visualisation view, as the minimal debugging primitives for M7.
+- Depth convention (D-07). Pixel-art policy (D-06): opt-in per camera or sprite (texel snapping, integer
+  scaling, MSAA off). It is **lowest priority here** and never a default; no other configuration may depend on it.
 - Benchmarks (a small timing binary, no new dependency) for extraction and render CPU time with N
   sprites/meshes/tiles; record results and budgets in `docs/PERFORMANCE.md`.
 
-**Dependencies.** D-06, D-07, D-08, D-25.
+**Dependencies.** D-25, D-08, D-48, D-07; D-06 (opt-in only).
 
 **Acceptance criteria.**
 - Two cameras with different viewports render into one target (GPU pixel test).
@@ -411,8 +455,18 @@ establish a measured performance baseline.
 - Changing one tile re-extracts one chunk (test); a 1000x1000 map's per-frame extraction cost is
   recorded and bounded by chunk count rather than tile count.
 - `docs/PERFORMANCE.md` contains baseline numbers with the machine they were measured on.
+- The configuration test scene renders under each named configuration (perspective, orthographic, isometric,
+  top-down, side view, a custom projection) with headless GPU assertions that hold in all of them: a nearer
+  mesh occludes a farther sprite and the reverse, a blended sprite interleaves with a mesh by depth, a world
+  point projects to the pixel `CameraView::project` reports, and a picking ray through that pixel returns to
+  the point. A camera-configuration table in `docs/SPATIAL_RENDERING.md` records what each configuration
+  guarantees and what it does not.
+- Switching configuration changes only the camera's `Transform` and projection. A test or review shows no
+  configuration-specific branch in extraction or in the wgpu backend.
+- A custom projection supplied by game code renders and picks correctly (GPU test and picking test).
 
-**Tests/examples.** GPU tests above; `spatial_scene` gains a picture-in-picture camera.
+**Tests/examples.** GPU tests above; `spatial_scene` gains a picture-in-picture camera and a `--camera
+<name>` selector for the configurations.
 
 **Deferred.** Render graph, deferred shading, HDR/post-processing, compute-driven culling.
 
@@ -442,6 +496,9 @@ establish a measured performance baseline.
 - A character moving at high speed cannot tunnel through a thin wall (test) and slides along it.
 - Simulation is deterministic: the same inputs over 1,000 fixed steps give an identical state hash.
 - Two colliders with equal X/Y and different Z do not collide.
+- Collision and movement do not read the camera: the same inputs give the same state hash under two camera
+  configurations, and a constrained 2D-style movement plane (D-48) is expressed as a movement option, not a
+  separate controller.
 - `spatial_scene`: the walkable figure is blocked by the pillar.
 
 **Tests/examples.** Collision unit/property tests; controller test; example.
@@ -456,9 +513,8 @@ colliders, navmesh.
 **Objective.** Characters and props animated by selecting frames from sprite sheets or atlases, with
 no skeleton, cheap enough for many on screen. This is character representation **A**.
 
-**Prerequisites.** M3 (animate stage, event channel), M5 (atlas builder, sampler control for pixel
-art). It does **not** need M7: collision and sprite-sheet animation are independent and can be built
-in parallel.
+**Prerequisites.** M3 (animate stage, event channel), M5 (atlas builder, sampler control). It does **not** need M7: collision and sprite-sheet animation are independent and can be built
+in parallel. D-48 (orientation per view) is decided first, so directions are not written for one camera only.
 
 **What exists today (read, not tested for this purpose).** A sprite can already show part of a
 texture: `Sprite.region`, `Sprite.size` and `Sprite.anchor` are per-sprite overrides and `SpriteAsset`
@@ -491,7 +547,7 @@ There is no sheet, clip, animator, event or direction concept. The existing `Ani
   animate stage with thousands of animators and record it in `docs/PERFORMANCE.md`.
 
 **Dependencies.** D-10 (events), D-27 (pixels per unit), D-29 (shared control vocabulary), D-30 (sheet
-and frame data model), D-31 (directions), D-06 (pixel snapping affects frame shimmer).
+and frame data model), D-31 (directions), D-48 (camera configurations), D-06 (optional pixel snapping affects frame shimmer).
 
 **Acceptance criteria.**
 - Grid slicing: frame `i` maps to the exact UV rect for given margin and spacing, including the last
@@ -769,24 +825,30 @@ and UI milestones; may run any time after M7.
 - Tileset asset (atlas reference + metadata) and an in-code builder.
 - Vertical (wall) tilemaps through the same orientation model.
 
-**Dependencies.** D-25 if isometric/oblique projection is wanted for tilemaps.
+**Dependencies.** D-25 if oblique projection is wanted for tilemaps; D-48.
 
 **Acceptance criteria.**
 - A 1000x1000 map renders with per-frame CPU cost proportional to visible chunks (benchmark, recorded).
 - `set_tile` touches one chunk (test).
 - A tile collision layer blocks the character controller (test).
 - Animated tiles advance with time (test).
+- One map, placed once as a wall (side view) and once laid on the ground (top-down), extracts with the same
+  code and renders correctly through the matching camera configuration (GPU test). A square-grid map under an
+  isometric camera needs no isometric tile type.
 
 **Tests/examples.** Tests above; slice level uses the chunked map.
 
-**Deferred.** Tiled importer (M17), auto-tiling, hex/isometric grids, infinite/streamed maps.
+**Deferred.** Tiled importer (M17), auto-tiling, hex and diamond-layout grids (an *isometric camera* over a
+square grid is not deferred: it is a camera configuration), infinite/streamed maps.
 
 ---
 
 ## M14. Unified lighting and shadows: Not started
 
 **Objective.** Sprites and meshes lit and shadowed by the same system, including normal-mapped
-sprites.
+sprites, under every supported camera configuration. Lighting and shadow code must not assume one view,
+one projection or one light direction relative to the camera; fog and stylised lighting remain optional
+scene properties and are not prerequisites.
 
 **Prerequisites.** M5 (normal-map slot, linear textures), M6 (render targets and multiple passes), D-13.
 Placed after M8, M11 and M12 because shadow casting must handle all three character representations.
@@ -807,6 +869,11 @@ Placed after M8, M11 and M12 because shadow casting must handle all three charac
 - A skinned 3D character's shadow changes with its pose (GPU pixel test).
 - GPU test: a normal map changes sprite shading with light angle.
 - 64 lights in a scene stay within the recorded frame budget.
+- The shadow and normal-map tests above run under a perspective camera, an orthographic isometric camera and
+  a top-down orthographic camera (shadow-map fitting follows each projection's frustum, with no
+  perspective-only assumption), using the M6 configuration test scene.
+- A normal-mapped upright sprite and a billboarded sprite are shaded consistently when the camera changes
+  configuration while the light is fixed in the world.
 
 **Tests/examples.** GPU tests; slice lighting pass.
 
@@ -995,7 +1062,9 @@ until the runtime has proved stable).
 
 ## M20. Debugging tools: Not started
 
-**Objective.** See and poke the running engine.
+**Objective.** See and poke the running engine. Consolidates and extends the tools delivered earlier
+(logging and diagnostics M3a, inspection M4, debug draw M6, overlay M10) into one set with an edit-capable
+inspector; it is not where tooling starts.
 
 **Prerequisites.** M6 (debug draw), M10 (UI runtime for the overlay), M19 (component registry for
 reflection).
@@ -1048,7 +1117,13 @@ end; it is scheduled here only because it needs scenes, the component registry, 
 tools underneath. Those prerequisites are designed for the editor from M3 onward, and the editor is not to be
 treated as optional or as a late add-on.
 
-**Prerequisites.** M6 (camera-to-texture), M10 (UI runtime, if D-20 chooses to use it), M19, M20, D-20.
+**Prerequisites.** M6 (camera-to-texture), M10 (UI runtime, if D-20 chooses to use it), M19, M20, D-20, and
+the **stability gate** (ADR-0003): the editor starts only when (1) the scene model and component registry
+(M4) are stable, (2) asset references are stable (D-16, M17), (3) scene serialization is versioned with
+migrations (M19, D-47), and (4) the runtime API surface is frozen (M9's `docs/API_SURFACE.md`, D-45). The
+runtime has no editor-specific state or code paths; the editor is a separate binary using the public API
+and the registry. The editor is not moved earlier without a demonstrated dependency or product need,
+recorded in an ADR.
 
 **Tasks.** `dimora-editor` binary; viewport with fly camera and translate/rotate/scale gizmos;
 hierarchy and inspector panels; asset browser; save/load; play-in-editor on a copy of the world;

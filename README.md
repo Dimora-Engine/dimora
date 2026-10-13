@@ -3,7 +3,9 @@
 Dimora is a Rust game engine built around a unified spatial model for 2.5D game development. It brings 2D sprites,
 tilemaps, skeletal 2D characters, 3D meshes and fully 3D characters into a shared world with coherent transforms,
 cameras, depth and rendering, and aims to make hybrid 2D/3D games natural to build through programming APIs combined
-with purpose-built visual tools, including a user-friendly editor.
+with purpose-built visual tools, including a user-friendly editor. It is not tied to one look or camera: perspective,
+orthographic, isometric, top-down and side-scrolling views are meant to be configurations of the same world (today
+perspective and orthographic are implemented and tested; the others are planned).
 
 **Today** Dimora is a code-driven engine: sprites, tilemaps, a skeletal 2D data model and 3D meshes share one world,
 one camera and one set of lights. The editor and the other character types are planned, not built; see
@@ -36,7 +38,7 @@ on Linux and Windows). To try the minimum yourself: `cargo +1.90.0 test --worksp
 |---|---|---|
 | macOS | Metal | Nothing to install beyond the Xcode command line tools (`xcode-select --install`). Verified on an Apple M5 |
 | Linux | Vulkan | A Vulkan driver. On a machine without a GPU (VM, CI) install the lavapipe software driver: `sudo apt install mesa-vulkan-drivers` (Debian/Ubuntu) |
-| Windows | DX12 or Vulkan | A normal GPU driver. Not verified by the project yet |
+| Windows | DX12 or Vulkan | A normal GPU driver. CI builds and tests on Windows (software DX12 adapter); not yet tried on a real GPU or in a window |
 
 No windowing setup is needed for the tests: they render offscreen. The examples open a normal window.
 
