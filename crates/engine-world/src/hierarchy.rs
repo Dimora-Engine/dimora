@@ -56,6 +56,10 @@ impl GlobalTransform {
 /// Recomputes every [`GlobalTransform`] from local transforms and the parent/child hierarchy.
 /// Entities that have a `Transform` but no `GlobalTransform` get one.
 ///
+/// An entity in the hierarchy that has no `Transform` (a plain grouping node) counts as identity: its
+/// children are placed relative to its own parent, or relative to the world if it has none. Such an
+/// entity gets no `GlobalTransform` of its own.
+///
 /// Run once per frame after gameplay/animation systems and before extraction. There is no dirty
 /// tracking yet: the cost is linear in the number of transformed entities.
 pub fn propagate_transforms(world: &mut World) {
@@ -72,13 +76,27 @@ pub fn propagate_transforms(world: &mut World) {
         stack.push((e, global.matrix));
     }
 
+    let groups: Vec<Entity> = world
+        .entities
+        .query::<&Children>()
+        .without::<&Transform>()
+        .without::<&Parent>()
+        .iter()
+        .map(|(e, _)| e)
+        .collect();
+    stack.extend(groups.into_iter().map(|e| (e, Mat4::IDENTITY)));
+
     while let Some((entity, parent_matrix)) = stack.pop() {
         let Ok(children) = world.entities.get::<&Children>(entity) else { continue };
         for &child in &children.0 {
             let Ok(mut q) = world.entities.query_one::<(&Transform, &mut GlobalTransform)>(child) else { continue };
-            let Some((local, global)) = q.get() else { continue };
-            global.matrix = parent_matrix * local.to_matrix();
-            stack.push((child, global.matrix));
+            match q.get() {
+                Some((local, global)) => {
+                    global.matrix = parent_matrix * local.to_matrix();
+                    stack.push((child, global.matrix));
+                }
+                None => stack.push((child, parent_matrix)),
+            }
         }
     }
 }
@@ -86,6 +104,7 @@ pub fn propagate_transforms(world: &mut World) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Name;
     use engine_math::Quat;
 
     #[test]
@@ -151,5 +170,57 @@ mod tests {
         propagate_transforms(&mut w);
         let expected = ta.to_matrix() * tb.to_matrix() * tc.to_matrix();
         assert!(w.component::<GlobalTransform>(c).unwrap().matrix.approx_eq(&expected, 1e-4));
+    }
+
+    fn world_x(w: &World, e: Entity) -> f32 {
+        w.component::<GlobalTransform>(e).unwrap().translation().x
+    }
+
+    #[test]
+    fn a_child_of_an_entity_without_a_transform_treats_the_parent_as_identity() {
+        let mut w = World::new();
+        let parent = w.spawn((Name::new("group, no transform"),));
+        let child = w.spawn_child(parent, (Transform::from_xyz(5.0, 0.0, 0.0),));
+        propagate_transforms(&mut w);
+        assert_eq!(w.component::<GlobalTransform>(child).unwrap().translation(), Vec3::new(5.0, 0.0, 0.0));
+        assert!(w.component::<GlobalTransform>(parent).is_err(), "no Transform, so no GlobalTransform is invented");
+    }
+
+    #[test]
+    fn a_transform_less_entity_in_the_middle_of_a_chain_is_identity() {
+        let mut w = World::new();
+        let root = w.spawn((Transform::from_xyz(10.0, 0.0, 0.0),));
+        let group = w.spawn_child(root, (Name::new("group"),));
+        let inner = w.spawn_child(group, (Name::new("inner group"),));
+        let leaf = w.spawn_child(inner, (Transform::from_xyz(1.0, 0.0, 0.0),));
+        propagate_transforms(&mut w);
+        assert_eq!(world_x(&w, leaf), 11.0);
+        w.component_mut::<Transform>(root).unwrap().position.x = 20.0;
+        propagate_transforms(&mut w);
+        assert_eq!(world_x(&w, leaf), 21.0, "and it keeps following the root afterwards");
+    }
+
+    #[test]
+    fn a_transform_less_root_does_not_hide_a_whole_subtree() {
+        let mut w = World::new();
+        let group = w.spawn((Name::new("scene root"),));
+        let a = w.spawn_child(group, (Transform::from_xyz(2.0, 0.0, 0.0),));
+        let b = w.spawn_child(a, (Transform::from_xyz(3.0, 0.0, 0.0),));
+        let sibling = w.spawn_child(group, (Transform::from_xyz(-4.0, 0.0, 0.0),));
+        propagate_transforms(&mut w);
+        assert_eq!((world_x(&w, a), world_x(&w, b), world_x(&w, sibling)), (2.0, 5.0, -4.0));
+    }
+
+    #[test]
+    fn a_transform_less_parent_keeps_the_rotation_of_its_own_ancestors() {
+        let mut w = World::new();
+        let root = w.spawn((
+            Transform::from_xyz(0.0, 0.0, 0.0).with_rotation(Quat::from_rotation_y(core::f32::consts::FRAC_PI_2)),
+        ));
+        let group = w.spawn_child(root, (Name::new("group"),));
+        let leaf = w.spawn_child(group, (Transform::from_xyz(1.0, 0.0, 0.0),));
+        propagate_transforms(&mut w);
+        let p = w.component::<GlobalTransform>(leaf).unwrap().translation();
+        assert!(p.approx_eq(Vec3::new(0.0, 0.0, -1.0), 1e-5), "{p:?}");
     }
 }
