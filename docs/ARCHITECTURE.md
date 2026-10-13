@@ -260,7 +260,7 @@ nothing is reference counted; removal is explicit (`remove`) and the renderer fo
 derived asset data in a component), unloads are driven by scene unload (M4) and dependency tracking
 (M17), and failures are reported with the asset name (D-21). *Gap:* see R-4.
 
-**7. Scripts and editor tools versus the renderer.** Neither may reach renderer or wgpu internals. Both
+**7. Scripts and editor tools versus the renderer.** (The runtime holds no editor state, see requirement 11.) Neither may reach renderer or wgpu internals. Both
 use the same surface: the component registry (names, visibility, field access), commands applied at
 stage boundaries, events, and the action layer. An editor viewport needs camera-to-texture (D-08) and
 picking through the collision/ray queries, not through GPU readback. The surface is listed in
@@ -284,6 +284,21 @@ to be fixed in M9's `docs/API_SURFACE.md`:
 | **Backend seam** | `RenderScene`, the future UI draw list, `Pose` | Changed with all consumers in one commit; documented |
 | **Internal** | `hecs` types, `World.entities`, schedule internals, `wgpu`/`winit` re-exports, `SceneRenderer` internals, extraction helpers | Free to change; not named in docs or examples as supported |
 
+**10. One world, many camera configurations** ([ADR-0004](adr/0004-one-spatial-world-many-camera-configurations.md);
+confirmed owner direction, mechanisms recommended). A camera is a `Transform` plus a projection; perspective,
+orthographic, isometric (orthographic, rotated), top-down, side-scrolling and custom views are configurations
+of that one model with no per-view renderer, extraction path or world representation. Keep three things
+separate: *projection* (how the world becomes pixels), *gameplay orientation* (up axis, ground plane,
+facing), *visual style* (snapping, fog, mood). *Today:* the camera maths takes any `Transform` and either of
+two projections, the tilemap is a quad grid in its entity's local XY plane that is laid flat by rotating the
+entity, and sprite orientation modes are tested under a pitched camera. *Not demonstrated:* an isometric,
+top-down or side scene, or any 2D-style game; `Camera` holds a closed projection enum (KI-11); one camera
+renders per frame (R-2). *Gaps:* R-16.
+
+**11. The runtime has no editor state.** Editor and developer tools consume the component registry, commands,
+events and diagnostics and live in separate crates or binaries (ADR-0003). The runtime contains no editor
+types, no `cfg(editor)` state and no code path that only the editor can reach.
+
 ### Risk register
 
 "Cost" is the likely cost of getting it wrong and finding out late. Items are ordered by how many
@@ -306,10 +321,12 @@ systems they touch. Each cites evidence from this audit.
 | R-13 | **No diagnostics.** No logging; failures are silent or polled | zero logging calls in the workspace | Low now, rising with every call site | Add the facade in M3 (D-21 split) |
 | R-14 | **Verification is narrow.** No CI; GPU tests skip unless `DIMORA_REQUIRE_GPU=1`; Windows never built; pixel tests tolerate small differences across adapters | TASKS.md; KI-3, KI-27 | Rises steadily; regressions on untested platforms found by users | CI (D-22) as soon as a host is chosen; a Windows build early |
 | R-15 | **Foundations not yet shaped for the editor.** The editor is a core product goal, but nothing yet carries what it needs: components have no field names, types, ranges or defaults; there are no undoable commands; entities and assets lack stable identities (R-4); no scene format; the renderer draws one view (R-2) so an editor viewport has nowhere to render; `RenderScene` is a one-way snapshot, so picking needs world queries | `components.rs`, `world.rs`, `extract.rs`; CAPABILITIES rows 2, 8, 32, 33, 36 | High: retrofitting field metadata, commands and identities onto many components and systems is the same cost as R-4 and R-5 | Treat editor needs as acceptance criteria of M3 (commands), M4 (registry with field metadata), M6 (camera-to-texture) and M19 (serialization); write no component or system that hides state the editor must edit |
+| R-16 | **Single-view assumptions hide in details.** Evidence: `Upright` sprites are edge-on under a straight-down camera; cutout sprites and tiles at equal depth z-fight and `RenderOrder` orders only blended sprites; the world is +Y up with an XZ ground and nothing says whether gameplay may use another plane; directional animation (D-31) will read the camera; shadow and light code is not yet written and could assume a perspective view; no test renders an isometric, top-down or side view | `components.rs` (`SpriteOrientation`), `extract.rs`, `scene_renderer.rs`; ADR-0004 | High if found late: ordering, orientation and light direction are baked into M7, M8, M13 and M14 | D-48 decided in M6 before M7 and M8; the M6 configuration test scene; M14 tests under three camera configurations |
 
 Expensive redesigns, ranked by likelihood times cost, if nothing changes: **R-4 (asset identity)**, **R-1
 and R-2 (render model shape)**, **R-5 and R-8 (mutation and threading)**, **R-7 and R-6 (API and format
-promises)**, and **R-15 (editor-shaped foundations)**, which compounds R-4 and R-5. Everything else is local to one system.
+promises)**, **R-15 (editor-shaped foundations)**, which compounds R-4 and R-5, and **R-16 (single-view
+assumptions)**, which compounds R-1 and R-2. Everything else is local to one system.
 
 ## Decisions already made
 

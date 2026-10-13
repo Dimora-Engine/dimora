@@ -52,7 +52,7 @@ without it.
 | 6 | Input and action mapping | Partial | Keys/mouse state with edges, `axis()`; no actions, gamepad, text | M3 |
 | 7 | Errors, logging, diagnostics, config | Absent / Minimal | Typed errors in crates; no logging; no runtime config; window-title stats | M3 (logging), M20 |
 | **Rendering** | | | | |
-| 8 | Cameras and projection | Working | Ortho + perspective, viewport, picking rays; 27 tests. One camera/frame; closed projection enum | M6 |
+| 8 | Cameras and projection | Working for ortho and perspective | Ortho + perspective, viewport, picking rays; 27 tests. Isometric, top-down, side and custom views are **intended, not demonstrated** (ADR-0004, R-16). One camera/frame; closed projection enum | M6 |
 | 9 | Spatial sprites | Working | Orientation modes, region, tint, cutout/alpha; batching test; no atlas packer | M5 |
 | 10 | Depth, transparency, ordering | Partial | One depth buffer shared by meshes and sprites (GPU tests); blended sprites sort by centre; meshes cannot blend | M5, M14 |
 | 11 | Meshes and materials | Partial / Placeholder | Indexed instanced meshes; `Material` = colour + albedo + `lit`, not an asset | M5 |
@@ -85,7 +85,7 @@ without it.
 | 32 | Scenes and lifecycle | Absent | World is flat; `Name`, `Visibility` only | M4 |
 | 33 | Serialization (scenes) | Absent | No `serde`; no component registry | M19 |
 | 34 | Save games and persistent state | Absent, unscheduled | Distinct from scene files | add (M19+) |
-| 35 | Debugging and profiling | Minimal | `RenderStats` in the window title | M20 |
+| 35 | Debugging and developer tooling | Minimal | `RenderStats` in the window title; incremental tools planned from M3a (ADR-0003) | M3a, M4, M6, M10, M20 |
 | 36 | Editor and inspection (core goal) | Absent | Foundations (registry, commands, ids) not yet shaped for it, R-15 | M22 |
 | 37 | Build, CI, packaging | Partial | Pinned toolchain, `check.sh`; no CI, no licence files, no release | M2, M24 |
 | 38 | Docs, examples, tests, onboarding | Partial | Accurate README and docs, 2 examples, 138 tests; no rustdoc guide, no tutorial | M24 |
@@ -206,8 +206,21 @@ Missing from the original category list and now tracked: **save games** (34), **
   `CameraView` (view, projection, viewport pixels, basis), `Projection` trait, picking rays, frustum.
   27 camera tests including parallax. Exactly one camera renders per frame (the lowest `(order, id)`
   active one); `Camera` holds the closed enum, not the trait (KI-5, KI-11).
+* **Camera configurations (ADR-0004; intended capabilities, status stated plainly).**
+
+  | Configuration | Status today |
+  |---|---|
+  | Perspective, orthographic | Implemented and tested (camera maths, GPU tests, `spatial_scene` `--ortho`) |
+  | Isometric (orthographic, rotated) | The camera takes any `Transform`, so the maths allows it. **No isometric scene, render test or preset exists** |
+  | Top-down | **Not demonstrated.** `Upright` sprites are edge-on from above; coplanar cutout content z-fights (R-16, D-48) |
+  | Side-scrolling | The default orientation; **no 2D-style game demonstrates it**; same coplanar-ordering gap |
+  | Custom projection | `Projection` trait exists; `Camera` stores a closed enum, so game code cannot supply one (KI-11, D-25) |
+
 * **Required.** Multiple cameras with viewports, camera-to-texture, extensible projection (oblique,
-  isometric), resize safety. **Planned.** M6. **Depends on.** D-08, D-25, D-06, D-07.
+  custom), resize safety, and the same behaviour of picking, culling, depth and lighting in every
+  configuration. **Planned.** M6, including a reusable camera-configuration test scene (`spatial_scene`
+  under named configurations). **Depends on.** D-25, D-08, D-48, D-07; D-06 is opt-in and not a dependency
+  of other views.
 * **Integration.** UI world anchors, picking, audio listener, directional frames (D-31) and the editor
   viewport all read the active camera's view.
 * **Performance.** Per-camera extraction multiplies CPU cost; cull per camera.
@@ -461,15 +474,19 @@ Missing from the original category list and now tracked: **save games** (34), **
   and a save API in M19 or M24. Needs a decision before M18 fixes the store's shape.
 
 ### 35. Debugging and profiling
-* **Now.** Window-title stats only. **Planned.** M20 overlay, entity inspector, profiling scopes (D-21),
-  collider/skeleton/UI/script overlays; M6 debug draw. **Depends on.** M6, M10, M19.
+* **Now.** Window-title stats only. **Planned (incremental, ADR-0003; ROADMAP "Incremental developer
+  tooling").** Logging and runtime diagnostics (M3a), read-only scene and entity inspection (M4), asset
+  validation (M5, M17, M21), render debugging with debug draw and a depth view (M6), an on-screen overlay
+  (M10), then M20 consolidates with an edit-capable inspector, profiling scopes (D-21) and collider, skeleton,
+  UI and script overlays. **Depends on.** M3a stages, the M4 registry, M6, M10, M19.
 * **Not initially.** Remote debugging, GPU profiler integration.
 
 ### 36. Editor and inspection
 * **Purpose.** A user-friendly editor for building spatial worlds visually, on the same scenes and
   components as code. A core product goal ([VISION.md](VISION.md)), not an optional extra.
-* **Now.** Absent. **Planned.** First usable version at M22, after scenes, assets and debug tools exist
-  (D-20); the foundations it needs are designed in from M3 (R-15). Editor and runtime are separate: the
+* **Now.** Absent. **Planned.** First usable version at M22, behind the stability gate in ADR-0003 (stable
+  scene model and registry, asset references, versioned serialization, frozen runtime API surface); not moved
+  earlier without a recorded dependency or product need. The foundations it needs are designed in from M3 (R-15). Editor and runtime are separate: the
   runtime must run with the editor absent and nothing may be possible only in the editor. The editor edits
   through the component registry and commands, not renderer internals. Undo/redo is command-based.
 * **Required.** Scene and entity editing with a real-renderer viewport, inspector over registered fields,

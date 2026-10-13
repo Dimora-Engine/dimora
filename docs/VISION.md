@@ -1,10 +1,16 @@
 # Product vision
 
-Status: **the definition under "What Dimora is" and the editor goal are the owner's (2026-10-13). The rest
-was derived from the existing README, ROADMAP and ARCHITECTURE and from reading the code (audit of
-2026-10-13, commit `4857158`), and awaits owner confirmation.** Items marked *(owner to confirm)* are
-product choices that the repository does not settle. Everything here is intent, not a
-statement of what exists; what exists is in [CAPABILITIES.md](CAPABILITIES.md).
+Status: **Confirmed by the owner (2026-10-13):** the definition under "What Dimora is", the editor goal and
+its timing (ADR-0003), and that Dimora supports many camera configurations and is not defined by one visual
+style (ADR-0004). **Everything else was derived from the existing README, ROADMAP and ARCHITECTURE and from
+reading the code (audit of 2026-10-13, commit `4857158`) and awaits owner confirmation;** items marked
+*(owner to confirm)* are product choices the repository does not settle. The owner's decisions and open
+questions are tracked in [DECISIONS.md](DECISIONS.md#owner-decisions).
+
+Four kinds of statement appear in these documents and are never mixed: **confirmed owner decisions**,
+**recommended but unapproved decisions**, **implemented capabilities** (only those with passing tests or a
+recorded run), and **future requirements**. This file is intent; what exists is in
+[CAPABILITIES.md](CAPABILITIES.md).
 
 > **2.5D is a spatial world, not a fake 2D layer system.** Sprites, tilemaps, skeletal 2D characters,
 > 3D meshes and 3D characters live in one coherent world and share compatible transforms, camera
@@ -27,8 +33,10 @@ spatial interaction between different visual representations a foundational part
 Its goal is to make hybrid 2D/3D games natural to build through an integrated development experience
 combining powerful programming APIs with purpose-built visual tools.
 
-Typical games: "HD-2D" style RPGs, paper-cutout and diorama adventures, 2D characters walking through 3D
-scenery, isometric or tilted-camera action games.
+Dimora is not defined by a look or a camera. The same world can be seen through orthographic, perspective,
+isometric, top-down, side-scrolling or custom cameras (see "Camera configurations and visual styles"). Games
+it should suit include 2D characters in 3D scenery, diorama and paper-cutout adventures, isometric and
+top-down action or role-playing games, side-scrollers with depth, and hybrids of these.
 
 **Programming APIs and visual tools are both first-class.** The editor is a product goal, not an optional
 extra: a user-friendly editor for building spatial worlds, placing and arranging content, setting up
@@ -60,7 +68,7 @@ code-driven engine with no editor; see [CAPABILITIES.md](CAPABILITIES.md).
 |---|---|
 | Solo developer or small team building a 2.5D game, writing gameplay in Rust or (later) scripts *(owner to confirm)* | Spatial sprite/mesh rendering, characters, tilemaps, collision, UI, audio, and a build they can ship |
 | Artist, level designer or other creator who does not want to work only in code | An editor to build and arrange the spatial world, see it as the game will, and set up characters and content visually (target; M22 onward) |
-| Pixel-art or illustrated-art game developer who wants depth, perspective and lighting without leaving 2D art | Pixel-correct sprite sheets, atlases, directional animation relative to the camera, normal-mapped sprites |
+| 2D-art game developer (pixel art or illustrated) who wants depth, lighting and a choice of camera without leaving 2D art | Sprite sheets and atlases that work under any camera, directional animation relative to the camera, normal-mapped sprites; pixel-exact output as an opt-in policy |
 | Developer who wants to mix a few 3D props or characters into a 2D-art world | glTF meshes and skinned characters in the same depth buffer, lights and camera |
 | Designer or scripter working with programmers | Scene files, hot reload, the editor, gameplay scripts |
 
@@ -81,7 +89,34 @@ Primary use cases, in the order the roadmap proves them:
 * **The camera is part of the content.** A billboarded sprite chooses its frames from where the camera is
   (D-31). In a flat engine this is not a question.
 * **One lighting and depth model** for sprites, tiles and meshes.
+* **Many views of one world.** Perspective, orthographic, isometric, top-down, side-scrolling and custom
+  cameras are configurations of one camera model, not separate renderers or world representations.
 * **Honest engineering.** Plans separate "exists and is tested" from "proposed", with evidence.
+
+## Camera configurations and visual styles
+
+*Confirmed direction (owner, 2026-10-13); mechanisms in [ADR-0004](adr/0004-one-spatial-world-many-camera-configurations.md).*
+
+Dimora's defining principle is the unified spatial world, not a look. It must support these views as
+**intended capabilities**, not as a promise to build every one in the next milestone:
+
+| View | How it is expressed | Status today |
+|---|---|---|
+| Perspective | `Perspective` projection, any camera placement | Implemented and tested |
+| Orthographic | `Orthographic` projection, any camera placement | Implemented and tested |
+| Isometric | Orthographic camera rotated by its transform; custom axes through a custom projection | Camera maths supports it; **no scene or test demonstrates it** |
+| Top-down | Camera looking along the world's down axis | **Not demonstrated**; sprite orientation and coplanar ordering need decisions (R-16, D-48) |
+| Side-scrolling | Camera looking along the depth axis | The default orientation; **not demonstrated as a 2D-style game** |
+| Custom | A `Projection` supplied by game code | The trait exists; `Camera` holds a closed enum, so **not yet usable** (KI-11, D-25) |
+
+Three things are kept separate, and none may be implemented as another: **camera projection** (how the world
+becomes pixels), **gameplay orientation** (which way is up, where the ground plane is, what "facing" means),
+and **visual style** (pixel snapping, fog, palette, lighting mood). An isometric camera does not need its
+own world representation. The initial showcase is a reusable test scene (2D sprites, spatial depth and a
+simple 3D mesh) viewed through different camera configurations, to demonstrate the shared architecture
+without prescribing a visual identity; characters, lighting, shadows and tilemaps join it as their systems
+exist. HD-2D-style features (pixel-art styling, fog) are valid per-game choices and are not prioritised above
+foundations that every view needs.
 
 ## Design principles
 
@@ -89,7 +124,8 @@ When two options are close, these decide, in this order. Each has a test: a ques
 
 1. **Spatial first.** Position in the world decides visibility, occlusion, parallax and collision. *Does
    this change add a layer or order number that a position could express instead?* Explicit ordering is
-   allowed only as a narrow, documented override (`RenderOrder` for blended sprites).
+   allowed only as a narrow, documented override (`RenderOrder` for blended sprites). *Does this assume one
+   camera projection or one view?* If so, it is not spatial-first.
 2. **One contract, many implementations.** Subsystems agree on transforms, camera, depth, handles,
    events and lifetimes, not on one code path. *Does this force two different things through one
    abstraction, or force one thing to duplicate a contract?*
@@ -124,7 +160,8 @@ When two options are close, these decide, in this order. Each has a test: a ques
 
 * **Targets: Windows, macOS and Linux desktop** (wgpu over DX12/Vulkan, Metal, Vulkan; D-23). Web, mobile
   and consoles are out of scope until after the first release (M24). Verified so far: macOS arm64 (Metal)
-  and Linux x86_64 (software Vulkan, lavapipe). **Windows has never been built or run by the project.**
+  and Linux x86_64 (software Vulkan, lavapipe). **Windows had never been built or run before CI was added
+  (ADR-0005); see TASKS.md "CI results" for what has been verified.**
 * **Toolchain:** stable Rust, pinned in `rust-toolchain.toml`, MSRV 1.90.
 * **Developer loop (target, not current):** `cargo run` opens a window within seconds; assets are loaded
   from files and hot-reload; errors name the asset and the problem; `scripts/check.sh` is the one
@@ -143,8 +180,9 @@ and keeps demonstrating, that:
 1. A mixed scene (sprites, tiles, meshes, a skinned character, lights, shadows, UI) is the *easy* case:
    one world, one camera, no per-feature special handling. `spatial_scene` proves the first half; the
    M12 mixed-representation example is the real test.
-2. A 2D-art game gets correct depth, lighting and camera-relative character facing at pixel quality,
-   with small art budgets (normal maps and shadows for sprites, M14).
+2. A 2D-art game gets correct depth, lighting and camera-relative character facing under the camera
+   configuration it chooses, with small art budgets (normal maps and shadows for sprites, M14), and can
+   change that configuration without rebuilding its content.
 3. The path from prototype to a shipped desktop game is complete and documented (assets, scenes, bundles,
    packaging, crash logs), even if each piece is modest, and a user can build a mixed 2D/3D world in a
    friendly editor rather than only in code. Few engines make that visual path spatial-first.
@@ -169,6 +207,8 @@ Not pursued without a recorded, compelling reason (an ADR citing a concrete need
 * **Mobile, web and console targets** before the first desktop release.
 * **A custom scripting language** and a second scripting language.
 * **A render graph or custom user shaders** for the initial implementation.
+* **A separate renderer, mode or world model per camera configuration**, and defining the engine by one
+  visual style (such as HD-2D) or one perspective.
 * **Complex-script text shaping and bidirectional text, accessibility tooling, localisation** in the first
   UI runtime (planned later, see CAPABILITIES.md).
 * **A visual editor for game UI** before the code-driven UI runtime has proven stable. (This is a sequencing
@@ -178,10 +218,12 @@ Not pursued without a recorded, compelling reason (an ADR citing a concrete need
 
 ## Open product questions *(owner to confirm)*
 
-1. **Settled in direction (2026-10-13):** the editor and a user-friendly experience are goals, so the
-   audience is not only programmers. Still open: how much of a game must be buildable without writing Rust,
-   and whether the editor should move earlier than M22 (see ROADMAP.md and D-20).
-2. Is the first showcase target an "HD-2D" look (pixel sprites, perspective camera, lights and fog), a flat-lit paper look, or an isometric look? The engine supports the first two today; it
-   shapes M5/M6/M14 priorities (pixel-art policy D-06, post-processing).
-3. Licence and distribution: `MIT OR Apache-2.0` is declared with no licence files (KI-17); publishing to
-   crates.io is deferred (D-23).
+1. **Confirmed direction (2026-10-13):** the editor and a user-friendly experience are goals, so the
+   audience is not only programmers, and the full editor stays late behind a stability gate with developer
+   tooling arriving incrementally (ADR-0003). Still open (OD-6): how much of a game must be buildable
+   without writing Rust.
+2. **Settled (2026-10-13):** there is no single showcase look or camera; see "Camera configurations and
+   visual styles". Open engineering question: D-48 (gameplay plane, coplanar ordering, orientation per view).
+3. **Licence: open (OD-3).** `MIT OR Apache-2.0` is *proposed* and declared in `Cargo.toml`, but the owner
+   has not confirmed it and no licence files exist (KI-17; audit in TASKS.md). Publishing to crates.io is
+   deferred (D-23).

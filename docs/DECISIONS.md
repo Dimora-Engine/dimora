@@ -40,6 +40,21 @@ and so on) are not back-filled; they get an ADR only if reopened. Write an ADR f
 affects several systems, a public API, a file format, performance budgets or compatibility; small local
 choices belong in code comments or the PR.
 
+### Owner decisions
+
+The owner's own decisions and open questions, kept apart from engineering recommendations so the two are
+never confused. **Confirmed** means the owner stated it. **Recommended** means an engineer proposed it and it
+is not approved; nothing marked Recommended may be described elsewhere as decided.
+
+| Id | Topic | Status | Where recorded |
+|---|---|---|---|
+| OD-1 | Editor timing: the full editor stays late, behind a stability gate; developer tooling arrives incrementally; the runtime stays free of editor-specific state | **Confirmed** (2026-10-13) | [ADR-0003](adr/0003-incremental-tooling-editor-later.md), ROADMAP "Incremental developer tooling" |
+| OD-2 | Dimora is not defined by HD-2D or any single view; one spatial world supports orthographic, perspective, isometric, top-down, side-scrolling and custom cameras as intended capabilities; projection is separate from gameplay orientation and style; the showcase is a reusable multi-camera test scene | **Confirmed** as direction (2026-10-13). The mechanisms in the ADR are **Recommended** | [ADR-0004](adr/0004-one-spatial-world-many-camera-configurations.md), D-48 |
+| OD-3 | Licence: `MIT OR Apache-2.0` | **Proposed, not confirmed.** No licence files are added until the owner approves. Copyright holder also unconfirmed | TASKS.md "Licence audit" (KI-17) |
+| OD-4 | Use GitHub Actions if the repository is hosted on GitHub; validate on Windows, macOS and Linux; Windows early | **Confirmed** as direction (2026-10-13). That GitHub is the long-term host is **assumed** (the repository and its pull requests are on GitHub); the owner has not stated it | [ADR-0005](adr/0005-ci-on-github-actions.md) (Provisional), D-22 |
+| OD-5 | Does a licence also need a contributor policy (a CLA or DCO), given contributions from several authors and AI agents? | **Open** | TASKS.md "Licence audit" |
+| OD-6 | Is the product audience "programmers who also want visual tools" or "creators who may not write Rust"? How much of a game must be buildable without Rust? | **Open** (direction: both, editor is a goal) | VISION.md open questions |
+
 ### What to resolve first
 
 Ordered by how many systems, APIs and formats a decision touches and how costly a late change is (see
@@ -49,7 +64,7 @@ the risk register). **Prototype where the answer depends on a measurement; do no
 |---|---|---|---|
 | **1. Before M3 code** | D-44 threading, D-01 scheduling, D-10 events and commands, D-02 change detection, D-45 public API tiers, D-47 format versioning, D-21 (logging half) | Every later system is written against the frame, mutation and threading model; R-5, R-7, R-8 get more expensive with every system added | One design note and a throwaway stage-and-commands prototype in `M3`'s first task. D-02 is allowed to stay "none until profiled" |
 | **2. Before M4/M5** | D-18 (registry shape), D-16 (asset identity), D-05 (alpha classes and materials), D-27 (units) | Persisted data, render model and sprite sizing hang on them; R-1, R-4 | D-16 by a small prototype of a name table plus id; D-05 with a GPU test of a blended mesh against a blended sprite |
-| **3. Before M6** | D-08 multi-camera and targets, D-25 projection, D-06 pixel policy, D-07 depth | Shape of `RenderScene` and the pass list; R-2 | Prototype two cameras into one target |
+| **3. Before M6** | D-25 projection and D-08 multi-camera and targets first, D-48 camera configurations, D-07 depth, then D-06 pixel policy (opt-in, lowest of these) | Shape of `RenderScene` and the pass list; R-2 | Prototype two cameras into one target |
 | **4. Before M9** | D-28, D-29 (vocabulary), D-30, D-31, D-11 (record) | Define the character and scene API that M10 to M18 depend on | Built against M8's sprite-sheet implementation and the second consumer |
 | **5. Only at their milestone, after a spike** | D-40 scripting runtime, D-09 physics library, D-24 UI model, D-12, D-14, D-15, D-33, D-35, D-36 | They need measurements or a working neighbour; deciding early would be invention | Each milestone's first task is the spike |
 | **6. Defer, low impact** | D-19 bundle format, D-20 editor technology, D-26 orientations, D-23 platform/crates.io part | Nothing depends on them until late | Revisit when their milestone is next |
@@ -60,7 +75,7 @@ the risk register). **Prototype where the answer depends on a measurement; do no
 |---|---|---|---|---|
 | D-03 | Despawn semantics for entities with children | M2 (T3) | M2 hierarchy fix, M4 | Decided, [ADR-0001](adr/0001-despawn-removes-the-subtree.md) (2026-10-13) |
 | D-04 | GPU cache lifetime | M2 (T2) | M2 eviction, M17 unload | Decided, [ADR-0002](adr/0002-gpu-cache-lifetime.md) (2026-10-13) |
-| D-22 | Code host and CI provider | M2 | CI config, release | Open (credentials) |
+| D-22 | Code host and CI provider | M2 | CI config, release | Provisional, [ADR-0005](adr/0005-ci-on-github-actions.md) (GitHub Actions; first-run results in TASKS.md) |
 | D-23 | Platform targets, MSRV policy, crates.io | M2 (MSRV), M24 | M24 | MSRV part decided in T1 (1.90); platforms and crates.io still Open |
 | D-01 | Scheduling model | M3 | M3, M7, M8, M10, M15 | Open |
 | D-02 | Change detection | M3 | M3, M4 (dirty transforms), M23 | Open |
@@ -68,10 +83,11 @@ the risk register). **Prototype where the answer depends on a measurement; do no
 | D-18 | Scene format, serde, component registry | M4 (registry shape), M19 | M4, M18, M19, M22 | Open |
 | D-27 | Units and pixels per unit | M5 | M5, M8, M9, M13 | Open |
 | D-05 | Materials, alpha modes, blended meshes | M5 | M5, M14 | Open |
-| D-06 | Pixel-art policy (snapping, MSAA) | M6 | M6, M8, M9, M13 | Open |
+| D-06 | Pixel-art policy (snapping, MSAA): opt-in per camera, **not a default or a foundation** | M6 (after D-25 and D-08) | M6, M8, M9, M13 | Open, lowered in priority by ADR-0004 |
 | D-07 | Depth convention (reverse-Z) | M6 | M6, M14 shadows | Open |
 | D-08 | Multi-camera and render targets | M6 | M6, M14, M22 | Open |
-| D-25 | Custom projections inside `Camera` | M6 | M6, M13 (oblique tiles) | Open |
+| D-25 | Custom projections inside `Camera` | M6 (**first in M6**, [ADR-0004](adr/0004-one-spatial-world-many-camera-configurations.md)) | M6, M13 (oblique tiles) | Open |
+| D-48 | Camera configurations: gameplay plane and up axis, coplanar ordering, orientation modes per view | M6 (decide before M7 and M8) | M6, M7, M8, M13, M14 | Open, recommendations in ADR-0004 |
 | D-26 | Additional sprite orientations | M6 | none hard | Open, low priority |
 | D-09 | Physics: custom or library | M7 | M7, M9 | Open |
 | D-28 | Character gameplay versus visuals | M8 (provisional), M9 | M9, M10, M11, M12, M18 | Open |
@@ -120,12 +136,13 @@ frames. Implemented in T2.
 
 ### D-22 Code host and CI provider
 
-* **Problem.** The repository lives on Origin only. A GitHub destination was requested but no
-  credentials are available in this environment (B-1), so no CI provider is chosen.
-* **Options.** Origin's own checks if available; GitHub Actions once a token or repo exists; a plain
-  `scripts/check.sh` run by hand until then.
-* **Needed by.** M2, to run `scripts/check.sh` automatically.
-* **Blocks.** CI configuration only. Everything else in M2 proceeds with the script alone.
+* **Problem.** There was no CI and no chosen host (B-1).
+* **Direction (owner, 2026-10-13).** Use GitHub Actions if the repository is hosted on GitHub; validate on
+  Windows, macOS and Linux; add Windows early.
+* **Provisional, 2026-10-13: [ADR-0005](adr/0005-ci-on-github-actions.md).** The repository is on GitHub,
+  and `.github/workflows/ci.yml` runs `scripts/check.sh`, example smoke runs and an MSRV job on all three
+  systems. The decision stays Provisional until the first runs are recorded and the owner confirms GitHub
+  as the long-term host.
 
 ### D-23 Platform targets, MSRV policy, crates.io
 
@@ -532,14 +549,16 @@ this text with results.
 ### D-20 Editor technology
 
 * **Context (2026-10-13).** The editor is a core product goal: a user-friendly tool for building spatial
-  worlds, not only for code authors. Its *technology* can wait, but its *requirements* shape earlier
+  worlds, not only for code authors. Owner direction ([ADR-0003](adr/0003-incremental-tooling-editor-later.md)):
+  the full editor stays at M22 behind a stability gate, developer tooling arrives incrementally, and the
+  runtime holds no editor-specific state. Its *technology* can wait, but its *requirements* shape earlier
   decisions (D-10 commands and undo, D-18 registry with field metadata, D-16 stable ids, D-08 camera targets,
   D-47 formats). Those decisions must list the editor as a consumer.
 * **Options.** Reuse the engine's own UI runtime (M10); an immediate-mode library inside a dedicated
   crate; a separate application; a web UI. Whichever is chosen must give end users a friendly experience,
   which weighs against a purely developer-style tool.
-* **Needed by.** M22, after D-24 and D-18; run a short spike when M10 finishes to test the choice and to
-  check whether the editor can start earlier than M22. **Blocks.** M22 and any earlier editor start.
+* **Needed by.** M22, after D-24 and D-18 and the stability gate in ADR-0003. A short technology spike
+  at the end of M10 is allowed to test the choice; it does not start the editor. **Blocks.** M22 only.
 
 ## Added by the 2026-10-13 audit
 
@@ -602,6 +621,24 @@ Each is open; none has a chosen answer. Leanings are starting points.
   test that loads a stored older fixture. Ids stored in files are the stable ids of D-16, never entity
   indices. Pre-1.0 engine versions may break formats, but only with a bump.
 * **Needed by.** Before M17. **Blocks.** M17, M19, M21, D-46.
+
+### D-48 Camera configurations: gameplay plane, coplanar ordering, orientation per view
+
+* **Problem.** [ADR-0004](adr/0004-one-spatial-world-many-camera-configurations.md) commits to one world seen
+  through many camera configurations (R-16). Three things are unspecified and each decides how top-down,
+  side-scrolling and isometric games feel: (1) **gameplay orientation**: where the ground plane and up axis
+  are for movement, collision and directional animation, independent of the camera; (2) **coplanar content**:
+  cutout sprites and tiles at the same depth z-fight, and `RenderOrder` only orders blended sprites, so a
+  flat 2D layering needs an ordering that stays spatial; (3) **sprite orientation per view**: `Upright`
+  sprites are edge-on under a straight-down camera.
+* **Options.** (1) World +Y up with a ground plane of XZ as the default and a per-game configuration for
+  2D-style movement planes, or a world-level "up" setting. (2) Small Z offsets by convention; a depth bias
+  or `RenderOrder` extended to opaque and cutout content; a layer-to-Z helper. (3) Extend `SpriteOrientation`
+  (see D-26) or document `Billboard` and `Fixed` as the choices for steep views.
+* **Recommended, not approved.** Keep +Y up and XZ ground as the engine default; make plane constraints an
+  M7 movement option; give coplanar content a documented spatial offset helper and a depth bias before adding
+  any layer concept; document orientation choices per view and test them in the configuration test scene.
+* **Needed by.** Decided during M6, before M7 and M8 build on it. **Blocks.** M7, M8, M13, M14.
 
 ## Reopening a settled decision
 

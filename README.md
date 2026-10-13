@@ -3,7 +3,9 @@
 Dimora is a Rust game engine built around a unified spatial model for 2.5D game development. It brings 2D sprites,
 tilemaps, skeletal 2D characters, 3D meshes and fully 3D characters into a shared world with coherent transforms,
 cameras, depth and rendering, and aims to make hybrid 2D/3D games natural to build through programming APIs combined
-with purpose-built visual tools, including a user-friendly editor.
+with purpose-built visual tools, including a user-friendly editor. It is not tied to one look or camera: perspective,
+orthographic, isometric, top-down and side-scrolling views are meant to be configurations of the same world (today
+perspective and orthographic are implemented and tested; the others are planned).
 
 **Today** Dimora is a code-driven engine: sprites, tilemaps, a skeletal 2D data model and 3D meshes share one world,
 one camera and one set of lights. The editor and the other character types are planned, not built; see

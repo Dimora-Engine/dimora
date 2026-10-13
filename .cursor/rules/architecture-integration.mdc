@@ -26,6 +26,8 @@ designing; do not duplicate them here.
   Systems resolve assets through the asset manager at the point of use.
 - Simulation, animation evaluation and layout are testable without a GPU, window or wall clock. Backends
   consume data; they are never called by gameplay code.
+- The runtime holds no editor state: no editor types, no `cfg(editor)` state, no code path reachable only
+  from the editor. Editors, inspectors and scripts use the registry, commands, events and diagnostics.
 - Do not add public `hecs`, `winit` or `wgpu` types to a public API, and do not expose engine internals to
   scripts, UI or editor code.
 - Every persisted format (assets, scenes, bundles, saves) carries a version from its first line; loaders
