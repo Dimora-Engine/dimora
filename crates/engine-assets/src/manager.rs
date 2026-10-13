@@ -494,7 +494,7 @@ mod tests {
         assert_ne!(m.revision(h), second);
     }
     // Two real names that collide would take a ~2^32-name search, so these tests choose the id.
-    const CHOSEN: AssetId = AssetId(0xC011_1DE);
+    const CHOSEN: AssetId = AssetId(0x0C01_11DE);
 
     fn texture_with(rgba: [u8; 4]) -> Texture {
         Texture::solid(1, 1, rgba)
