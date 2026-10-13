@@ -33,10 +33,10 @@ spatial interaction between different visual representations a foundational part
 Its goal is to make hybrid 2D/3D games natural to build through an integrated development experience
 combining powerful programming APIs with purpose-built visual tools.
 
-Dimora is not defined by a look or a camera. The same world can be seen through orthographic, perspective,
-isometric, top-down, side-scrolling or custom cameras (see "Camera configurations and visual styles"). Games
-it should suit include 2D characters in 3D scenery, diorama and paper-cutout adventures, isometric and
-top-down action or role-playing games, side-scrollers with depth, and hybrids of these.
+**Typical games:** Isometric and top-down RPGs, side-scrollers, HD-2D adventures, paper-cutout and diorama worlds, 2D characters in 3D environments, and hybrid games combining 2D and 3D elements across orthographic, perspective, and custom camera configurations.
+
+Dimora is not defined by a look or a camera: the same world can be seen through any of these configurations
+(see "Camera configurations and visual styles").
 
 **Programming APIs and visual tools are both first-class.** The editor is a product goal, not an optional
 extra: a user-friendly editor for building spatial worlds, placing and arranging content, setting up
