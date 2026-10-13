@@ -16,7 +16,7 @@ state is in [TASKS.md](TASKS.md); how the engine is built is in
 [docs/DECISIONS.md](docs/DECISIONS.md).
 
 Status values used below: **Done** (evidence cited), **In progress**, **Not started**. Nothing is marked in
-progress or partially done unless TASKS.md shows commits for it (M2 is in progress: task T1 is done). No milestone after M1 is complete. Planning a
+progress or partially done unless TASKS.md shows commits for it (M2 is in progress: tasks T1, T2 and T3 are done). No milestone after M1 is complete. Planning a
 system here does not mean it exists: the audit table below is the record of what does.
 
 ## 1. Where the project stands
@@ -209,8 +209,9 @@ more on top.
 - `AssetManager::remove`; renderer evicts GPU textures/meshes whose assets are gone or unused (policy
   from D-04).
 - `propagate_transforms`: parents without `Transform` act as identity; `despawn` of a parent no longer
-  leaves dangling children (policy from D-03).
+  leaves dangling children (policy from D-03). Done (T3).
 - Asset-name collision check on insert (two names hashing to one id is an error, not an overwrite).
+  Done (T3), per asset type.
 - Add licence files matching `Cargo.toml`.
 - Pick the code host/CI provider (D-22), then add its config calling `scripts/check.sh`.
 

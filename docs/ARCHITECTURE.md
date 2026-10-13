@@ -159,10 +159,10 @@ Each is verified by reading the code or by a test run; identifiers refer to the 
 1. **Resource lifetime (KI-4).** Fixed by T2: `AssetManager::remove` exists and the GPU caches evict removed
    and idle entries. Remaining limit: only textures and meshes are cached per asset, instance buffers only
    grow, and nothing yet calls `remove` for you (scene unload is M4).
-2. **Hierarchy robustness (KI-7, KI-8).** `propagate_transforms` only walks from entities that have a
-   `Transform` and no `Parent`. A child whose parent lacks a `Transform`, or whose parent was
-   `despawn`ed (children are not touched), keeps `GlobalTransform` at identity forever. Verified
-   with a scratch test. There is also no dirty tracking: the pass is O(entities) every frame.
+2. **Hierarchy robustness (KI-7, KI-8).** Fixed by T3: an entity without a `Transform` counts as
+   identity and its children are still placed, and `despawn` removes the whole subtree (D-03;
+   `detach_children` keeps children as roots at the same world transform). Remaining limit: there is no
+   dirty tracking, so the pass is O(entities) every frame.
 3. **Scheduling (KI-9, KI-10).** The frame order is hard-coded inside `Game::step`; user systems cannot be
    placed before/after engine stages, and nothing orders systems relative to each other except
    insertion. `FixedTimestep::alpha()` exists but is not exposed, so there is no render
@@ -177,7 +177,9 @@ Each is verified by reading the code or by a test run; identifiers refer to the 
    (so non-colour data such as normal maps cannot be represented), `Material` is
    colour + one albedo + a lit flag, meshes can only be opaque.
 7. **Asset pipeline (KI-12).** Synchronous loads, one decoder, no hot-reload watcher, no bundles.
-   `AssetId` is a name hash with no collision check; ids change if an asset is renamed.
+   `AssetId` is a name hash; ids change if an asset is renamed. Two different names that hash to the same
+   id for one asset type are now an error (`AssetError::IdCollision`, T3), not an overwrite; the check
+   is per asset type.
 8. **Skeletal animation is a data model, not a system (KI-13).** Linear TRS keyframes on bone
    entities driving child sprites. No blending, events, IK, skinning, or loading.
 9. **Transparency (KI-14).** Blended sprites are sorted per quad centre only; large or intersecting

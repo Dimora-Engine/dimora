@@ -83,7 +83,7 @@ Status values: **Open**, **Proposed** (a default exists, awaiting acceptance), *
 * **Needed by.** M2 task T3.
 * **Blocks.** The hierarchy fix; scene unload in M4 depends on the answer.
 * **Decided 2026-10-13 (owner accepted the proposed default).** `despawn` removes the whole subtree; the
-  explicit `detach_children` call keeps children as roots with their world transform. Implemented in T3.
+  explicit `detach_children` call keeps children as roots with their world transform. Implemented in T3 (`despawn_recursive` removed).
 
 ### D-04 GPU cache lifetime
 
@@ -486,7 +486,7 @@ this text with results.
   there is no dependency graph for cascading reload.
 * **Options.** Keep name hashes with a collision guard (M2 adds the guard); stable GUIDs with a
   name index; path-derived ids.
-* **Needed by.** M17, though the collision guard lands in M2 (T3) regardless. Fonts (M10) and sprite
+* **Needed by.** M17, though the collision guard landed in M2 (T3, per asset type). Fonts (M10) and sprite
   sheets (M8) use whatever exists then.
 * **Blocks.** M17, M19 (what scenes reference), M21.
 
