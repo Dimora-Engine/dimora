@@ -26,8 +26,8 @@ Status values: **Open**, **Proposed** (a default exists, awaiting acceptance), *
 
 | Id | Decision | Needed by | Blocks | Status |
 |---|---|---|---|---|
-| D-03 | Despawn semantics for entities with children | M2 (T3) | M2 hierarchy fix, M4 | Proposed |
-| D-04 | GPU cache lifetime | M2 (T2) | M2 eviction, M17 unload | Proposed |
+| D-03 | Despawn semantics for entities with children | M2 (T3) | M2 hierarchy fix, M4 | Decided (2026-10-13) |
+| D-04 | GPU cache lifetime | M2 (T2) | M2 eviction, M17 unload | Decided (2026-10-13) |
 | D-22 | Code host and CI provider | M2 | CI config, release | Open (credentials) |
 | D-23 | Platform targets, MSRV policy, crates.io | M2 (MSRV), M24 | M24 | MSRV part decided in T1 (1.90); platforms and crates.io still Open |
 | D-01 | Scheduling model | M3 | M3, M7, M8, M10, M15 | Open |
@@ -82,6 +82,8 @@ Status values: **Open**, **Proposed** (a default exists, awaiting acceptance), *
   and orphaned bones are never wanted; offer (b) as an explicit `detach_children` call.
 * **Needed by.** M2 task T3.
 * **Blocks.** The hierarchy fix; scene unload in M4 depends on the answer.
+* **Decided 2026-10-13 (owner accepted the proposed default).** `despawn` removes the whole subtree; the
+  explicit `detach_children` call keeps children as roots with their world transform. Implemented in T3.
 
 ### D-04 GPU cache lifetime
 
@@ -93,6 +95,9 @@ Status values: **Open**, **Proposed** (a default exists, awaiting acceptance), *
   that is merely off-screen is not re-uploaded every frame.
 * **Needed by.** M2 task T2.
 * **Blocks.** Eviction; asset unload for scenes (M4) and hot reload (M17).
+* **Decided 2026-10-13 (owner accepted the proposed default).** Both (a) and (b): a cached GPU texture or
+  mesh is evicted when its asset is gone from the manager, and when it has not been used for a configurable
+  number of frames. Implemented in T2.
 
 ### D-22 Code host and CI provider
 

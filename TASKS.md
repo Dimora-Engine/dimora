@@ -117,7 +117,7 @@ yet reproduced.
 |---|---|---|
 | B-1 | Code host and CI provider are undecided. The repository lives on Origin; a GitHub push to the `Dimora-Engine` organisation could not be done from this environment (no GitHub credentials) | Blocks only the CI config file in M2. Everything else, including `scripts/check.sh`, proceeds |
 | B-2 | GPU tests need an adapter: Metal on macOS (always present on a Mac), a Vulkan driver on Linux; fresh Linux VMs do not have one (`sudo apt install mesa-vulkan-drivers`) | Resolved by T1: documented in README, and `DIMORA_REQUIRE_GPU=1` (set by `scripts/check.sh`) makes the absence a failure |
-| B-3 | D-03 (despawn semantics) and D-04 (GPU cache lifetime) are unmade. Defaults are proposed in DECISIONS.md | Blocks T2 and T3 until accepted or changed; low risk |
+| B-3 | ~~D-03 (despawn semantics) and D-04 (GPU cache lifetime) are unmade~~ **Resolved 2026-10-13**: the owner accepted the proposed defaults for both (recorded in DECISIONS.md and ARCHITECTURE.md) | None |
 
 ## Next three tasks
 

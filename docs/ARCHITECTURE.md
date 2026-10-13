@@ -212,6 +212,8 @@ These are settled; revisit only with a concrete problem.
 | Sprite orientation | `Billboard` (default), `Upright`, `Fixed` | See SPATIAL_RENDERING.md |
 | Hierarchy | `Parent`/`Children` components + `GlobalTransform` system | Bones and attachments are ordinary entities |
 | Assets | Typed handles holding a name hash; manager owns data; sources behind a trait | Components can reference assets before they load |
+| Despawn (D-03) | `despawn` removes the whole subtree; `detach_children` keeps children as roots with their world transform | Bones and attachments are owned by their parent, so orphans are never wanted. Cost: a caller who wants children to survive must say so |
+| GPU cache lifetime (D-04) | Evict a cached texture or mesh when its asset is removed, and when unused for N frames (configurable) | Removed assets are freed promptly and off-screen assets are not re-uploaded every frame. Cost: an asset unused for N frames is re-uploaded when it returns |
 
 ## Proposed future architecture (NOT implemented)
 
