@@ -1,0 +1,43 @@
+---
+description: Dimora architecture, cross-system integration requirements, decision records and documentation upkeep. Use when adding or changing a system, a public API, an asset or file format, or the frame model.
+alwaysApply: true
+---
+
+# Architecture and integration
+
+The architecture, cross-system requirements and risk register are in `docs/ARCHITECTURE.md`. Open and made
+decisions are in `docs/DECISIONS.md`, with records in `docs/adr/`. Read the relevant sections before
+designing; do not duplicate them here.
+
+## Before building
+
+- Check `docs/DECISIONS.md` for an open decision that your work depends on. If a decision that a data format,
+  public API, ordering model or threading rule will bake in is still open, do not guess. Write the ADR first
+  (`docs/adr/TEMPLATE.md`), prototyping if the answer depends on a measurement, and get it accepted.
+- Do not create a second system for something that exists. Extend `engine-world`, `engine-assets`,
+  `engine-renderer` and the others; do not add parallel registries, loaders, schedulers or cameras.
+- Do not create a crate until it has code and a dependency boundary that needs it.
+
+## Contracts that must hold
+
+- Every renderable is an entity with a real 3D `Transform`, reaches the backend through plain data
+  (`RenderScene` or its successors), and goes through the same camera and depth contract.
+- Components are plain data: no GPU objects, no borrowed references, no cached values derived from assets.
+  Systems resolve assets through the asset manager at the point of use.
+- Simulation, animation evaluation and layout are testable without a GPU, window or wall clock. Backends
+  consume data; they are never called by gameplay code.
+- Do not add public `hecs`, `winit` or `wgpu` types to a public API, and do not expose engine internals to
+  scripts, UI or editor code.
+- Every persisted format (assets, scenes, bundles, saves) carries a version from its first line; loaders
+  return errors for unknown versions.
+- Errors from external data (files, assets, scripts, devices) are returned or logged with context. They never
+  panic and are never silent.
+
+## After changing
+
+- A meaningful architectural change (new cross-system dependency, changed contract, new public API or format,
+  changed frame order) needs an ADR and updates to `docs/ARCHITECTURE.md` and `docs/CAPABILITIES.md` in the
+  same commit. Small local choices belong in code comments.
+- Keep each fact in one place: vision in `VISION.md`, status in `CAPABILITIES.md`, order in `ROADMAP.md`,
+  current work and evidence in `TASKS.md`. Link instead of copying.
+- Do not rewrite or reorganise crates without a demonstrated need recorded in `TASKS.md`.
