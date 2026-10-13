@@ -240,7 +240,7 @@ Missing from the original category list and now tracked: **save games** (34), **
 * **Integration.** Sprites are bones' children, tiles' sibling path, particles' target path.
 * **Performance.** One instanced quad path; CPU extraction per frame.
 * **Tests/examples.** Existing; add table tests for sheet slicing (M8).
-* **Unresolved.** KI-21 (natural size ignores region), D-26 (more orientations).
+* **Unresolved.** KI-21 (natural size ignores region), D-26 (`Upright` semantics for steep views; the three modes are a candidate set, not exhaustive).
 * **Not initially.** Sprite meshes (non-quad), 9-slice (UI), per-sprite shaders.
 
 ### 10. Depth, transparency, occlusion, render ordering

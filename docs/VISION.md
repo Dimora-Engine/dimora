@@ -225,7 +225,7 @@ Not pursued without a recorded, compelling reason (an ADR citing a concrete need
    tooling arriving incrementally (ADR-0003). Still open (OD-6): how much of a game must be buildable
    without writing Rust.
 2. **Settled (2026-10-13):** there is no single showcase look or camera; see "Camera configurations and
-   visual styles". Open engineering question: D-48 (gameplay plane, coplanar ordering, orientation per view).
+   visual styles". Engineering follow-up: D-48 (the `+Y` up / `XZ` ground convention is provisional; coplanar ordering and sprite orientation per view wait for the M6 test scene).
 3. **Licence: open (OD-3).** `MIT OR Apache-2.0` is *proposed* and declared in `Cargo.toml`, but the owner
    has not confirmed it and no licence files exist (KI-17; audit in TASKS.md). Publishing to crates.io is
    deferred (D-23).

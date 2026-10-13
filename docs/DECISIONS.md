@@ -49,7 +49,7 @@ is not approved; nothing marked Recommended may be described elsewhere as decide
 | Id | Topic | Status | Where recorded |
 |---|---|---|---|
 | OD-1 | Editor timing: the full editor stays late, behind a stability gate; developer tooling arrives incrementally; the runtime stays free of editor-specific state | **Confirmed** (2026-10-13) | [ADR-0003](adr/0003-incremental-tooling-editor-later.md), ROADMAP "Incremental developer tooling" |
-| OD-2 | Dimora is not defined by HD-2D or any single view; one spatial world supports orthographic, perspective, isometric, top-down, side-scrolling and custom cameras as intended capabilities; projection is separate from gameplay orientation and style; the showcase is a reusable multi-camera test scene | **Confirmed** as direction (2026-10-13). Mechanisms, owner response 2026-10-13: camera presets as constructors **Accepted**; style as policy **Accepted with clarification** (per level, no universal style abstraction); gameplay orientation as data **Accepted**; coplanar ordering **Amended** (spatial depth, transparency sorting, render layers or queues and explicit render order stay distinct; no generalised occlusion framework yet). The reusable test scene stays **Recommended**. None of this is implemented | [ADR-0004](adr/0004-one-spatial-world-many-camera-configurations.md), D-48 |
+| OD-2 | Dimora is not defined by HD-2D or any single view; one spatial world supports orthographic, perspective, isometric, top-down, side-scrolling and custom cameras as intended capabilities; projection is separate from gameplay orientation and style; the showcase is a reusable multi-camera test scene | **Confirmed** as direction (2026-10-13). The six open questions were answered the same day; the answers are classified (accepted principle, provisional convention, deferred API decision, needs prototype evidence) in ADR-0004 "Resolution of the open questions". Mechanisms, owner response 2026-10-13: camera presets as constructors **Accepted**; style as policy **Accepted with clarification** (per level, no universal style abstraction); gameplay orientation as data **Accepted**; coplanar ordering **Amended** (spatial depth, transparency sorting, render layers or queues and explicit render order stay distinct; no generalised occlusion framework yet). The reusable test scene stays **Recommended**. None of this is implemented | [ADR-0004](adr/0004-one-spatial-world-many-camera-configurations.md), D-48 |
 | OD-3 | Licence: `MIT OR Apache-2.0` | **Proposed, not confirmed.** No licence files are added until the owner approves. Copyright holder also unconfirmed | TASKS.md "Licence audit" (KI-17) |
 | OD-4 | Use GitHub Actions if the repository is hosted on GitHub; validate on Windows, macOS and Linux; Windows early | **Confirmed** as direction (2026-10-13). That GitHub is the long-term host is **assumed** (the repository and its pull requests are on GitHub); the owner has not stated it | [ADR-0005](adr/0005-ci-on-github-actions.md) (Provisional), D-22 |
 | OD-5 | Does a licence also need a contributor policy (a CLA or DCO), given contributions from several authors and AI agents? | **Open** | TASKS.md "Licence audit" |
@@ -83,12 +83,12 @@ the risk register). **Prototype where the answer depends on a measurement; do no
 | D-18 | Scene format, serde, component registry | M4 (registry shape), M19 | M4, M18, M19, M22 | Open |
 | D-27 | Units and pixels per unit | M5 | M5, M8, M9, M13 | Open |
 | D-05 | Materials, alpha modes, blended meshes | M5 | M5, M14 | Open |
-| D-06 | Pixel-art policy (snapping, MSAA): opt-in per camera, **not a default or a foundation** | M6 (after D-25 and D-08) | M6, M8, M9, M13 | Open, lowered in priority by ADR-0004 |
+| D-06 | Pixel-art filtering, texel snapping, MSAA: policies at the level of each technique, **not a default or a foundation** | M6 (after D-25 and D-08) | M6, M8, M9, M13 | Principles accepted (ADR-0004); API ownership and defaults **deferred pending a rendering prototype** |
 | D-07 | Depth convention (reverse-Z) | M6 | M6, M14 shadows | Open |
 | D-08 | Multi-camera and render targets | M6 | M6, M14, M22 | Open |
 | D-25 | Custom projections inside `Camera` | M6 (**first in M6**, [ADR-0004](adr/0004-one-spatial-world-many-camera-configurations.md)) | M6, M13 (oblique tiles) | Open |
-| D-48 | Camera configurations: gameplay plane and up axis, coplanar ordering, orientation modes per view | M6 (decide before M7 and M8) | M6, M7, M8, M13, M14 | Open. Principles decided by the owner (ADR-0004, 2026-10-13); mechanisms still open (see D-48) |
-| D-26 | Additional sprite orientations | M6 | none hard | Open, low priority |
+| D-48 | Camera configurations: gameplay orientation, coplanar ordering, orientation modes per view | M6 (decide before M7 and M8) | M6, M7, M8, M13, M14 | Principles accepted and `+Y` up / `XZ` ground retained as a **provisional convention** (ADR-0004, 2026-10-13); gameplay-orientation components deferred to M7 and M8 requirements; coplanar and isometric mechanisms **need M6 prototype evidence** |
+| D-26 | Sprite orientation modes beyond `Billboard`, `Upright`, `Fixed`; `Upright` semantics for steep and oblique views | M6 | none hard | Candidate initial set kept, not exhaustive (ADR-0004); semantics and extensions open, low priority |
 | D-09 | Physics: custom or library | M7 | M7, M9 | Open |
 | D-28 | Character gameplay versus visuals | M8 (provisional), M9 | M9, M10, M11, M12, M18 | Open |
 | D-29 | Shared animation control vocabulary and state machine | M8 (vocabulary), M11 | M8, M9, M11, M12 | Open |
@@ -225,7 +225,13 @@ frames. Implemented in T2.
 * **Problem.** There is no policy for texel snapping, integer scaling or MSAA, and the nearest-neighbour
   look at fractional camera positions can shimmer.
 * **Options.** Opt-in snapping per camera; integer-scale viewport mode; MSAA off for pixel-art cameras.
-* **Needed by.** M6. **Blocks.** M8 and M9 visual quality (frame shimmer), M13 tile seams.
+* **Guidance accepted (ADR-0004, 2026-10-13).** Sampling configuration (filter, wrap, anisotropy) belongs at the
+  texture or sampler level where appropriate. A pixel-art look may need coordinated settings across materials,
+  sprites, cameras and renderer configuration. Texel snapping is implemented at the level its technique needs
+  (view-level for camera snapping, object or shader level otherwise). There is no universal style abstraction;
+  a convenience preset may configure several settings together while each stays independently settable.
+* **Deferred.** Exact API ownership and defaults, until a rendering prototype validates the requirements.
+* **Needed by.** M6 (lowest priority there). **Blocks.** M8 and M9 visual quality (frame shimmer), M13 tile seams.
 
 ### D-07 Depth convention (reverse-Z)
 
@@ -247,6 +253,8 @@ frames. Implemented in T2.
 * **Problem.** The `Projection` trait exists but `Camera` stores a closed enum (KI-11), so an oblique
   or isometric projection cannot be supplied.
 * **Options.** Add enum variants (oblique); store a boxed trait object; store a plain matrix override.
+* **Presets (ADR-0004).** Presets use whatever `Camera` ends up holding; how a preset takes a custom projection is
+  decided with this design, not before.
 * **Needed by.** M6; earlier only if tilemaps (M13) need oblique projection.
 * **Blocks.** Custom projections; M13 if it chooses oblique tiles.
 
@@ -254,6 +262,10 @@ frames. Implemented in T2.
 
 * **Problem.** `Billboard`, `Upright`, `Fixed` cover current needs. Axis-aligned billboards or
   camera-position-facing billboards may be wanted.
+* **Direction (ADR-0004, 2026-10-13).** `Billboard`, `Upright` and `Fixed` remain candidate initial modes, not an
+  exhaustive or permanent set (`SpriteOrientation` is `#[non_exhaustive]`). Orientation stays independent of camera
+  projection. The semantics of `Upright` under steep, top-down and oblique views are clarified during
+  implementation, from the M6 test scene.
 * **Needed by.** Nothing is blocked. Decide only when a real scene needs it.
 
 ## Needed during M7 (gameplay)
@@ -629,7 +641,7 @@ Each is open; none has a chosen answer. Leanings are starting points.
   side-scrolling and isometric games feel: (1) **gameplay orientation**: where the ground plane and up axis
   are for movement, collision and directional animation, independent of the camera; (2) **coplanar content**:
   cutout sprites and tiles at the same depth z-fight, and `RenderOrder` only orders blended sprites, so a
-  flat 2D layering needs an ordering that stays spatial; (3) **sprite orientation per view**: `Upright`
+  a flat 2D layering needs a defined ordering (spatial depth first, with a separate explicit override, see below); (3) **sprite orientation per view**: `Upright`
   sprites are edge-on under a straight-down camera.
 * **Decided by the owner (2026-10-13, [ADR-0004](adr/0004-one-spatial-world-many-camera-configurations.md)).**
   Gameplay orientation is data, separate from world transforms and visual presentation, never derived only
@@ -639,14 +651,19 @@ Each is open; none has a chosen answer. Leanings are starting points.
   ordering of coplanar content is supported as an explicit override and is not presented as depth; room is left
   for sorting or occlusion policies for isometric and similar styles, and no generalised occlusion framework is
   built before a scene shows the need.
-* **Still open.** (1) Which components carry gameplay orientation, which values are stored and which derived,
-  and the per-game up axis and ground plane (engine default +Y up, XZ ground). (2) The coplanar mechanism: a
-  documented spatial offset helper, a depth bias, `RenderOrder` extended to opaque and cutout content, or
-  other; and whether any render layer or queue concept is needed beyond the pass split. (3) Sprite orientation
-  per view (`Upright` is edge-on under a straight-down camera; see D-26). (4) Whether isometric needs a sort or
-  occlusion policy, decided from the M6 test scene.
-* **Recommended, not approved.** Keep +Y up and XZ ground as the engine default; make plane constraints an M7
-  movement option; test orientation choices per view in the configuration test scene.
+* **Provisional convention (owner, 2026-10-13).** `+Y` up and an `XZ` ground plane, left-handed, `+Z` forward,
+  retained after inspecting the implementation (no material incompatibility; `Upright` is the only world-up
+  reader in the renderer). A movement plane is a gameplay constraint chosen per game (M7 movement option), not
+  the ground plane. World transform, movement direction, gameplay-facing direction and visual orientation are
+  distinct concepts; values are derived where meanings align and stored only where behaviour requires. A per-game
+  up axis is not provided or planned. Details and implications: ADR-0004, question 3.
+* **Deferred API decisions.** The gameplay-orientation component design (until M7 movement and M8
+  directional-animation requirements exist); preset signatures and defaults (with D-25).
+* **Needs prototype evidence (M6 test scene).** (1) The coplanar mechanism: the scene first identifies the real
+  coplanar ordering and depth-conflict cases, then a mechanism is chosen (candidates, none preferred: offset
+  helper, depth bias, extending `RenderOrder`, a layer or queue). (2) Whether isometric needs a specialised sort
+  or occlusion policy, decided only if the scene shows a concrete limitation; none is built speculatively.
+  (3) `Upright` and the other orientation modes under steep, top-down and isometric views (D-26).
 * **Needed by.** Decided during M6, before M7 and M8 build on it. **Blocks.** M7, M8, M13, M14.
 
 ## Reopening a settled decision
