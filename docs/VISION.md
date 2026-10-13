@@ -27,8 +27,7 @@ spatial interaction between different visual representations a foundational part
 Its goal is to make hybrid 2D/3D games natural to build through an integrated development experience
 combining powerful programming APIs with purpose-built visual tools.
 
-Typical games: "HD-2D" style RPGs, paper-cutout and diorama adventures, 2D characters walking through 3D
-scenery, isometric or tilted-camera action games.
+**Typical games:** Isometric and top-down RPGs, side-scrollers, HD-2D adventures, paper-cutout and diorama worlds, 2D characters in 3D environments, and hybrid games combining 2D and 3D elements across orthographic, perspective, and custom camera configurations.
 
 **Programming APIs and visual tools are both first-class.** The editor is a product goal, not an optional
 extra: a user-friendly editor for building spatial worlds, placing and arranging content, setting up
