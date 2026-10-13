@@ -13,10 +13,10 @@ const VIEWPORT: Vec2 = Vec2::new(800.0, 600.0);
 fn assets() -> AssetManager {
     let mut a = AssetManager::in_memory();
     for name in ["tex_a", "tex_b"] {
-        let t = a.insert(name, Texture::solid(16, 16, [255; 4]));
-        a.insert(&format!("{name}_sprite"), SpriteAsset::whole_texture(t, 16, 16));
+        let t = a.insert(name, Texture::solid(16, 16, [255; 4])).unwrap();
+        a.insert(&format!("{name}_sprite"), SpriteAsset::whole_texture(t, 16, 16)).unwrap();
     }
-    a.insert("cube", MeshData::cuboid(Vec3::ONE));
+    a.insert("cube", MeshData::cuboid(Vec3::ONE)).unwrap();
     a
 }
 

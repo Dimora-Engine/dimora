@@ -125,7 +125,10 @@ pub fn spawn(world: &mut World, position: Vec3) -> Character {
 
     let (walk_h, idle_h) = {
         let mut assets = world.resource_mut::<AssetManager>();
-        (assets.insert("walk", walk), assets.insert("idle", idle))
+        (
+            assets.insert("walk", walk).expect("example asset names are distinct"),
+            assets.insert("idle", idle).expect("example asset names are distinct"),
+        )
     };
 
     let root = world.spawn((Transform::from_position(position), Name::new("player"), AnimationPlayer::new("idle")));

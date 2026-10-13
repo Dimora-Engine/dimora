@@ -162,11 +162,15 @@ fn screenshot(
 fn build_world(world: &mut World, perspective: bool) -> Scene {
     {
         let mut assets = world.resource_mut::<AssetManager>();
-        assets.insert("floor_tile", MeshData::cuboid(Vec3::new(100.0, 8.0, 100.0)));
-        assets.insert("pad", MeshData::cuboid(Vec3::new(84.0, 2.0, 84.0)));
-        assets.insert("pillar", MeshData::cuboid(Vec3::new(50.0, 200.0, 50.0)));
-        assets.insert("cube", MeshData::cuboid(Vec3::splat(80.0)));
-        assets.insert("pyramid", MeshData::cone(60.0, 130.0, 4));
+        assets
+            .insert("floor_tile", MeshData::cuboid(Vec3::new(100.0, 8.0, 100.0)))
+            .expect("example asset names are distinct");
+        assets.insert("pad", MeshData::cuboid(Vec3::new(84.0, 2.0, 84.0))).expect("example asset names are distinct");
+        assets
+            .insert("pillar", MeshData::cuboid(Vec3::new(50.0, 200.0, 50.0)))
+            .expect("example asset names are distinct");
+        assets.insert("cube", MeshData::cuboid(Vec3::splat(80.0))).expect("example asset names are distinct");
+        assets.insert("pyramid", MeshData::cone(60.0, 130.0, 4)).expect("example asset names are distinct");
     }
     let panel =
         |color: Color| Material { base_color: color, base_texture: Some(AssetHandle::from_name("panel")), lit: false };

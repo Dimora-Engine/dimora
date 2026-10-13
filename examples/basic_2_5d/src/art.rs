@@ -23,40 +23,43 @@ fn shade(c: [u8; 3], k: f32) -> [u8; 4] {
 /// Registers a texture plus a same-named sprite covering all of it (bottom-center pivot, 16 px/unit).
 fn add_sprite(assets: &mut AssetManager, name: &str, tex: Texture) {
     let (w, h) = (tex.width, tex.height);
-    let handle = assets.insert(name, tex);
-    let sprite = assets.insert(name, SpriteAsset::whole_texture(handle, w, h));
+    let handle = assets.insert(name, tex).expect("example asset names are distinct");
+    let sprite =
+        assets.insert(name, SpriteAsset::whole_texture(handle, w, h)).expect("example asset names are distinct");
     assets.add_dependency(sprite, handle);
 }
 
 pub fn register(assets: &mut AssetManager) {
     // 2x2 atlas of 16px tiles: grass, grass with blades, dirt, flowers.
-    assets.insert(
-        "ground",
-        Texture::from_fn(32, 32, |x, y| {
-            let (tile, lx, ly) = ((x / 16) + (y / 16) * 2, x % 16, y % 16);
-            let n = noise(lx, ly, tile);
-            match tile {
-                0 => shade([78, 142, 62], 0.9 + n * 0.2),
-                1 => {
-                    let blade = noise(lx / 2, ly, 7) > 0.8;
-                    shade([70, 135, 58], if blade { 1.25 } else { 0.9 + n * 0.15 })
-                }
-                2 => shade([146, 112, 74], 0.88 + n * 0.24),
-                _ => {
-                    let flower = noise(lx, ly, 11);
-                    if flower > 0.965 {
-                        [250, 240, 120, 255]
-                    } else if flower > 0.93 {
-                        [240, 120, 170, 255]
-                    } else {
-                        shade([78, 142, 62], 0.9 + n * 0.2)
+    assets
+        .insert(
+            "ground",
+            Texture::from_fn(32, 32, |x, y| {
+                let (tile, lx, ly) = ((x / 16) + (y / 16) * 2, x % 16, y % 16);
+                let n = noise(lx, ly, tile);
+                match tile {
+                    0 => shade([78, 142, 62], 0.9 + n * 0.2),
+                    1 => {
+                        let blade = noise(lx / 2, ly, 7) > 0.8;
+                        shade([70, 135, 58], if blade { 1.25 } else { 0.9 + n * 0.15 })
+                    }
+                    2 => shade([146, 112, 74], 0.88 + n * 0.24),
+                    _ => {
+                        let flower = noise(lx, ly, 11);
+                        if flower > 0.965 {
+                            [250, 240, 120, 255]
+                        } else if flower > 0.93 {
+                            [240, 120, 170, 255]
+                        } else {
+                            shade([78, 142, 62], 0.9 + n * 0.2)
+                        }
                     }
                 }
-            }
-        }),
-    );
+            }),
+        )
+        .expect("example asset names are distinct");
 
-    assets.insert("white", Texture::solid(4, 4, [255; 4]));
+    assets.insert("white", Texture::solid(4, 4, [255; 4])).expect("example asset names are distinct");
     add_sprite(assets, "white", Texture::solid(4, 4, [255; 4]));
 
     add_sprite(
@@ -116,33 +119,37 @@ pub fn register(assets: &mut AssetManager) {
         }),
     );
 
-    assets.insert(
-        "brick",
-        Texture::from_fn(32, 32, |x, y| {
-            let (row, offset) = (y / 8, if (y / 8) % 2 == 0 { 0 } else { 8 });
-            let bx = (x + offset) % 16;
-            if y % 8 == 0 || bx == 0 {
-                shade([190, 186, 176], 1.0)
-            } else {
-                shade([168, 76, 56], 0.85 + noise(x, y, row) * 0.3)
-            }
-        }),
-    );
+    assets
+        .insert(
+            "brick",
+            Texture::from_fn(32, 32, |x, y| {
+                let (row, offset) = (y / 8, if (y / 8) % 2 == 0 { 0 } else { 8 });
+                let bx = (x + offset) % 16;
+                if y % 8 == 0 || bx == 0 {
+                    shade([190, 186, 176], 1.0)
+                } else {
+                    shade([168, 76, 56], 0.85 + noise(x, y, row) * 0.3)
+                }
+            }),
+        )
+        .expect("example asset names are distinct");
 
-    assets.insert(
-        "crate",
-        Texture::from_fn(16, 16, |x, y| {
-            let edge = x == 0 || y == 0 || x == 15 || y == 15;
-            let brace = x == y || x + y == 15;
-            let plank = y % 5 == 0;
-            let wood = shade([176, 130, 76], 0.9 + noise(x, y, 9) * 0.2);
-            if edge || brace {
-                shade([110, 76, 42], 1.0)
-            } else if plank {
-                shade([140, 100, 58], 1.0)
-            } else {
-                wood
-            }
-        }),
-    );
+    assets
+        .insert(
+            "crate",
+            Texture::from_fn(16, 16, |x, y| {
+                let edge = x == 0 || y == 0 || x == 15 || y == 15;
+                let brace = x == y || x + y == 15;
+                let plank = y % 5 == 0;
+                let wood = shade([176, 130, 76], 0.9 + noise(x, y, 9) * 0.2);
+                if edge || brace {
+                    shade([110, 76, 42], 1.0)
+                } else if plank {
+                    shade([140, 100, 58], 1.0)
+                } else {
+                    wood
+                }
+            }),
+        )
+        .expect("example asset names are distinct");
 }

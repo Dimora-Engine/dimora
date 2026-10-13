@@ -131,7 +131,7 @@ mod tests {
     #[test]
     fn player_drives_bone_entities_and_loops() {
         let mut assets = AssetManager::in_memory();
-        assets.insert("slide", AnimationClip { duration: 2.0, looping: true, tracks: vec![track()] });
+        assets.insert("slide", AnimationClip { duration: 2.0, looping: true, tracks: vec![track()] }).unwrap();
         let mut world = World::new();
         world.insert_resource(assets);
         world.insert_resource(Time::default());

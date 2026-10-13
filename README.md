@@ -107,7 +107,8 @@ use engine::prelude::*;
 let mut game = Game::new(GameConfig::default().with_title("my game"));
 
 // Assets are addressed by name; components can reference them before they exist.
-game.assets().insert("ground", Texture::solid(16, 16, [90, 150, 70, 255]));
+// `insert` fails (and never overwrites) if two different names hash to the same asset id.
+game.assets().insert("ground", Texture::solid(16, 16, [90, 150, 70, 255])).unwrap();
 
 game.world.spawn((Transform::from_xyz(0.0, 3.0, -10.0), Camera::perspective(45.0)));
 game.world.spawn((Transform::from_xyz(0.0, 0.0, 100.0), Sprite::new("player")));   // real depth: Z = 100

@@ -7,6 +7,13 @@ pub enum AssetError {
     Decode(String),
     /// The asset type has no byte-level decoder (it is created in code or by a future bundler).
     Unsupported(AssetKind),
+    /// Two different names hash to the same [`crate::AssetId`] for the same asset type. The asset
+    /// already stored under `existing` is left as it was; rename one of the two.
+    IdCollision {
+        id: crate::AssetId,
+        existing: String,
+        new: String,
+    },
 }
 
 impl core::fmt::Display for AssetError {
@@ -16,6 +23,9 @@ impl core::fmt::Display for AssetError {
             AssetError::Io(e) => write!(f, "i/o error: {e}"),
             AssetError::Decode(e) => write!(f, "decode error: {e}"),
             AssetError::Unsupported(k) => write!(f, "{k:?} assets cannot be loaded from bytes yet"),
+            AssetError::IdCollision { id, existing, new } => {
+                write!(f, "asset names `{existing}` and `{new}` hash to the same id {:#018x}; rename one of them", id.0)
+            }
         }
     }
 }

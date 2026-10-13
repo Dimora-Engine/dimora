@@ -130,9 +130,9 @@ mod gpu_requirement {
 
 fn assets() -> AssetManager {
     let mut a = AssetManager::in_memory();
-    let white = a.insert("white", Texture::solid(4, 4, [255; 4]));
-    a.insert("quad", SpriteAsset::whole_texture(white, 4, 4).with_pixels_per_unit(1.0));
-    a.insert("cube", MeshData::cuboid(Vec3::splat(2.0)));
+    let white = a.insert("white", Texture::solid(4, 4, [255; 4])).unwrap();
+    a.insert("quad", SpriteAsset::whole_texture(white, 4, 4).with_pixels_per_unit(1.0)).unwrap();
+    a.insert("cube", MeshData::cuboid(Vec3::splat(2.0))).unwrap();
     a
 }
 
@@ -272,7 +272,7 @@ fn thousands_of_sprites_cost_one_draw_call() {
 fn meshes_cull_back_faces_so_their_interior_is_hidden() {
     let Some((gpu, mut r)) = setup() else { return };
     let mut a = assets();
-    a.insert("big_cube", MeshData::cuboid(Vec3::splat(4.0)));
+    a.insert("big_cube", MeshData::cuboid(Vec3::splat(4.0))).unwrap();
     let mut w = world_with_camera();
     // A red sprite *inside* the cube (between its front face at z=8 and back face at z=12). With
     // correct culling the cube's front face hides it; with inverted culling only the back faces
@@ -349,10 +349,10 @@ const EMPTY_CACHE: CacheStats = CacheStats { textures: 0, meshes: 0 };
 /// Builds the assets used by the cache tests: a white texture behind the `quad` sprite asset, a
 /// blue texture for the cube's material, and the `cube` mesh. Two textures and one mesh.
 fn insert_cache_test_assets(a: &mut AssetManager) {
-    let white = a.insert("white", Texture::solid(4, 4, [255; 4]));
-    a.insert("quad", SpriteAsset::whole_texture(white, 4, 4).with_pixels_per_unit(1.0));
-    a.insert("blue", Texture::solid(4, 4, [0, 0, 255, 255]));
-    a.insert("cube", MeshData::cuboid(Vec3::splat(2.0)));
+    let white = a.insert("white", Texture::solid(4, 4, [255; 4])).unwrap();
+    a.insert("quad", SpriteAsset::whole_texture(white, 4, 4).with_pixels_per_unit(1.0)).unwrap();
+    a.insert("blue", Texture::solid(4, 4, [0, 0, 255, 255])).unwrap();
+    a.insert("cube", MeshData::cuboid(Vec3::splat(2.0))).unwrap();
 }
 
 fn remove_cache_test_assets(a: &mut AssetManager) {
@@ -447,7 +447,7 @@ fn a_replaced_asset_is_reuploaded_without_keeping_the_old_copy() {
 
     // Replace in place: the revision changes, the single cache entry is rewritten.
     for (i, colour) in [[255, 0, 0, 255], [0, 255, 0, 255], [0, 0, 255, 255]].into_iter().enumerate() {
-        a.insert("white", Texture::solid(4, 4, colour));
+        a.insert("white", Texture::solid(4, 4, colour)).unwrap();
         let p = px(&render(&gpu, &mut r, &mut w, &a), W / 2, H / 2);
         assert_eq!(p, colour, "replacement {i} is what is drawn");
         assert_eq!(r.cache_stats().textures, 1, "replacement {i} did not add a second copy");
@@ -468,7 +468,7 @@ fn remove_and_reinsert_between_frames_is_seen_as_a_change() {
     assert_eq!(px(&render(&gpu, &mut r, &mut w, &a), W / 2, H / 2), [255, 255, 255, 255]);
 
     a.remove(a.texture("white"));
-    a.insert("white", Texture::solid(4, 4, [255, 255, 0, 255]));
+    a.insert("white", Texture::solid(4, 4, [255, 255, 0, 255])).unwrap();
     let p = px(&render(&gpu, &mut r, &mut w, &a), W / 2, H / 2);
     assert_eq!(p, [255, 255, 0, 255], "the replacement is drawn, not the stale first upload");
     assert_eq!(r.cache_stats().textures, 1);

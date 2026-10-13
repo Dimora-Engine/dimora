@@ -131,9 +131,20 @@ impl AssetManager {
 
     // ---- inserting and reading ---------------------------------------------------------------
 
-    /// Stores `value` under `name`, replacing (and changing the revision of) any previous value.
-    pub fn insert<T: Asset>(&mut self, name: &str, value: T) -> AssetHandle<T> {
-        let id = AssetId::from_name(name);
+    /// Stores `value` under `name`, replacing (and changing the revision of) any previous value of
+    /// the same name.
+    ///
+    /// Ids are 64-bit hashes of names. If a *different* name already owns the same id for this asset
+    /// type, nothing is stored and [`AssetError::IdCollision`] is returned: the existing asset is
+    /// never overwritten.
+    pub fn insert<T: Asset>(&mut self, name: &str, value: T) -> Result<AssetHandle<T>, AssetError> {
+        self.insert_with_id(AssetId::from_name(name), name, value)
+    }
+
+    /// `insert` with the id chosen by the caller. Only the tests need this, to force a collision
+    /// without searching for two real names that collide.
+    fn insert_with_id<T: Asset>(&mut self, id: AssetId, name: &str, value: T) -> Result<AssetHandle<T>, AssetError> {
+        self.check_collision::<T>(id, name)?;
         let store = self.store_mut::<T>();
         store.next_revision += 1;
         let revision = store.next_revision;
@@ -149,7 +160,16 @@ impl AssetManager {
         entry.state = LoadState::Loaded;
         entry.value = Some(Arc::new(value));
         entry.error = None;
-        AssetHandle::from_id(id)
+        Ok(AssetHandle::from_id(id))
+    }
+
+    fn check_collision<T: Asset>(&self, id: AssetId, name: &str) -> Result<(), AssetError> {
+        match self.entry::<T>(id) {
+            Some(existing) if existing.name != name => {
+                Err(AssetError::IdCollision { id, existing: existing.name.clone(), new: name.to_owned() })
+            }
+            _ => Ok(()),
+        }
     }
 
     pub fn get<T: Asset>(&self, handle: AssetHandle<T>) -> Option<&T> {
@@ -224,11 +244,18 @@ impl AssetManager {
     /// Requests that `name` be read from the source and decoded as `T`. Returns the handle
     /// immediately; call [`AssetManager::process_loads`] to perform the work. Already
     /// loaded/loading assets are left alone.
-    pub fn load<T: Asset>(&mut self, name: &str) -> AssetHandle<T> {
-        let id = AssetId::from_name(name);
+    ///
+    /// Returns [`AssetError::IdCollision`], and requests nothing, if a different name already owns
+    /// the same id for this asset type (see [`AssetManager::insert`]).
+    pub fn load<T: Asset>(&mut self, name: &str) -> Result<AssetHandle<T>, AssetError> {
+        self.load_with_id(AssetId::from_name(name), name)
+    }
+
+    fn load_with_id<T: Asset>(&mut self, id: AssetId, name: &str) -> Result<AssetHandle<T>, AssetError> {
+        self.check_collision::<T>(id, name)?;
         if let Some(e) = self.entry::<T>(id) {
             if matches!(e.state, LoadState::Loaded | LoadState::Loading) {
-                return AssetHandle::from_id(id);
+                return Ok(AssetHandle::from_id(id));
             }
         }
         self.mark_loading::<T>(id, name);
@@ -237,7 +264,9 @@ impl AssetManager {
             let result = mgr.source.read(&name).and_then(|bytes| T::decode(&bytes));
             match result {
                 Ok(value) => {
-                    mgr.insert(&name, value);
+                    // Cannot collide: the entry made by `mark_loading` owns the id, and `remove`
+                    // cancels this job before anything else could take it.
+                    let _ = mgr.insert_with_id(id, &name, value);
                 }
                 Err(err) => {
                     let e = mgr.store_mut::<T>().entries.get_mut(&id).expect("entry created by mark_loading");
@@ -247,7 +276,7 @@ impl AssetManager {
             }
         });
         self.pending.push(PendingLoad { key: (TypeId::of::<T>(), id), run });
-        AssetHandle::from_id(id)
+        Ok(AssetHandle::from_id(id))
     }
 
     fn mark_loading<T: Asset>(&mut self, id: AssetId, name: &str) {
@@ -279,8 +308,9 @@ impl AssetManager {
     /// Re-reads `name` from the source and replaces the value, bumping its revision so renderers
     /// refresh their GPU copies. This is the building block for file-watcher hot reload.
     pub fn reload<T: Asset>(&mut self, name: &str) -> Result<AssetHandle<T>, AssetError> {
+        self.check_collision::<T>(AssetId::from_name(name), name)?;
         let value = T::decode(&self.source.read(name)?)?;
-        Ok(self.insert(name, value))
+        self.insert(name, value)
     }
 }
 
@@ -305,10 +335,10 @@ mod tests {
     #[test]
     fn insert_get_and_revision() {
         let mut m = AssetManager::in_memory();
-        let h = m.insert("t", Texture::solid(1, 1, [1, 2, 3, 4]));
+        let h = m.insert("t", Texture::solid(1, 1, [1, 2, 3, 4])).unwrap();
         assert_eq!(m.revision(h), 1);
         assert_eq!(m.get(h).unwrap().rgba, vec![1, 2, 3, 4]);
-        m.insert("t", Texture::solid(1, 1, [9, 9, 9, 9]));
+        m.insert("t", Texture::solid(1, 1, [9, 9, 9, 9])).unwrap();
         assert_eq!(m.revision(h), 2);
         assert_eq!(m.get(m.texture("t")).unwrap().rgba[0], 9);
         // Same name, different type: independent namespaces.
@@ -320,9 +350,9 @@ mod tests {
     fn deferred_loading_from_a_source() {
         let mut m =
             AssetManager::new(MemorySource::default().with("tex/a.png", png_bytes()).with("bad.png", vec![1, 2, 3]));
-        let ok = m.load::<Texture>("tex/a.png");
-        let bad = m.load::<Texture>("bad.png");
-        let missing = m.load::<Texture>("nope.png");
+        let ok = m.load::<Texture>("tex/a.png").unwrap();
+        let bad = m.load::<Texture>("bad.png").unwrap();
+        let missing = m.load::<Texture>("nope.png").unwrap();
         assert_eq!(m.state(ok), LoadState::Loading);
         assert!(m.get(ok).is_none());
         assert!(m.has_pending_loads());
@@ -336,14 +366,14 @@ mod tests {
         assert_eq!(m.state(missing), LoadState::Failed);
 
         // Loading again is a no-op for loaded assets.
-        m.load::<Texture>("tex/a.png");
+        m.load::<Texture>("tex/a.png").unwrap();
         assert!(!m.has_pending_loads());
     }
 
     #[test]
     fn types_without_decoders_fail_cleanly() {
         let mut m = AssetManager::new(MemorySource::default().with("m", vec![0]));
-        let h = m.load::<MeshData>("m");
+        let h = m.load::<MeshData>("m").unwrap();
         m.process_loads();
         assert_eq!(m.state(h), LoadState::Failed);
     }
@@ -351,8 +381,8 @@ mod tests {
     #[test]
     fn dependencies_are_tracked() {
         let mut m = AssetManager::in_memory();
-        let tex = m.insert("tex", Texture::solid(2, 2, [0; 4]));
-        let spr = m.insert("spr", SpriteAsset::whole_texture(tex, 2, 2));
+        let tex = m.insert("tex", Texture::solid(2, 2, [0; 4])).unwrap();
+        let spr = m.insert("spr", SpriteAsset::whole_texture(tex, 2, 2)).unwrap();
         m.add_dependency(spr, tex);
         m.add_dependency(spr, tex);
         assert_eq!(m.dependencies(spr), &[tex.id()]);
@@ -361,7 +391,7 @@ mod tests {
     #[test]
     fn remove_forgets_the_entry() {
         let mut m = AssetManager::in_memory();
-        let h = m.insert("t", Texture::solid(1, 1, [1, 2, 3, 4]));
+        let h = m.insert("t", Texture::solid(1, 1, [1, 2, 3, 4])).unwrap();
         assert!(m.remove(h));
         assert!(m.get(h).is_none());
         assert_eq!(m.state(h), LoadState::Unknown);
@@ -375,7 +405,7 @@ mod tests {
     #[test]
     fn remove_also_forgets_a_failed_load() {
         let mut m = AssetManager::in_memory();
-        let h = m.load::<Texture>("missing.png");
+        let h = m.load::<Texture>("missing.png").unwrap();
         m.process_loads();
         assert_eq!(m.state(h), LoadState::Failed);
         assert!(m.remove(h));
@@ -386,9 +416,9 @@ mod tests {
     #[test]
     fn remove_drops_dependency_links_in_both_directions() {
         let mut m = AssetManager::in_memory();
-        let tex = m.insert("tex", Texture::solid(2, 2, [0; 4]));
-        let other = m.insert("other", Texture::solid(2, 2, [0; 4]));
-        let spr = m.insert("spr", SpriteAsset::whole_texture(tex, 2, 2));
+        let tex = m.insert("tex", Texture::solid(2, 2, [0; 4])).unwrap();
+        let other = m.insert("other", Texture::solid(2, 2, [0; 4])).unwrap();
+        let spr = m.insert("spr", SpriteAsset::whole_texture(tex, 2, 2)).unwrap();
         m.add_dependency(spr, tex);
         m.add_dependency(spr, other);
 
@@ -399,16 +429,16 @@ mod tests {
         // Removing the parent drops its own links with it.
         m.remove(spr);
         assert!(m.dependencies(spr).is_empty());
-        let spr_again = m.insert("spr", SpriteAsset::whole_texture(other, 2, 2));
+        let spr_again = m.insert("spr", SpriteAsset::whole_texture(other, 2, 2)).unwrap();
         assert!(m.dependencies(spr_again).is_empty(), "a re-inserted asset starts with no links");
     }
 
     #[test]
     fn remove_keeps_links_while_another_type_still_has_that_id() {
         let mut m = AssetManager::in_memory();
-        let tex = m.insert("shared", Texture::solid(1, 1, [0; 4]));
-        let mesh = m.insert("shared", MeshData::cuboid(engine_math::Vec3::ONE));
-        let spr = m.insert("spr", SpriteAsset::whole_texture(tex, 1, 1));
+        let tex = m.insert("shared", Texture::solid(1, 1, [0; 4])).unwrap();
+        let mesh = m.insert("shared", MeshData::cuboid(engine_math::Vec3::ONE)).unwrap();
+        let spr = m.insert("spr", SpriteAsset::whole_texture(tex, 1, 1)).unwrap();
         m.add_dependency(spr, tex);
         m.remove(tex);
         assert_eq!(m.dependencies(spr), &[tex.id()]);
@@ -420,8 +450,8 @@ mod tests {
     #[test]
     fn remove_only_affects_its_own_type() {
         let mut m = AssetManager::in_memory();
-        let tex = m.insert("same name", Texture::solid(1, 1, [0; 4]));
-        let mesh = m.insert("same name", MeshData::cuboid(engine_math::Vec3::ONE));
+        let tex = m.insert("same name", Texture::solid(1, 1, [0; 4])).unwrap();
+        let mesh = m.insert("same name", MeshData::cuboid(engine_math::Vec3::ONE)).unwrap();
         assert!(m.remove(tex));
         assert!(m.get(tex).is_none());
         assert!(m.get(mesh).is_some());
@@ -430,8 +460,8 @@ mod tests {
     #[test]
     fn remove_cancels_a_pending_load() {
         let mut m = AssetManager::new(MemorySource::default().with("tex/a.png", png_bytes()));
-        let h = m.load::<Texture>("tex/a.png");
-        let kept = m.load::<Texture>("tex/a.png");
+        let h = m.load::<Texture>("tex/a.png").unwrap();
+        let kept = m.load::<Texture>("tex/a.png").unwrap();
         assert_eq!(m.state(h), LoadState::Loading);
         assert!(m.remove(h));
         assert!(!m.has_pending_loads());
@@ -442,8 +472,8 @@ mod tests {
     #[test]
     fn remove_leaves_other_pending_loads_alone() {
         let mut m = AssetManager::new(MemorySource::default().with("a.png", png_bytes()).with("b.png", png_bytes()));
-        let a = m.load::<Texture>("a.png");
-        let b = m.load::<Texture>("b.png");
+        let a = m.load::<Texture>("a.png").unwrap();
+        let b = m.load::<Texture>("b.png").unwrap();
         m.remove(a);
         assert_eq!(m.process_loads(), 1);
         assert_eq!(m.state(a), LoadState::Unknown);
@@ -453,14 +483,108 @@ mod tests {
     #[test]
     fn a_reinserted_asset_never_reuses_an_old_revision() {
         let mut m = AssetManager::in_memory();
-        let h = m.insert("t", Texture::solid(1, 1, [1, 1, 1, 1]));
+        let h = m.insert("t", Texture::solid(1, 1, [1, 1, 1, 1])).unwrap();
         let first = m.revision(h);
         m.remove(h);
-        m.insert("t", Texture::solid(1, 1, [2, 2, 2, 2]));
+        m.insert("t", Texture::solid(1, 1, [2, 2, 2, 2])).unwrap();
         let second = m.revision(h);
         assert_ne!(first, second, "a GPU cache keyed by (id, revision) would show the stale texture");
         assert_ne!(second, 0);
-        m.insert("t", Texture::solid(1, 1, [3, 3, 3, 3]));
+        m.insert("t", Texture::solid(1, 1, [3, 3, 3, 3])).unwrap();
         assert_ne!(m.revision(h), second);
+    }
+    // Two real names that collide would take a ~2^32-name search, so these tests choose the id.
+    const CHOSEN: AssetId = AssetId(0xC011_1DE);
+
+    fn texture_with(rgba: [u8; 4]) -> Texture {
+        Texture::solid(1, 1, rgba)
+    }
+
+    #[test]
+    fn a_different_name_with_the_same_id_is_rejected_and_never_overwrites() {
+        let mut m = AssetManager::in_memory();
+        let first = m.insert_with_id(CHOSEN, "first", texture_with([1, 1, 1, 1])).unwrap();
+        let revision = m.revision(first);
+
+        let err = m.insert_with_id(CHOSEN, "second", texture_with([2, 2, 2, 2])).unwrap_err();
+        match &err {
+            AssetError::IdCollision { id, existing, new } => {
+                assert_eq!((*id, existing.as_str(), new.as_str()), (CHOSEN, "first", "second"));
+            }
+            other => panic!("expected IdCollision, got {other:?}"),
+        }
+        assert!(err.to_string().contains("`first`") && err.to_string().contains("`second`"), "{err}");
+
+        assert_eq!(m.get(first).unwrap().rgba, vec![1, 1, 1, 1], "the stored value is untouched");
+        assert_eq!(m.name_of(first), Some("first"));
+        assert_eq!(m.revision(first), revision, "no change, so no GPU re-upload");
+        assert_eq!(m.state(first), LoadState::Loaded);
+    }
+
+    #[test]
+    fn inserting_the_same_name_again_still_replaces() {
+        let mut m = AssetManager::in_memory();
+        let h = m.insert_with_id(CHOSEN, "same", texture_with([1, 1, 1, 1])).unwrap();
+        let before = m.revision(h);
+        m.insert_with_id(CHOSEN, "same", texture_with([2, 2, 2, 2])).unwrap();
+        assert_eq!(m.get(h).unwrap().rgba, vec![2, 2, 2, 2]);
+        assert_ne!(m.revision(h), before);
+    }
+
+    #[test]
+    fn the_same_id_under_a_different_type_is_not_a_collision() {
+        let mut m = AssetManager::in_memory();
+        let tex = m.insert_with_id(CHOSEN, "one", texture_with([1, 1, 1, 1])).unwrap();
+        let mesh = m.insert_with_id(CHOSEN, "two", MeshData::cuboid(engine_math::Vec3::ONE)).unwrap();
+        assert!(m.get(tex).is_some() && m.get(mesh).is_some());
+    }
+
+    #[test]
+    fn a_removed_asset_frees_its_id_for_another_name() {
+        let mut m = AssetManager::in_memory();
+        let h = m.insert_with_id(CHOSEN, "old", texture_with([1, 1, 1, 1])).unwrap();
+        assert!(m.remove(h));
+        m.insert_with_id(CHOSEN, "new", texture_with([2, 2, 2, 2])).unwrap();
+        assert_eq!(m.name_of(h), Some("new"));
+    }
+
+    #[test]
+    fn load_of_a_colliding_name_is_rejected_and_requests_nothing() {
+        let mut m = AssetManager::new(MemorySource::default().with("b.png", png_bytes()));
+        let a = m.insert_with_id(CHOSEN, "a.png", texture_with([1, 1, 1, 1])).unwrap();
+        let err = m.load_with_id::<Texture>(CHOSEN, "b.png").unwrap_err();
+        assert!(matches!(err, AssetError::IdCollision { .. }), "{err:?}");
+        assert!(!m.has_pending_loads());
+        assert_eq!(m.process_loads(), 0);
+        assert_eq!(m.get(a).unwrap().rgba, vec![1, 1, 1, 1]);
+        assert_eq!(m.name_of(a), Some("a.png"));
+    }
+
+    #[test]
+    fn load_of_a_name_that_collides_with_a_load_in_flight_is_rejected() {
+        let mut m = AssetManager::new(MemorySource::default().with("a.png", png_bytes()).with("b.png", png_bytes()));
+        let a = m.load_with_id::<Texture>(CHOSEN, "a.png").unwrap();
+        assert!(m.load_with_id::<Texture>(CHOSEN, "b.png").is_err());
+        assert_eq!(m.process_loads(), 1);
+        assert_eq!(m.state(a), LoadState::Loaded);
+        assert_eq!(m.name_of(a), Some("a.png"));
+    }
+
+    #[test]
+    fn insert_of_a_name_that_collides_with_a_failed_load_is_rejected() {
+        let mut m = AssetManager::in_memory();
+        let a = m.load_with_id::<Texture>(CHOSEN, "missing.png").unwrap();
+        m.process_loads();
+        assert_eq!(m.state(a), LoadState::Failed);
+        assert!(m.insert_with_id(CHOSEN, "other", texture_with([0; 4])).is_err());
+        assert_eq!(m.state(a), LoadState::Failed, "the failed entry keeps its error");
+    }
+
+    #[test]
+    fn distinct_names_do_not_collide() {
+        let mut m = AssetManager::in_memory();
+        for i in 0..2000 {
+            m.insert(&format!("asset_{i}"), texture_with([0; 4])).unwrap();
+        }
     }
 }

@@ -7,8 +7,8 @@
 //! ```
 //! use engine_assets::*;
 //! let mut assets = AssetManager::in_memory();
-//! let tex = assets.insert("player_idle", Texture::solid(4, 4, [255, 0, 255, 255]));
-//! assets.insert("player", SpriteAsset::whole_texture(tex, 4, 4));
+//! let tex = assets.insert("player_idle", Texture::solid(4, 4, [255, 0, 255, 255])).unwrap();
+//! assets.insert("player", SpriteAsset::whole_texture(tex, 4, 4)).unwrap();
 //! assert!(assets.get(assets.sprite("player")).is_some());
 //! ```
 

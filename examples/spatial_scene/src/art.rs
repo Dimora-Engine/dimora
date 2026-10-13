@@ -6,8 +6,9 @@ const CLEAR: [u8; 4] = [0, 0, 0, 0];
 
 fn add_sprite(assets: &mut AssetManager, name: &str, tex: Texture) {
     let (w, h) = (tex.width, tex.height);
-    let texture = assets.insert(name, tex);
-    let sprite = assets.insert(name, SpriteAsset::whole_texture(texture, w, h));
+    let texture = assets.insert(name, tex).expect("example asset names are distinct");
+    let sprite =
+        assets.insert(name, SpriteAsset::whole_texture(texture, w, h)).expect("example asset names are distinct");
     assets.add_dependency(sprite, texture);
 }
 
@@ -59,15 +60,17 @@ pub fn register(assets: &mut AssetManager) {
 
     // Panel texture for every mesh: a light face with a darker bevel, so unlit meshes still show
     // their edges and their facets read as 3D.
-    assets.insert(
-        "panel",
-        Texture::from_fn(16, 16, |x, y| {
-            let edge = x.min(y).min(15 - x).min(15 - y);
-            match edge {
-                0 => [150, 150, 150, 255],
-                1 => [205, 205, 205, 255],
-                _ => [255, 255, 255, 255],
-            }
-        }),
-    );
+    assets
+        .insert(
+            "panel",
+            Texture::from_fn(16, 16, |x, y| {
+                let edge = x.min(y).min(15 - x).min(15 - y);
+                match edge {
+                    0 => [150, 150, 150, 255],
+                    1 => [205, 205, 205, 255],
+                    _ => [255, 255, 255, 255],
+                }
+            }),
+        )
+        .expect("example asset names are distinct");
 }
