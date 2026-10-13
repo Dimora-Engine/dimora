@@ -15,8 +15,8 @@ state is in [TASKS.md](TASKS.md); how the engine is built is in
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md); open design questions are in
 [docs/DECISIONS.md](docs/DECISIONS.md).
 
-Status values used below: **Done** (evidence cited), **Not started**. Nothing is marked in progress or
-partially done unless TASKS.md shows commits for it. No milestone after M1 is complete. Planning a
+Status values used below: **Done** (evidence cited), **In progress**, **Not started**. Nothing is marked in
+progress or partially done unless TASKS.md shows commits for it (M2 is in progress: task T1 is done). No milestone after M1 is complete. Planning a
 system here does not mean it exists: the audit table below is the record of what does.
 
 ## 1. Where the project stands
@@ -58,7 +58,7 @@ module existing is not counted.
 | Editor | Absent | |
 | Asset compiler / bundles | Absent | `AssetSource` trait is the planned plug-in point |
 | Packaging / release | Absent | `Cargo.toml` declares `MIT OR Apache-2.0` but there are no licence files; crates are `publish = false` |
-| CI / toolchain | Absent | No CI, no `rust-version`, no toolchain pin |
+| CI / toolchain | Partial (T1, 2026-10-13) | Toolchain pinned (`rust-toolchain.toml`), MSRV 1.90 verified on macOS arm64, `scripts/check.sh`, `DIMORA_REQUIRE_GPU`. **No CI** (D-22); MSRV not yet built on Linux/Windows (KI-27) |
 | Examples | 2, both runnable windowed and headless | `basic_2_5d`, `spatial_scene` |
 | Networking | Absent, not planned | See "Unscheduled" |
 
@@ -192,7 +192,7 @@ tests for viewport and orientation, `docs/SPATIAL_RENDERING.md`.
 
 ---
 
-## M2. Foundation hardening and CI: Not started
+## M2. Foundation hardening and CI: In progress (T1 done, see TASKS.md)
 
 **Objective.** Make the build reproducible and fix the defects found in the audit before building
 more on top.

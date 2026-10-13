@@ -29,7 +29,7 @@ Status values: **Open**, **Proposed** (a default exists, awaiting acceptance), *
 | D-03 | Despawn semantics for entities with children | M2 (T3) | M2 hierarchy fix, M4 | Proposed |
 | D-04 | GPU cache lifetime | M2 (T2) | M2 eviction, M17 unload | Proposed |
 | D-22 | Code host and CI provider | M2 | CI config, release | Open (credentials) |
-| D-23 | Platform targets, MSRV policy, crates.io | M2 (MSRV), M24 | M24 | Open |
+| D-23 | Platform targets, MSRV policy, crates.io | M2 (MSRV), M24 | M24 | MSRV part decided in T1 (1.90); platforms and crates.io still Open |
 | D-01 | Scheduling model | M3 | M3, M7, M8, M10, M15 | Open |
 | D-02 | Change detection | M3 | M3, M4 (dirty transforms), M23 | Open |
 | D-10 | Events and deferred commands | M3 | M3, M4, M7, M8, M18 | Open |
@@ -113,6 +113,11 @@ Status values: **Open**, **Proposed** (a default exists, awaiting acceptance), *
 * **Proposed default.** Pin `rust-toolchain.toml` to a stable release and record the verified MSRV in
   `Cargo.toml` (`rust-version`). Desktop only until after M24. Publishing deferred to M24.
 * **Needed by.** MSRV part by M2 (T1). Platform and publishing parts by M24.
+* **MSRV part: decided by T1 (2026-10-13).** `rust-version = "1.90"` (lowest version the locked graph allows on
+  every target, because of `ordered-float 5.5.0`), verified by `cargo test --workspace --locked` on exactly
+  1.90.0 on macOS arm64; `rust-toolchain.toml` pins 1.99.0 for development. Policy followed: the MSRV is the
+  lowest version that builds with the committed `Cargo.lock`, and is bumped deliberately, not tracked to
+  stable. Not yet built on Linux or Windows (KI-27). The platform and crates.io parts remain open.
 
 ## Needed during M3-M4 (input, scheduling, scenes)
 

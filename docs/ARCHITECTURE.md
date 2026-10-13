@@ -182,8 +182,9 @@ Each is verified by reading the code or by a test run; identifiers refer to the 
 10. **Per-frame CPU cost.** Extraction walks all renderables each frame; tilemaps are expanded
     tile-by-tile each frame (an 80x120 map is ~9,600 tile checks per frame); instance buffers are
     rewritten fully. Fine for the demos, unmeasured at scale (KI-19).
-11. **Verification gaps (KI-1..3).** No toolchain pin or MSRV (the build fails on rustc 1.83), no CI,
-    and GPU tests silently skip, still reporting `ok`, when no adapter exists.
+11. **Verification gaps (KI-1..3).** Mostly closed by T1: the toolchain is pinned, the MSRV is 1.90, and
+    `scripts/check.sh` with `DIMORA_REQUIRE_GPU=1` turns a missing GPU adapter into a failure. Still open: there
+    is no CI (KI-3), and plain `cargo test` without the variable still skips GPU tests and reports `ok`.
 12. **Frame selection and animation plumbing (KI-21, KI-22).** A sprite's natural size ignores its `region`,
     so sprite-sheet frames need `size` written alongside. `animate_system` writes sampled transforms
     straight onto bone entities, and `AnimationPlayer` only works on entities with a `SkeletonInstance`, so
