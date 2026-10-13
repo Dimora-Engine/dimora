@@ -41,12 +41,12 @@ smoke runs, and a separate MSRV job (`cargo +1.90.0 test --workspace --locked`).
 
 ## Consequences and follow-up
 
-* KI-3 and B-1 close when the first run passes on all three systems; KI-27 closes per platform as the MSRV job passes.
+* KI-3 and KI-27 are closed by the first green run; B-1 is resolved in practice (owner confirmation of GitHub as host is still outstanding). CI protects `main` once the workflow is merged.
 * Real-GPU timing (M6, M23) is not covered and would need option B.
 * The cache and artifact actions are third-party or GitHub-owned and pinned by major tag; pin by commit SHA before the first release.
 * Does not decide a release pipeline (M24) or dependency licence checks (OD-3 follow-up).
 
 ## Evidence and revisit conditions
 
-First-run evidence is in TASKS.md ("CI results"). Revisit if a runner type loses its software adapter, if
+First run (2026-10-13, [run 38475229601](https://github.com/Dimora-Engine/dimora/actions/runs/38475229601)): all six jobs green, 138 tests and no skipped GPU test on Linux (llvmpipe), macOS (Metal, paravirtual) and Windows (DX12, WARP), MSRV 1.90 green on all three, no platform-specific failure. Details and limits are in TASKS.md ("CI results"). Revisit if a runner type loses its software adapter, if
 minutes become a problem, or when GPU-timed performance gates are needed.

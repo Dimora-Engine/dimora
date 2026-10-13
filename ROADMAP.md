@@ -55,7 +55,7 @@ first" tiers in [docs/DECISIONS.md](docs/DECISIONS.md#what-to-resolve-first).
 ### Current milestone and immediate scope
 
 * **Now: close M2.** All numbered tasks are done (T1 to T3). Two items remain, both blocked on the owner
-  rather than on code: licence files (KI-17) and CI configuration (D-22, no host chosen). Neither blocks
+  rather than on code: licence files (KI-17, waiting for the owner to confirm a licence) and owner confirmation of GitHub as host (CI itself is done on the PR branch, see TASKS.md). Neither blocks
   M3, so M2 is closed for planning purposes once they are listed as carried items in TASKS.md.
 * **Next: M3a, the frame model** (see M3 below). It is deliberately the first feature milestone because
   collision, animation, scenes, UI and scripting all hang off its stages, commands and events, and because

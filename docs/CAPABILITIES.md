@@ -29,9 +29,9 @@ its row in the same commit.
 | `scripts/check.sh` (fmt, clippy `-D warnings`, tests with `DIMORA_REQUIRE_GPU=1`, rustdoc `-D warnings`) | Pass on Linux x86_64, rustc 1.99.0, adapter `llvmpipe (LLVM 20.1.2)` Vulkan software. **138 tests, 0 failed, no GPU test skipped** |
 | Same on macOS arm64 (Metal) | Reported in TASKS.md (T1 to T3); not re-run for this audit |
 | Tests by crate | `engine-math` 22, `engine-core` 5, `engine-world` 19, `engine-assets` 24 + 1 doctest, `engine-renderer` 2 + 27 (`camera.rs`) + 13 (`spatial.rs`), `engine-renderer-wgpu` 1 + 18 (`headless.rs`: 13 render/cache tests, 5 for the GPU-required switch), `engine-animation` 4, `engine-platform` 1, `engine` 1 doctest. Examples have no tests |
-| MSRV on Linux | `DIMORA_REQUIRE_GPU=1 cargo +1.90.0 test --workspace --locked` on rustc 1.90.0 (1159e78c4), Linux x86_64, llvmpipe: **138 passed, 0 failed, none skipped** (closes the Linux half of KI-27; Windows still open) |
-| Windows | Never built or run |
-| CI | None (D-22) |
+| MSRV | `cargo +1.90.0 test --workspace --locked` on rustc 1.90.0: **138 passed, 0 failed** on x86_64 Linux (local and CI), aarch64 macOS (CI) and x86_64 Windows MSVC (CI). Closes KI-27 |
+| Windows | Built and tested for the first time in CI: `scripts/check.sh` passes (138 tests, none skipped) on the WARP software adapter, both examples render headless. Windowed path, real GPUs and DPI are unverified |
+| CI | GitHub Actions on the pull-request branch ([run 38475229601](https://github.com/Dimora-Engine/dimora/actions/runs/38475229601)): Linux, macOS, Windows `check` and `msrv` jobs all green. Software or paravirtual adapters only. Active on `main` once merged (ADR-0005, Provisional) |
 
 Code size: about 8,000 lines of Rust in nine library crates and two examples. `unsafe`: none in the
 repository. Logging: none (no `log`/`tracing`, no `println!` in library code).
@@ -498,8 +498,8 @@ Missing from the original category list and now tracked: **save games** (34), **
 * **Not initially.** Plugins and custom tool windows, visual scripting.
 
 ### 37. Build, CI, packaging, platform compatibility
-* **Now.** Pinned toolchain (1.99.0), MSRV 1.90, `scripts/check.sh`, `DIMORA_REQUIRE_GPU`. **No CI**
-  (D-22), **no licence files** (KI-17), Windows untested. No packaging, crash handling or release process.
+* **Now.** Pinned toolchain (1.99.0), MSRV 1.90, `scripts/check.sh`, `DIMORA_REQUIRE_GPU`. **CI** on
+  GitHub Actions for Windows, macOS and Linux (first run green, ADR-0005; software adapters only, active on `main` once merged), **no licence files** (KI-17, the licence is unconfirmed). No packaging, crash handling or release process.
 * **Planned.** CI then multi-OS matrix (M23), release builds and docs (M24). Needs decisions on dependency
   and licence policy and on crash diagnostics.
 

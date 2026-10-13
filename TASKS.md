@@ -1,7 +1,7 @@
 # Tasks: current development state
 
 Last audited: 2026-10-13 at commit `4857158` (Linux, `scripts/check.sh` exit 0, 138 tests, no GPU test
-skipped; macOS results from T1 to T3 are recorded below). Nothing is marked done here without evidence from
+skipped; macOS results from T1 to T3 are recorded below; Linux, macOS and Windows CI results are under "CI results"). Nothing is marked done here without evidence from
 the repository or a recorded test run. This file holds the **current milestone, task acceptance criteria,
 known issues and evidence**. Where things sit in the whole plan: [ROADMAP.md](ROADMAP.md). What each system
 does today: [docs/CAPABILITIES.md](docs/CAPABILITIES.md). Product intent: [docs/VISION.md](docs/VISION.md).
@@ -118,6 +118,40 @@ Limits: the guard is per asset type, as the criterion says. The same name hashin
 
 `scripts/check.sh`: exit 0, **138 tests, 0 failed** (118 before T3: +4 propagation, +8 despawn/detach, +8 collision), no skipped GPU test. `cargo +1.90.0 test --workspace --locked` (MSRV, with the KI-26 `SDKROOT` workaround): 138 passed, 0 failed. A first `scripts/check.sh` run stopped at step 2/4 on a clippy error in a new test constant (`unusual_byte_groupings`); fixed in `a4f9e77` and re-run clean.
 
+## CI results (2026-10-13)
+
+First run of `.github/workflows/ci.yml` ([run 38475229601](https://github.com/Dimora-Engine/dimora/actions/runs/38475229601)), on commit `464d03b` (pull request #3). All six
+jobs passed. Nothing was suppressed, retried or skipped to get there.
+
+| Job | Platform and adapter the GPU tests used | Result | Time |
+|---|---|---|---|
+| `check` Linux | ubuntu-latest, x86_64; `llvmpipe (LLVM 20.1.2)`, Vulkan, CPU (lavapipe installed by the workflow) | `scripts/check.sh` 4 of 4 steps; 138 passed, 0 failed, none skipped; 3 example screenshots written | about 14 min |
+| `check` macOS | macos-26-arm64; `Apple Paravirtual device`, Metal | Same: 138 passed, 0 failed, none skipped; screenshots written | about 1.5 min |
+| `check` Windows | windows-2025-vs2026; `Microsoft Basic Render Driver`, DX12, CPU (WARP) | Same: 138 passed, 0 failed, none skipped; screenshots written | about 21 min |
+| `msrv 1.90` x3 | rustc 1.90.0 on x86_64 Linux, aarch64 macOS, x86_64 Windows | `cargo +1.90.0 test --workspace --locked`: 138 passed, 0 failed on each | 1 to 2 min each |
+
+What this establishes: the engine builds, passes clippy with warnings denied, passes all 138 tests including the
+offscreen pixel tests, builds rustdoc cleanly and renders both examples headless on Windows, macOS and Linux, and
+the MSRV claim now holds on all three (KI-27). It is the first time the project has been built on Windows.
+**No platform-specific failure appeared**, so there was nothing to investigate; the pixel assertions pass on
+three unrelated rasterisers (lavapipe, Apple's paravirtual Metal device, WARP).
+
+What it does not establish:
+
+* **Real GPUs.** Every hosted adapter is a software or paravirtual device. Hardware drivers, performance and GPU
+  timing are unverified.
+* **The windowed path.** CI renders offscreen and headless only; window creation, DPI and input on Windows are not
+  exercised (nothing in the code uses the scale factor yet, KI-24).
+* **Example output is not compared.** The smoke runs check that a non-empty PNG is written, not that it equals the
+  previous output; the screenshots are uploaded as artifacts for a person to look at.
+* **Speed.** Windows takes about 21 minutes and Linux about 14, mostly compiling at the dev profile's `opt-level = 3`
+  for dependencies and running GPU tests on a CPU rasteriser. The Windows time is dominated by test step 3 (10 min)
+  and the release build of the examples (5 min). The "record which adapter" step recompiles the tests under a
+  different command line and adds about 2 minutes on Linux; it is a diagnostic, and can be dropped if minutes matter.
+* **One run.** Flakiness is unmeasured. An earlier run of the same workflow on this pull request was cancelled by a
+  newer push (the `concurrency` group), not by a failure.
+* The workflow runs on a pull request and on pushes to `main`; it does not exist on `main` until this branch merges.
+
 ## Known issues
 
 "Verified" means reproduced by running something; "read" means found by reading the code and not
@@ -127,7 +161,7 @@ yet reproduced.
 |---|---|---|---|
 | KI-1 | ~~No `rust-version` or toolchain pin; the workspace does not build on rustc 1.83~~ **Fixed by T1**: `rust-toolchain.toml` pins 1.99.0, `rust-version = "1.90"` verified on 1.90.0 (macOS only, see "Task T1 results") | Verified | M2 |
 | KI-2 | ~~GPU tests skip silently when no adapter exists and still report `ok`~~ **Fixed by T1** for runs that set `DIMORA_REQUIRE_GPU=1` (`scripts/check.sh` does). Plain `cargo test` still skips and reports `ok` by design | Verified (forced no-adapter run on macOS) | M2 |
-| KI-3 | ~~No CI of any kind~~ **Workflow added** (`.github/workflows/ci.yml`, ADR-0005); closes when the first run passes on all three systems: see "CI results" | See "CI results" | M2 |
+| KI-3 | ~~No CI of any kind~~ **Fixed on the PR branch** (`.github/workflows/ci.yml`, ADR-0005): the first run passed on Linux, macOS and Windows (see "CI results"). It protects `main` only once the workflow is merged | Verified (run 38475229601) | M2 |
 | KI-4 | ~~GPU texture and mesh caches are never evicted; `AssetManager` has no `remove`~~ **Fixed by T2** (commits `884b0ff`, `1d92ce7`, `5d6a199`, `c3c98f8`; evidence under "Task T2 results"). Remaining: instance buffers only grow; nothing calls `remove` automatically until scenes exist (M4) | Verified | M2 |
 | KI-5 | Only one camera renders per frame, so `ViewportRect` cannot give split-screen/minimap; no render-to-texture | Read (`extract.rs::active_camera`) | M6 |
 | KI-6 | Textures: no mipmaps, clamp only, always sRGB; `Material` is colour + albedo + `lit`; meshes cannot be transparent | Read | M5 |
@@ -151,7 +185,7 @@ yet reproduced.
 | KI-24 | The platform layer does not forward the window scale factor (no use of it anywhere in the code), `Viewport` is one pixel size, and there are no text-input events, so resolution-independent UI has no foundation | Read (search for `scale_factor` finds nothing) | M10 |
 | KI-25 | Any change to a texture re-uploads the whole texture (cache keyed by `AssetId` and revision); there is no sub-rectangle update, which a glyph atlas needs | Read (`scene_renderer.rs`) | M5 |
 | KI-26 | macOS dev machine (Apple M5, macOS 27.0): rustc **older than 1.99** cannot link anything, not even `fn main(){}`, with `ld: tapi error: malformed file ... libSystem.B.tbd ... unknown architecture arm64e.x1-macos`. Cause seen: `xcode-select -p` points at Xcode 26.4.1 (`ld-1266.8`) but `xcrun --show-sdk-path` returns the macOS 27.0 SDK from the Command Line Tools, which that linker cannot read; rustc 1.99.0 links fine (not investigated why). Host setup, not engine code; nothing was changed system-wide. Workaround used for the 1.89.0 and 1.90.0 runs: `SDKROOT=/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk`. Proper fix (user's decision): select a matching Xcode or CLT with `xcode-select`, or update Xcode | Verified (hello-world reproduction with 1.89.0 and 1.90.0 fails, with the `SDKROOT` above succeeds, 1.99.0 succeeds without it) | Environment |
-| KI-27 | The MSRV (1.90) has only been built and tested on macOS arm64. On Linux and Windows the floor comes from `ordered-float 5.5.0` in the locked graph (cargo 1.89 refuses it), but a build and test on 1.90.0 there has not been run. The MSRV holds only with the committed `Cargo.lock` | Verified on macOS; Linux/Windows read from cargo metadata | M2 (CI) |
+| KI-27 | ~~The MSRV (1.90) was only built on macOS arm64~~ **Verified on all three systems** by the CI `msrv` job: `cargo +1.90.0 test --workspace --locked`, 138 passed, 0 failed on x86_64 Linux, aarch64 macOS and x86_64 Windows (MSVC). The MSRV holds only with the committed `Cargo.lock` | Verified (run 38475229601) | Done |
 | KI-28 | Nothing demonstrates an isometric, top-down or side-scrolling view, or a 2D-style game: no scene, preset or test renders them. The camera maths accepts any `Transform`, but `Upright` sprites are edge-on from above, cutout sprites and tiles at equal depth z-fight (`RenderOrder` orders only blended sprites), and the ground plane is fixed at XZ (R-16, D-48, ADR-0004) | Read (`components.rs`, `extract.rs`, `scene_renderer.rs`); the multi-configuration claim is therefore **unverified** | M6 |
 | KI-29 | There is no runtime diagnostics resource, no entity or scene dump, no asset validation and no depth or overdraw view; logging is absent (KI-9 family, R-13). The incremental tooling plan in ROADMAP.md delivers these from M3a | Read | M3a, M4, M5, M6 |
 
@@ -225,7 +259,7 @@ as the lockfile and the SPDX fields declared by the crates, which were not indep
 
 | ID | Blocker | Effect |
 |---|---|---|
-| B-1 | Code host and CI provider are undecided. The repository lives on Origin; a GitHub push to the `Dimora-Engine` organisation could not be done from this environment (no GitHub credentials) | Blocks only the CI config file in M2. Everything else, including `scripts/check.sh`, proceeds |
+| B-1 | ~~Code host and CI provider are undecided~~ The repository and its pull requests are on GitHub (`Dimora-Engine/dimora`) and CI runs on GitHub Actions (ADR-0005, Provisional). The owner has not stated GitHub as the long-term host | Resolved in practice; owner confirmation outstanding |
 | B-2 | GPU tests need an adapter: Metal on macOS (always present on a Mac), a Vulkan driver on Linux; fresh Linux VMs do not have one (`sudo apt install mesa-vulkan-drivers`) | Resolved by T1: documented in README, and `DIMORA_REQUIRE_GPU=1` (set by `scripts/check.sh`) makes the absence a failure |
 | B-3 | ~~D-03 (despawn semantics) and D-04 (GPU cache lifetime) are unmade~~ **Resolved 2026-10-13**: the owner accepted the proposed defaults for both (recorded in DECISIONS.md and ARCHITECTURE.md) | None |
 

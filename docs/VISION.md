@@ -160,8 +160,9 @@ When two options are close, these decide, in this order. Each has a test: a ques
 
 * **Targets: Windows, macOS and Linux desktop** (wgpu over DX12/Vulkan, Metal, Vulkan; D-23). Web, mobile
   and consoles are out of scope until after the first release (M24). Verified so far: macOS arm64 (Metal)
-  and Linux x86_64 (software Vulkan, lavapipe). **Windows had never been built or run before CI was added
-  (ADR-0005); see TASKS.md "CI results" for what has been verified.**
+  and Linux x86_64 (software Vulkan, lavapipe) by hand, and Windows x86_64 (DX12 software adapter), macOS and
+  Linux by CI (ADR-0005; TASKS.md "CI results"). **No real-GPU, windowed-mode or DPI verification exists on any
+  platform yet.**
 * **Toolchain:** stable Rust, pinned in `rust-toolchain.toml`, MSRV 1.90.
 * **Developer loop (target, not current):** `cargo run` opens a window within seconds; assets are loaded
   from files and hot-reload; errors name the asset and the problem; `scripts/check.sh` is the one

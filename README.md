@@ -38,7 +38,7 @@ on Linux and Windows). To try the minimum yourself: `cargo +1.90.0 test --worksp
 |---|---|---|
 | macOS | Metal | Nothing to install beyond the Xcode command line tools (`xcode-select --install`). Verified on an Apple M5 |
 | Linux | Vulkan | A Vulkan driver. On a machine without a GPU (VM, CI) install the lavapipe software driver: `sudo apt install mesa-vulkan-drivers` (Debian/Ubuntu) |
-| Windows | DX12 or Vulkan | A normal GPU driver. Not verified by the project yet |
+| Windows | DX12 or Vulkan | A normal GPU driver. CI builds and tests on Windows (software DX12 adapter); not yet tried on a real GPU or in a window |
 
 No windowing setup is needed for the tests: they render offscreen. The examples open a normal window.
 

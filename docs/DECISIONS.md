@@ -158,7 +158,7 @@ frames. Implemented in T2.
   every target, because of `ordered-float 5.5.0`), verified by `cargo test --workspace --locked` on exactly
   1.90.0 on macOS arm64; `rust-toolchain.toml` pins 1.99.0 for development. Policy followed: the MSRV is the
   lowest version that builds with the committed `Cargo.lock`, and is bumped deliberately, not tracked to
-  stable. Not yet built on Linux or Windows (KI-27). The platform and crates.io parts remain open.
+  stable. Since verified on Linux, macOS and Windows by CI (KI-27 closed). The platform and crates.io parts remain open.
 
 ## Needed during M3-M4 (input, scheduling, scenes)
 
