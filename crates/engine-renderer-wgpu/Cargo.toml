@@ -3,6 +3,7 @@ name = "engine-renderer-wgpu"
 description = "wgpu backend: draws a RenderScene to a window surface or an offscreen image."
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 

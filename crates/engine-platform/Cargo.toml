@@ -3,6 +3,7 @@ name = "engine-platform"
 description = "Window, event loop, input mapping and frame timing on top of winit."
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 

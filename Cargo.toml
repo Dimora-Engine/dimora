@@ -17,6 +17,10 @@ members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
+# Minimum supported Rust version. Verified by building and running `cargo test --workspace --locked` on exactly
+# 1.90.0 (see TASKS.md). The floor comes from the locked dependency graph: `ordered-float 5.5.0` (via wgpu-hal on
+# Linux and Windows) requires 1.90, and cargo 1.89 refuses that graph.
+rust-version = "1.90"
 license = "MIT OR Apache-2.0"
 publish = false
 

@@ -3,6 +3,7 @@ name = "engine-assets"
 description = "Asset identity, handles, sources and the asset manager. Independent of any renderer."
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 

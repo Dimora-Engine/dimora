@@ -1,0 +1,6 @@
+# The toolchain used for day-to-day development and by scripts/check.sh.
+# This is not the minimum supported version: that is `rust-version` in Cargo.toml (verified separately).
+[toolchain]
+channel = "1.99.0"
+profile = "minimal"
+components = ["rustfmt", "clippy"]

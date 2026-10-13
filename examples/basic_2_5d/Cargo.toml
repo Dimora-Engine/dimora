@@ -3,6 +3,7 @@ name = "basic_2_5d"
 description = "A small spatial 2.5D scene: tilemap ground, sprites at real depths, a skeletal player, 3D meshes and lights."
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 
