@@ -452,12 +452,25 @@ fn a_replaced_asset_is_reuploaded_without_keeping_the_old_copy() {
         assert_eq!(p, colour, "replacement {i} is what is drawn");
         assert_eq!(r.cache_stats().textures, 1, "replacement {i} did not add a second copy");
     }
+}
 
-    // Remove and re-insert under the same name with no render in between: the new value must still win.
+#[test]
+fn remove_and_reinsert_between_frames_is_seen_as_a_change() {
+    let Some((gpu, mut r)) = setup() else { return };
+    let mut a = assets();
+    let mut w = world_with_camera();
+    w.spawn((
+        Transform::from_xyz(0.0, 0.0, 10.0),
+        Sprite::new("quad").with_size(Vec2::splat(12.0)).with_anchor(Vec2::splat(0.5)).unlit().cutout(),
+    ));
+    // The cache now holds the texture's very first revision. A manager that restarted revisions after a
+    // removal would hand the replacement the same one, and the renderer would keep drawing the old pixels.
+    assert_eq!(px(&render(&gpu, &mut r, &mut w, &a), W / 2, H / 2), [255, 255, 255, 255]);
+
     a.remove(a.texture("white"));
     a.insert("white", Texture::solid(4, 4, [255, 255, 0, 255]));
     let p = px(&render(&gpu, &mut r, &mut w, &a), W / 2, H / 2);
-    assert_eq!(p, [255, 255, 0, 255], "remove + insert between frames is seen as a change");
+    assert_eq!(p, [255, 255, 0, 255], "the replacement is drawn, not the stale first upload");
     assert_eq!(r.cache_stats().textures, 1);
 }
 
