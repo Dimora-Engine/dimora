@@ -1,7 +1,8 @@
 # Architecture
 
-Status: describes the code as of commit `6ad872f` (audited 2026-10-12). Everything outside the
-section "Proposed future architecture" exists in the repository today. Sections that describe
+Status: describes the code as of commit `6ad872f` (audited 2026-10-12; code unchanged since). Everything
+outside the two sections "Proposed future architecture" and "Proposed boundaries" exists in the
+repository today. Those two sections are proposals: nothing in them is implemented. Sections that describe
 weaknesses are as important as sections that describe strengths; the roadmap
 ([ROADMAP.md](../ROADMAP.md)) is ordered around them.
 
@@ -183,6 +184,15 @@ Each is verified by reading the code or by a test run; identifiers refer to the 
     rewritten fully. Fine for the demos, unmeasured at scale (KI-19).
 11. **Verification gaps (KI-1..3).** No toolchain pin or MSRV (the build fails on rustc 1.83), no CI,
     and GPU tests silently skip, still reporting `ok`, when no adapter exists.
+12. **Frame selection and animation plumbing (KI-21, KI-22).** A sprite's natural size ignores its `region`,
+    so sprite-sheet frames need `size` written alongside. `animate_system` writes sampled transforms
+    straight onto bone entities, and `AnimationPlayer` only works on entities with a `SkeletonInstance`, so
+    there is no pose stage for blending or IK and no way to animate a skeleton-less sprite.
+13. **No skin data (KI-23).** `Vertex` has position, normal and uv only; nothing carries joints or weights,
+    and there is no model loader.
+14. **UI foundations (KI-24, KI-25).** The platform layer does not forward the window scale factor, input
+    has no text events, and any texture change re-uploads the whole texture, which a glyph atlas cannot
+    afford.
 
 ## Decisions already made
 
@@ -208,14 +218,182 @@ Direction only; none of this exists. Each item is a roadmap milestone with its o
 criteria, and several have open decisions in [DECISIONS.md](DECISIONS.md).
 
 * **Stage-based scheduler** (M3): named engine stages with user systems attachable per stage, fixed-step
-  interpolation, deferred commands.
+  interpolation, deferred commands, typed event channels.
 * **Scenes as units** (M4): scene membership, load/unload, a component registry as the base for
-  serialization.
-* **Material assets and sampler/colour-space-aware textures** (M5).
+  serialization and script exposure.
+* **Material assets and sampler/colour-space-aware textures, sub-rectangle texture updates** (M5).
 * **A list of camera passes** instead of one `RenderScene` camera, plus render-to-texture (M6).
 * **A collision world** as a resource rebuilt in the fixed stage, with spatial 3D queries (M7).
-* **Importers, stable asset ids, bundles, scene files** (M13-M15), with the asset compiler as the
+* **Sprite-sheet animation** (M8), **a character gameplay layer with an API surface list** (M9), **a UI
+  runtime** (M10), **pose-first skeletal animation** (M11) and **3D skinned characters** (M12), within the
+  boundaries below.
+* **Audio** (M16) and **gameplay scripting** (M18), within the boundaries below.
+* **Importers, stable asset ids, scene files, bundles** (M17, M19, M21), with the asset compiler as the
   first additional binary crate.
 
 The architecture is deliberately not being redesigned to match an ideal diagram: the extraction seam,
-the crate graph and the component model are sound and the plan builds on them.
+the crate graph and the component model are sound and the plan builds on them. No crate is created
+for a subsystem until it has code; the boundaries below are rules about what may depend on what, not
+a list of new crates.
+
+## Proposed boundaries (NOT implemented)
+
+Each subsection says what exists today, what is proposed, and what is still undecided. The numbered
+decisions are in [DECISIONS.md](DECISIONS.md); the milestones are in [ROADMAP.md](../ROADMAP.md).
+
+### 1. Character gameplay and character visuals
+
+**Exists today.** A skeletal character in `examples/basic_2_5d` is a root entity with a `Transform`, a
+`SkeletonInstance` and an `AnimationPlayer`, and the example's own movement system chooses the clip by
+calling `AnimationPlayer::play`. Sprites are child entities of bone entities. There is no gameplay
+character concept; gameplay and one representation are mixed in example code.
+
+**Proposed (D-28).**
+
+```text
+gameplay entity            Transform, collider, controller, intent, facing, named state, parameters
+ └── visual subtree        owned by exactly one representation; replaceable
+      ├─ sprite sheet:     Sprite (+ SpriteAnimator)
+      ├─ skeletal 2D:      bone entities with Sprite parts (+ skeletal animator)
+      └─ 3D:               SkinnedMesh (+ skeletal animator)
+```
+
+* Data flows one way: gameplay writes state and parameters; the visual layer reads them and plays
+  animation. The only path back is **events** (a footstep frame, a hit frame, "animation finished").
+* Gameplay never reads or writes `Sprite`, `SkeletonInstance`, `Mesh`, `SkinnedMesh` or any animator
+  internals. The visual layer never writes gameplay components or the gameplay root's `Transform`. Root
+  motion, if it is wanted, is an explicit opt-in channel (open).
+* Collision, the controller and the camera target belong to the **gameplay entity**. Swapping the
+  representation therefore cannot change collision or movement; M9 tests this with an identical
+  position-and-collision trace across representations.
+* The only thing the visual layer needs from outside the character is the active camera, to pick
+  directional frames (D-31).
+
+**Unresolved.** Convention versus an explicit component (D-28); root motion; who owns facing; how ground
+contact is expressed.
+
+### 2. Sprite-sheet animation and skeletal animation
+
+**Exists today.** Skeletal only: `AnimationClip` (bone tracks), `AnimationPlayer` and `animate_system`,
+which only visits entities having a `SkeletonInstance`. For sprite sheets there are building blocks only:
+`Sprite.region`, `size`, `anchor`, and `SpriteAsset` uv and pivot. A sprite's natural size ignores
+`region`, so a frame animator must write `size` with `region` (KI-21).
+
+**Proposed (D-29, D-30).**
+
+* They are **separate evaluators over separate data**. Sprite-sheet animation chooses a frame and writes
+  `Sprite` fields. It has no skeleton and never touches bones. Skeletal animation samples poses and writes
+  bones. Neither imports the other. The skeletal clip type keeps its name; sprite-sheet clips get their
+  own type.
+* They share only a **control vocabulary**: clip or state name, playback speed, loop mode (loop, once,
+  ping-pong), named float/bool/trigger parameters, a finished signal and named events. Frame durations,
+  blend weights and poses are not shared.
+* A shared state machine is extracted **only after** both implementations exist and show the same shape
+  (M11 after M8). Until then each keeps its own.
+* Combinations are made by composition, not by merging: a skeletal part may be a `Sprite` that a sprite
+  animator drives (an animated face on a bone).
+
+**Unresolved.** The state-machine extraction (D-29); whether per-frame data lives in the sheet or the
+clip, and whether `region` should scale natural size (D-30); directional-set rules (D-31).
+
+### 3. 2D skeletons and 3D skeletons
+
+**Exists today.** `Skeleton`, `Pose` and `AnimationClip` are built on `Transform`: 3D position, `Quat` with
+slerp, 3D scale. So the data is already shaped for 3D, even though the demo uses it in 2D. There is no
+skin, no joint or weight data in `Vertex`, no model loader.
+
+**Proposed (D-32, D-33, D-34, D-35).**
+
+* **Shared:** the bone hierarchy, rest pose, `Pose`, clip sampling, blending and IK maths, written once
+  and operating on plain data.
+* **Evaluation first, application second.** Sample to a `Pose`, blend, constrain, solve IK, then write to
+  entities (today `animate_system` writes straight to bone entities, KI-22). The evaluator depends on
+  neither the world nor the renderer.
+* **2D only:** slots and part draw order, skins and part swapping, sprite attachments.
+* **3D only:** a skin (joint list, inverse bind matrices), vertex joints and weights, and the joint
+  palette that goes to the backend as plain data in `RenderScene` (GPU skinning, D-35).
+* A 3D character is a normal entity in the same world, with the same `Transform`, hierarchy,
+  collider and gameplay components. There is no second world and no 3D-only gameplay path.
+* Attachment points are named sockets. Whether every bone is an entity, or only sockets are, is decided by
+  measurement (D-33).
+
+**Unresolved.** One skeleton type or two (D-32); bone storage (D-33); skinning on the GPU or CPU (D-35);
+glTF handedness conversion and importer choice (D-36).
+
+### 4. World rendering and UI rendering
+
+**Exists today.** Nothing UI-specific. `RenderScene` is world-only. No font or text rendering; pointer,
+scroll and a few keys exist in input; the window scale factor is not forwarded; textures re-upload whole
+(KI-24, KI-25).
+
+**Proposed (D-24, D-37, D-38, D-39).**
+
+* **UI is its own runtime.** Its tree, layout and interaction have no dependency on the GPU, the world
+  or the renderer, so they are testable on plain data. Layout is a pure function from a tree and an
+  available size to rectangles.
+* It produces a **plain-data draw list** each frame (quads, glyph quads, clip rectangles, in order), the
+  UI counterpart of `RenderScene`. The backend draws it in an **overlay pass after the world**: no depth
+  buffer, alpha-blended painter's order, scissor clipping.
+* **Shared with the world renderer:** the device and queue, texture cache, samplers, atlases (including
+  the glyph atlas as an ordinary texture), and the instanced quad pipeline machinery.
+* **Not shared:** the ordering model (painter's order versus depth), the coordinate space (logical pixels,
+  top-left origin versus world units), lighting (none), and input routing (UI consumes pointer and keyboard
+  events before gameplay sees them).
+* **World-space UI** is a UI node anchored to an entity. Each frame the entity's position is projected
+  through the active camera to a screen position, with a stated behind-camera policy. UI that lives on a
+  world surface (render-to-texture on a quad) is a later option, not the first design.
+* The UI reads the world through a narrow binding (entity position, game state). The world does not
+  import the UI.
+* A visual UI editor comes only after the code-driven runtime has proved stable and not before the editor
+  milestone.
+
+**Unresolved.** Retained tree or immediate mode or library (D-24); text stack and font scope (D-37); where
+the draw-list type lives and whether to render UI to textures (D-38); input capture, focus model and the
+scaling model (D-39).
+
+### 5. Engine runtime and scripting runtime
+
+**Exists today.** No scripting. There is also no component registry, no command buffer, no event channel
+and no `serde`, which are prerequisites for a safe script boundary.
+
+**Proposed (D-40, D-42).**
+
+* The scripting runtime is an **optional crate** created when M18 starts. The core engine crates never
+  depend on it or on the interpreter library, and the engine builds and passes its tests without it.
+* Exactly one language ships, chosen after a measured spike. Candidates are Lua and Rhai; WebAssembly only
+  for untrusted third-party code. No custom language.
+* Scripts run in one defined stage. The interpreter state lives in a resource owned by the script crate.
+  The runtime talks to the engine only through handles, commands and events.
+* Script errors never panic the engine: they carry script name, line and column, disable the faulting
+  instance by default, and appear in the debug overlay.
+* Scripts are bounded (instruction or time budget, memory cap) and have no file, network or process access.
+* Determinism: a seeded random source only, with no wall clock, so the M9 replay harness works for
+  scripted games.
+
+**Unresolved.** Runtime choice (D-40); execution model and error policy (D-42); hot-reload state policy
+(D-43).
+
+### 6. Script-facing APIs and internal engine APIs
+
+**Exists today.** Only internal APIs: `World`, `AssetManager`, `Schedule`, the renderer and `wgpu`
+are all public Rust items.
+
+**Proposed (D-41).**
+
+* The script API is a **separate, hand-written, versioned facade**. It is not generated by reflecting
+  every component.
+* Entities are **opaque, generation-checked handles**. Components are reachable only by registry name and
+  only if marked script-visible, with read and write flags per component or field. Other components do not
+  exist from a script's point of view.
+* Capabilities exposed in v1: gameplay components, events (subscribe, emit), prefab spawn and despawn,
+  animation intent (play, set parameter), audio, UI binding, time, seeded random, input **actions** (not
+  raw devices), logging and a typed game-state store.
+* Every mutation goes through the command buffer and applies at a stage boundary, never mid-callback.
+* Not reachable from scripts: `World` as a whole, `AssetManager`, the schedule, the renderer and `wgpu`,
+  entities' non-visible components, the filesystem.
+* The API surface list from M9 (`docs/API_SURFACE.md`) is the set of internal APIs a script facade, UI
+  bindings or the editor may depend on; everything else is internal and free to change.
+
+**Unresolved.** Facade versus reflection and the visibility attribute's shape (D-41), which M4 must leave
+room for in the component registry (D-18).
+
