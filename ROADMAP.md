@@ -57,10 +57,10 @@ first" tiers in [docs/DECISIONS.md](docs/DECISIONS.md#what-to-resolve-first).
 * **Now: close M2.** All numbered tasks are done (T1 to T3). Two items remain, both blocked on the owner
   rather than on code: licence files (KI-17, waiting for the owner to confirm a licence) and owner confirmation of GitHub as host (CI itself is done on the PR branch, see TASKS.md). Neither blocks
   M3, so M2 is closed for planning purposes once they are listed as carried items in TASKS.md.
-* **Now: M3a, the frame model** (see M3 below). Design decisions are recorded (2026-10-14). Implementation
-  has not started. It is first because collision, animation, scenes, UI and scripting all hang off its
-  stages, commands and events, and because three high-cost risks (R-5, R-7, R-8) are cheapest to settle
-  before more systems exist.
+* **Now: M3a, the frame model** (see M3 below). Design decisions are recorded (2026-10-14). Named stages
+  are implemented (M3a-2). Commands, events, logging and interpolation are not. It is first because
+  collision, animation, scenes, UI and scripting all hang off its stages, commands and events, and because
+  three high-cost risks (R-5, R-7, R-8) are cheapest to settle before more systems exist.
 * **Then, in order:** M3b input and platform; M4 scenes and the registry shape; M5 materials and textures;
   M6 renderer stabilisation. M7 (collision) and M8 (sprite sheets) can proceed in parallel after M3a, M4,
   M5 and M6 as stated below; M9 is the first point where APIs freeze.
@@ -268,9 +268,9 @@ input and platform layer sufficient for a real game. Delivered in **two slices**
 and verified: M3a (the frame model; the immediate milestone) and M3b (input and platform). M3b may start
 once M3a's stage and event API is merged; it does not need M3a's interpolation.
 
-**Status.** In progress at the design task only. M3a-1 is done (2026-10-14). M3a-2 through M3a-6 and all
-of M3b are not started. No engine code has changed for M3a. The rendering regression baseline is commit
-`6dbabb8`.
+**Status.** In progress. M3a-1 (design) and M3a-2 (named stages) are done. M3a-3 through M3a-6 and all
+of M3b are not started. Commands, events, logging and interpolation are not in the code. The rendering
+regression baseline is commit `6dbabb8`.
 
 **Prerequisites.** M2 (closed for planning). Decisions recorded before implementation code, 2026-10-14:
 D-44 ([ADR-0006](docs/adr/0006-simulation-stays-single-threaded.md)), D-01
@@ -287,9 +287,10 @@ D-44 ([ADR-0006](docs/adr/0006-simulation-stays-single-threaded.md)), D-01
 1. **Design note and ADRs** — **done (2026-10-14).** ADR-0006 through ADR-0012. A throwaway command-buffer
    program was run against the `RefCell` resources and then deleted; findings are in ADR-0008 and
    TASKS.md. No engine code was merged.
-2. Named stages: input -> fixed update (N steps) -> update -> animate -> post-update (transform
-   propagation) -> extract -> render. User systems attach to a stage, with explicit ordering
-   (`before`/`after` by name). Engine stages stop being hard-wired inside `Game::step` (D-01).
+2. Named stages — **done (M3a-2).** `time`, `loads`, `fixed_update` (0 to 8), `update`, `animate`,
+   `post_update`, `input_clear`. Extract and render stay outside `step`. User systems attach to a stage,
+   with `before` / `after` by name. Both examples stay in `update`. Fixed systems see the fixed step;
+   the frame delta is restored afterward (ADR-0007).
 3. Deferred command buffer (`Commands`) flushed at stage boundaries, and typed event channels cleared per
    frame (D-10). Later consumers: collision (M7), animation events (M8, M11), UI (M10), scripts (M18).
 4. Logging facade used by the engine crates (D-21): a failed asset load, a skipped renderable and a lost

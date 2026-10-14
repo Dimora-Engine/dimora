@@ -18,6 +18,14 @@ impl Time {
     pub fn delta(&self) -> Duration {
         self.delta
     }
+
+    /// Replaces the delta systems observe. Does not change [`Time::elapsed_secs`] or [`Time::frame`].
+    ///
+    /// `Game::step` uses this so each fixed-update iteration sees the fixed step, then restores
+    /// the frame delta.
+    pub fn set_delta(&mut self, delta: Duration) {
+        self.delta = delta;
+    }
     pub fn delta_secs(&self) -> f32 {
         self.delta.as_secs_f32()
     }

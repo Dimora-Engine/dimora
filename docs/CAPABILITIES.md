@@ -46,7 +46,7 @@ without it.
 | **Core runtime** | | | | |
 | 1 | Math, conventions, transforms | Working | 22 tests; `f32`; shear not representable | done |
 | 2 | ECS, world, hierarchy | Working, thin | `hecs` wrapper; 19 tests; no events, change detection or commands in the code (D-10 decided, D-02 provisional, neither built) | M3, M4 |
-| 3 | Frame loop and scheduling | Minimal | Sequential `Schedule`; stages hard-wired in `Game::step`. Named stages, fixed-step delta and extract-only interpolation are decided (ADR-0007) and not implemented | M3 |
+| 3 | Frame loop and scheduling | Partial | Named stages and `before`/`after` in `Game::step` (ADR-0007, M3a-2). Fixed systems see the fixed step; the frame delta is restored. Interpolation and `alpha` are not implemented | M3 |
 | 4 | Events and deferred commands | Absent | No command queue or event buffer. FIFO commands and stage-boundary events are decided (ADR-0008) and not implemented | M3 |
 | 5 | Platform, window, timing | Working, narrow | winit loop, resize, exit; no DPI, fullscreen, vsync, multi-window | M3, M10 |
 | 6 | Input and action mapping | Partial | Keys/mouse state with edges, `axis()`; no actions, gamepad, text | M3 |
@@ -137,17 +137,21 @@ Missing from the original category list and now tracked: **save games** (34), **
 
 ### 3. Frame loop and scheduling
 * **Purpose.** A defined, documented frame so systems can depend on stage order.
-* **Now.** `Game::step`: time, asset loads, fixed update (0 to 8 steps), update systems, `animate_system`,
-  `propagate_transforms`, input edge reset; then `extract` and `render`, called separately. User systems
-  are `FnMut(&mut World)` in insertion order. Hard-wired engine stages; `FixedTimestep::alpha()` unused.
-* **Required.** Named stages; user systems attached to a stage with `before`/`after`; fixed-step
-  interpolation for rendering; a headless `step` that tests drive directly (exists).
-* **Planned.** M3. **Depends on.** D-01, D-02, D-10, D-44. **Integration.** Collision (fixed stage),
-  animation (animate stage, camera read from previous propagation, D-31), UI (input stage first), scripts
-  (one stage), scenes (apply at a boundary).
+* **Now.** `Game::step` runs `time`, `loads`, `fixed_update` (0 to 8 times), `update`, `animate`,
+  `post_update`, `input_clear`. `before` / `after` order systems inside a stage; unconstrained systems
+  keep registration order. During each fixed iteration `Time::delta` is the fixed step, then the frame
+  delta is restored. `elapsed` and `frame` advance once per step. Input edges last until `input_clear`.
+  Extract and render stay outside `step`. `FixedTimestep::alpha()` is unused. Both examples stay on
+  `add_system` (`update`).
+* **Required.** Fixed-step interpolation for rendering (ADR-0007, not built). A headless `step` exists.
+* **Planned.** Interpolation is M3a-5. **Depends on.** D-01 (implemented), D-02, D-10, D-44.
+  **Integration.** Collision (fixed stage), animation (animate stage, camera read from previous
+  propagation, D-31), UI (its own stage), scripts (one stage), scenes (apply at a boundary).
 * **Performance.** Sequential is the rule (ADR-0006) until a measured gameplay workload cannot meet its budget on one thread.
-* **Tests/examples.** Ordering test, interpolation test, 144 Hz versus 60 Hz determinism test. None of these exist yet.
-* **Decided, not built.** D-01 (ADR-0007), D-44 (ADR-0006), D-02 (ADR-0009, provisional). **Not initially.** Parallel execution, a dependency-graph scheduler.
+* **Tests/examples.** `engine-world` schedule tests and `engine` `tests/frame.rs` cover order, cycles,
+  the fixed delta and input edges. Interpolation and the 144 Hz versus 60 Hz render test are still M3a-5.
+* **Decided, not built.** Interpolation (ADR-0007), D-02 (ADR-0009, provisional). D-44 is settled and
+  matches the code. **Not initially.** Parallel execution, a dependency-graph scheduler.
 
 ### 4. Events and deferred commands
 * **Purpose.** Communicate between systems without borrowing each other's state; mutate safely mid-stage.

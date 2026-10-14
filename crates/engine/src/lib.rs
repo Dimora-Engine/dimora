@@ -1,11 +1,12 @@
 //! The engine facade.
 //!
 //! Use this crate from a game; it re-exports the pieces and provides [`Game`], a small struct that
-//! owns a [`World`](engine_world::World), two [`Schedule`](engine_world::Schedule)s and the frame pipeline:
+//! owns a [`World`](engine_world::World), a [`Schedule`](engine_world::Schedule) per stage, and the
+//! frame pipeline:
 //!
 //! ```text
-//! time -> asset loads -> fixed-step systems -> update systems -> animation
-//!      -> transform propagation -> extract -> render
+//! time -> loads -> fixed_update (0 to 8) -> update -> animate -> post_update
+//!      -> input_clear -> extract -> render
 //! ```
 //!
 //! `Game` is *not* the world: it holds one. Everything gameplay touches (time, input, assets,
@@ -31,11 +32,11 @@ pub use engine_renderer as renderer;
 pub use engine_renderer_wgpu as renderer_wgpu;
 pub use engine_world as world;
 
-pub use game::{Game, GameConfig, RenderStats, Viewport, WindowControl};
+pub use game::{Game, GameConfig, RenderStats, Stage, Viewport, WindowControl};
 
 /// Everything a typical game needs in scope.
 pub mod prelude {
-    pub use crate::{Game, GameConfig, RenderStats, Viewport, WindowControl};
+    pub use crate::{Game, GameConfig, RenderStats, Stage, Viewport, WindowControl};
     pub use engine_animation::{
         animate_system, spawn_skeleton, AnimationClip, AnimationPlayer, Bone, BoneTrack, Keyframe, Pose, Skeleton,
         SkeletonInstance,
@@ -50,5 +51,7 @@ pub mod prelude {
         AmbientLight, Camera, CameraProjection, CameraView, Fog, Light, LightKind, Material, Mesh, Orthographic,
         Perspective, Projection, RenderOrder, Sprite, SpriteBlend, SpriteOrientation, TileMap, ViewportRect,
     };
-    pub use engine_world::{Children, Entity, GlobalTransform, Name, Parent, Schedule, Visibility, World};
+    pub use engine_world::{
+        Children, Entity, GlobalTransform, Name, Parent, Schedule, ScheduleError, Visibility, World,
+    };
 }

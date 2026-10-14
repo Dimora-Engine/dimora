@@ -18,5 +18,5 @@ pub use hecs::{Entity, EntityRef, Query, QueryBorrow};
 pub use engine_math::Transform;
 pub use hierarchy::{propagate_transforms, Children, GlobalTransform, HierarchyError, Parent};
 pub use resources::Resources;
-pub use schedule::Schedule;
+pub use schedule::{Schedule, ScheduleError};
 pub use world::{Name, Visibility, World};
