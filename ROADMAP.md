@@ -102,7 +102,7 @@ world and the same depth buffer.
 
 | Requested step | Milestone | Note |
 |---|---|---|
-| 1 Spatial renderer and world foundations | M0, M1 (Done); M2, M4, M5, M6 | Hardening, scenes, materials and renderer limits come first |
+| 1 Spatial renderer and world foundations | M0, M1 (Done); M6 (In progress: test scene only); M2, M4, M5 | Hardening, scenes, materials and renderer limits come first |
 | 2 Input and update scheduling | M3 | Moved before scenes and materials: collision, animation and scenes all need defined stages and events |
 | 3 Collision and basic gameplay | M7 | |
 | 4 Sprite-sheet animation | M8 | **Parallel with M7**, not after it: it does not need collision. Both feed M9 |
@@ -193,7 +193,7 @@ Each row is a capability nobody builds yet whose *shape* constrains work in the 
 | Scene and asset serialization | M19 | Components must stay plain data (no GPU objects, no cached derived values); asset references must be restorable to a stable identity; entity references need remapping | ARCHITECTURE.md requirement 8; D-16, D-18, D-47 |
 | Hot reload | M17 | A reload takes effect at a stage boundary; consumers resolve assets per use instead of caching derived data in components | Requirement 6; D-16 |
 | Scripting | M18 | Commands, events and a component registry must exist first; scripts get a small versioned surface, not `hecs` or renderer types | Requirements 7 and 9; D-40 to D-45 |
-| Multiple cameras, render targets and camera configurations (isometric, top-down, side, custom) | M6 | `RenderScene` holds one view and `Camera` a closed projection enum today; do not add features that assume one view, one projection or one ground plane | R-2, R-16; D-08, D-25, D-48; ADR-0004 |
+| Multiple cameras, render targets and a custom projection | M6 | Six views are demonstrated by example-local constructors in `spatial_scene` (2026-10-14). `RenderScene` still holds one view and `Camera` a closed projection enum; do not add features that assume one view, one projection or one ground plane | R-2, R-16; D-08, D-25, D-48; ADR-0004 |
 | Blended meshes, particles, skinned characters | M5, M12, M15 | They need a transparency class in the render model before they exist | R-1; D-05 |
 | Fixed-step interpolation | M3a | No previous-transform data exists; gameplay must keep reading un-interpolated `Transform` | R-3 |
 | UI in screen and world space | M10 | Window scale factor, sub-rectangle texture update and an overlay pass; M3b and M5 carry the prerequisites | R-12, KI-24, KI-25; D-24, D-37 to D-39 |
@@ -419,7 +419,7 @@ filtering are equal first-class choices, and nothing here is specific to pixel a
 
 ---
 
-## M6. Renderer stabilization: Not started
+## M6. Renderer stabilization: In progress
 
 **Objective.** Remove renderer limits that would otherwise become baked into later features, make the
 unified world demonstrably usable through several camera configurations, and establish a measured performance
@@ -433,19 +433,20 @@ baseline. Camera projection stays separate from gameplay orientation and visual 
   projections are possible without a second code path (D-25).
 - Render every active camera in `order`, each with its own viewport and clear/load behaviour (D-08).
 - Camera-to-texture render targets.
-- **Camera-configuration test scene.** `spatial_scene` (2D sprites at several depths, spatial depth, a
-  simple 3D mesh, a ground) viewable through named configurations by one code path: perspective,
-  orthographic, isometric (orthographic, rotated), top-down, side view, and one custom projection. Presets
-  are constructors returning a `Camera` and a `Transform`, never modes (accepted, ADR-0004): same camera
-  model and renderer for every one, every setting still editable afterwards, isometric an orthographic preset
-  rather than a projection type. It prescribes no visual style.
+- **Camera-configuration test scene. Done and verified (2026-10-14).** `spatial_scene` is one world (sprites
+  at several depths, overlapping and coplanar decals, cutout foliage, meshes, a ground, a moving sprite)
+  viewed through six example-local constructors: perspective, orthographic, isometric (orthographic, yawed and
+  pitched), top-down, steep and side. Each returns a `Camera` and a `Transform` and stays editable; isometric
+  is not a projection type; the scene prescribes no visual style. Evidence is in TASKS.md. **Not done, and
+  not an engine feature:** an engine-level preset API, and the custom projection (D-25).
 - Camera configurations decision (D-48), mechanisms only: the owner has decided the principles (ADR-0004,
   2026-10-13: gameplay orientation is data and not derived only from the camera or sprite; spatial depth,
   transparency sorting, render layers or queues and explicit order stay distinct; no occlusion framework until
-  a scene needs one). The `+Y` up / `XZ` ground convention is kept as a provisional engine convention. Left to
-  decide: the coplanar ordering mechanism and `Upright` semantics for steep views, **chosen only from what the
-  test scene shows**; the gameplay-orientation components wait for M7 and M8 requirements. Decide the first two
-  before M7 and M8 build on them.
+  a scene needs one). The `+Y` up / `XZ` ground convention is kept as a provisional engine convention. The
+  test scene has recorded three coplanar conflicts and the current `Upright` behaviour (SPATIAL_RENDERING.md).
+  **Still to decide, and not chosen here:** the coplanar ordering mechanism, and whether `Upright` should keep
+  that steep-view behaviour (D-26). Gameplay-orientation components wait for M7 and M8 requirements. Decide
+  the first two before M7 and M8 build on them.
 - Tilemap chunking with cached instances.
 - Render debugging, first slice: debug draw (lines, boxes, spheres, rays, camera frusta; depth-tested) and a
   depth-visualisation view, as the minimal debugging primitives for M7.
@@ -474,8 +475,15 @@ baseline. Camera projection stays separate from gameplay orientation and visual 
   configuration-specific branch in extraction or in the wgpu backend.
 - A custom projection supplied by game code renders and picks correctly (GPU test and picking test).
 
-**Tests/examples.** GPU tests above; `spatial_scene` gains a picture-in-picture camera and a `--camera
-<name>` selector for the configurations.
+**Met by the test scene, and only that part (2026-10-14).** The six example configurations render one world.
+GPU tests hold in all of them for mesh/sprite occlusion both ways, and for projecting a point and picking
+back through that pixel. The configuration table is in `docs/SPATIAL_RENDERING.md`. This change does not edit
+extraction or the wgpu backend. **Not met:** custom projection; two viewports; camera-to-texture; chunking;
+benchmarks; picture-in-picture. The blended-sprite-versus-mesh assertion was not repeated per configuration.
+The constructors are example-local, so the engine-preset criterion is not met either.
+
+**Tests/examples.** `spatial_scene` has `--camera <name>`. Picture-in-picture is still to do. The GPU tests
+for the scene are `examples/spatial_scene/tests/configurations.rs`.
 
 **Deferred.** Render graph, deferred shading, HDR/post-processing, compute-driven culling.
 

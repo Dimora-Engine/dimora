@@ -13,6 +13,8 @@ Architecture and risks: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Open decis
 **M2. Foundation hardening and CI: closed for planning.** T1, T2 and T3 are done. Two items are carried
 because they wait on the owner, not on code: licence files (KI-17) and CI (D-22, B-1). Neither blocks M3a.
 
+**M6 is in progress for one task.** The camera-configuration test scene was requested and is verified (below). The rest of M6 is not started. Milestone order is unchanged.
+
 **Next: M3a, the frame model** (full scope and acceptance criteria in [ROADMAP.md](ROADMAP.md#m3-frame-model-input-and-platform-not-started)).
 It is first because collision, animation, scenes, UI and scripting all need defined stages, commands and
 events, and because the threading, mutation and public-API risks (R-5, R-7, R-8) are cheapest to settle
@@ -28,6 +30,7 @@ design-note task below comes first and merges no engine code.
 | M2 / T2 GPU resource lifetime and `AssetManager::remove` | Commits `884b0ff`, `1d92ce7`, `5d6a199`, `c3c98f8`; evidence under "Task T2 results" below. Verified on macOS only |
 | M2 / T1 Reproducible toolchain and one verification command | Commits `e08033e`, `3a7a95c`, `7fb2c4d`, `3d467b6`, `89b1fa5`; evidence under "Task T1 results" below. Verified on macOS only |
 | M1 Core spatial renderer | Commits `83d9883`..`6ad872f`: sprite orientation, `RenderOrder`, sprite `region`, camera `ViewportRect`, `spatial_scene`, `docs/SPATIAL_RENDERING.md`. `engine-renderer/tests/camera.rs` (27 tests), GPU tests `camera_viewport_confines_the_image_to_its_rectangle` and `billboards_face_the_camera_but_fixed_quads_go_edge_on` pass with a Vulkan adapter. `spatial_scene` run windowed under Xvfb: figure heights shrink with depth in perspective and stay equal in orthographic |
+| M6 camera-configuration test scene (one task; M6 itself is not done) | Working tree, not committed. Evidence under "M6 test scene" below. Verified on macOS (Apple M5, Metal) only |
 
 ## Verification record (2026-10-12)
 
@@ -186,8 +189,34 @@ yet reproduced.
 | KI-25 | Any change to a texture re-uploads the whole texture (cache keyed by `AssetId` and revision); there is no sub-rectangle update, which a glyph atlas needs | Read (`scene_renderer.rs`) | M5 |
 | KI-26 | macOS dev machine (Apple M5, macOS 27.0): rustc **older than 1.99** cannot link anything, not even `fn main(){}`, with `ld: tapi error: malformed file ... libSystem.B.tbd ... unknown architecture arm64e.x1-macos`. Cause seen: `xcode-select -p` points at Xcode 26.4.1 (`ld-1266.8`) but `xcrun --show-sdk-path` returns the macOS 27.0 SDK from the Command Line Tools, which that linker cannot read; rustc 1.99.0 links fine (not investigated why). Host setup, not engine code; nothing was changed system-wide. Workaround used for the 1.89.0 and 1.90.0 runs: `SDKROOT=/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk`. Proper fix (user's decision): select a matching Xcode or CLT with `xcode-select`, or update Xcode | Verified (hello-world reproduction with 1.89.0 and 1.90.0 fails, with the `SDKROOT` above succeeds, 1.99.0 succeeds without it) | Environment |
 | KI-27 | ~~The MSRV (1.90) was only built on macOS arm64~~ **Verified on all three systems** by the CI `msrv` job: `cargo +1.90.0 test --workspace --locked`, 138 passed, 0 failed on x86_64 Linux, aarch64 macOS and x86_64 Windows (MSVC). The MSRV holds only with the committed `Cargo.lock` | Verified (run 38475229601) | Done |
-| KI-28 | Nothing demonstrates an isometric, top-down or side-scrolling view, or a 2D-style game: no scene, preset or test renders them. The camera maths accepts any `Transform`, but `Upright` sprites are edge-on from above, cutout sprites and tiles at equal depth z-fight (`RenderOrder` orders only blended sprites), and the ground plane is fixed at XZ (R-16, D-48, ADR-0004). The owner accepted presets as constructors and amended coplanar ordering on 2026-10-13; none of it is implemented | Read (`components.rs`, `extract.rs`, `scene_renderer.rs`); the multi-configuration claim is therefore **unverified** | M6 |
+| KI-28 | Six views are now rendered by example-local constructors in `spatial_scene` (evidence below). Still true: no engine preset API, no 2D-style game, no custom projection (KI-11). `Upright` is edge-on from straight above and foreshortened in a steep view; that is observed, not accepted as the design (D-26). Coplanar cutout content is ordered by draw order or by depth-test rounding, and `RenderOrder` still orders only blended sprites (D-48, three verified conflicts). The ground plane stays `XZ` (provisional, ADR-0004) | Verified for the demonstration and the conflicts (Apple M5, 2026-10-14). The remaining gaps are unread as designs | M6 |
 | KI-29 | There is no runtime diagnostics resource, no entity or scene dump, no asset validation and no depth or overdraw view; logging is absent (KI-9 family, R-13). The incremental tooling plan in ROADMAP.md delivers these from M3a | Read | M3a, M4, M5, M6 |
+
+## M6 test scene (2026-10-14)
+
+One task of M6, done in the working tree and not committed. No engine crate changed. Constructors stay in
+`examples/spatial_scene` (`cameras.rs`): `perspective`, `orthographic`, `isometric`, `top-down`, `steep`,
+`side`. Each returns a `Camera` and a `Transform`. There is no engine preset API.
+
+Environment: the macOS machine in the 2026-10-13 record (Apple M5, Metal, rustc 1.99.0). `scripts/check.sh`
+sets `DIMORA_REQUIRE_GPU=1`.
+
+| Check | Result |
+|---|---|
+| `scripts/check.sh` after the documentation pass (2026-10-14) | Exit 0. All 4 steps: fmt, clippy `-D warnings`, `cargo test --workspace` with `DIMORA_REQUIRE_GPU=1` (**158 passed, 0 failed**, including 18 GPU tests in `headless.rs` and 16 in `configurations.rs`; none skipped), rustdoc `-D warnings` |
+| `cargo test -p spatial_scene` | 4 tests in `cameras.rs`, 16 in `tests/configurations.rs`, 0 failed |
+| Headless screenshots | `--camera` for all six names, 1280×720, exit 0. Images: `docs/spatial_scene_m6_*.png` |
+| `--frames 30` (isometric, release) | GPU cache 4 textures and 5 meshes after frame 1 and after frame 30, exit 0 |
+| Windowed run | **Not done** |
+| Other machines | **Not done.** The two coplanar splits that name a camera were read on this GPU only; the tests lock the split, not the camera's name |
+
+What the 16 tests cover: one placed world under every configuration; project then pick; the walker moves on
+its line and is drawn there; `Upright` height is `cos(pitch)` in the orthographic views and collapses
+top-down; a nearer mesh occludes a farther sprite and the reverse, in every configuration; orientation modes;
+decals a unit apart resolve by depth; the three conflicts named in `docs/SPATIAL_RENDERING.md`.
+
+Not claimed: blended sprites interleaving with meshes under every configuration (the older single-camera GPU
+test still covers one camera); two viewports; camera-to-texture; a custom projection; an engine preset.
 
 ## Licence audit (2026-10-13)
 

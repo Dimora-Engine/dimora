@@ -13,6 +13,9 @@ fn add_sprite(assets: &mut AssetManager, name: &str, tex: Texture) {
 }
 
 pub fn register(assets: &mut AssetManager) {
+    // A plain white square for flat decals; tint gives it a colour.
+    add_sprite(assets, "swatch", Texture::solid(8, 8, [255; 4]));
+
     // A little standing figure, 16x24 px. Drawn grey-white so a tint can recolor it.
     add_sprite(
         assets,

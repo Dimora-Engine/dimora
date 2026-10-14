@@ -192,10 +192,29 @@ Rules that follow:
 
 These four ideas (spatial depth, transparency sorting, render layers or queues, explicit order) are kept
 distinct on purpose ([ADR-0004](adr/0004-one-spatial-world-many-camera-configurations.md), decision 4). Today
-`RenderOrder` reaches blended sprites only, so coplanar cutout sprites and tiles at equal depth z-fight; the
-mechanism that will let a game order them deliberately is not chosen yet (D-48). The depth point used for
-sorting is the quad centre; configurable sort or occlusion policies for isometric styles are left room for and
-not built.
+`RenderOrder` reaches blended sprites only. The depth point used for sorting is the quad centre.
+Configurable sort or occlusion policies for isometric styles are left room for and not built. No mechanism
+was chosen from the cases below (D-48).
+
+### Coplanar conflicts the test scene verified (2026-10-14)
+
+`spatial_scene` lays flat `Fixed` decals on the `XZ` ground and samples their overlap under every
+configuration that is not edge-on to them (`side` is excluded: a flat decal has no area). These three are
+verified limitations. The tests pin the behaviour; they are expected to fail the day a mechanism removes it,
+and the finding should be updated in the same change. None of them is a chosen design.
+
+| Conflict | What happens | Test |
+|---|---|---|
+| Two cutout decals at the same height, overlapping in `XZ` | The one spawned first keeps the overlap in every configuration that can see the ground. Swapping the tints makes the first entity's new colour win, so nothing spatial decided it | `equal_height_cutout_decals_are_decided_by_draw_order_not_by_space` |
+| A cutout decal in the same plane as the slab tops (`Y = 0`) | Shown under some cameras and hidden under others. The test requires at least one of the five downward configurations to show it (≥ 90% of samples) and at least one to hide it (≤ 10%). On Apple M5 (Metal) that day, orthographic showed it and perspective, isometric, top-down and steep hid it. That named split is one GPU's rounding, not a portable rule | `known_conflict_a_decal_coplanar_with_a_mesh_is_hidden_or_shown_by_rounding` |
+| A blended decal at the same height as a cutout one | Visible under some cameras and hidden under others. The test requires the blended colour over the cutout in ≥ 80% of samples under at least one configuration and in < 20% under at least one other. On the same machine, isometric showed it (about 99%) and the other four hid it. Same caveat: the names are that run, the split is the limit | `known_conflict_a_blended_decal_at_the_same_height_as_a_cutout_one_depends_on_the_camera` |
+
+Cutout decals one unit apart in height, and a blended decal one unit above a cutout one, resolve by depth
+in all five downward configurations (`decals_a_little_apart_in_height_resolve_by_depth_in_every_configuration`).
+`RenderOrder.layer` decides overlapping blended sprites whichever way the camera looks.
+`RenderOrder.order` decides only when the view depths actually tie: it does under perspective, orthographic
+and side, and it does not under isometric, where the yaw separates the view depths
+(`render_order_order_only_breaks_ties_at_equal_view_depth`).
 
 Sorting uses the sprite quad's centre, so intersecting blended quads or large blended quads that
 span a wide depth range can mis-order. The usual fix is to make those sprites `Cutout`.
@@ -247,6 +266,24 @@ identical for every orientation mode and makes new modes (axis-constrained, cust
 function, `sprite_placement`. Orientation is a rendering decision, so it lives in `Sprite`, not in
 `Transform`: the entity's `Transform` always says *where* the sprite is.
 
+### What `Upright` does in the test scene
+
+This is the current extraction rule, measured, not a decision that it should stay this way (D-26).
+`Upright` builds a vertical quad and turns it about world `+Y` to face the camera's heading. A pitched
+camera therefore foreshortens it.
+
+| View | Measured against a billboard of the same sprite | Test |
+|---|---|---|
+| Orthographic, pitch 0.3 rad; isometric; side (pitch 0) | On-screen height is `cos(pitch)` times the billboard. Exact, because the projection is orthographic | `an_upright_sprite_is_foreshortened_by_the_cosine_of_the_pitch_in_orthographic_views` |
+| Top-down (looking along −Y) | Edge-on: under half a pixel, against more than 5 px for the billboard. Looking straight along `+Y` has no heading, so extraction falls back to the camera's right axis and the quad stays vertical | `an_upright_sprite_collapses_to_a_line_when_the_camera_looks_straight_down` |
+| Steep (perspective, pitch 1.05 rad, about 60°) | Projected height between 0.4 and 0.65 of the billboard. Not exactly `cos(pitch)`, because the projection is perspective | same test, the steep assertion |
+
+`orientation_modes_under_each_configuration` counts pixels: a billboard has area under every configuration,
+including top-down; `Upright` and `Fixed` have none when the camera looks straight down. A billboard standing
+on a mesh pad keeps its pixels under the shallower views and loses about half of them top-down, where the
+quad lies in the ground plane and the pad cuts it
+(`a_billboard_standing_on_a_mesh_is_cut_by_it_when_the_view_is_steep_enough`).
+
 The shader's world-space normal for lighting is derived from the final quad, so billboards and
 fixed quads are shaded consistently.
 
@@ -272,32 +309,85 @@ batches instances of the same mesh and texture into one draw call.
 * Left room for: texture atlases (sprites already reference a UV rect), material batching, GPU-driven
   instancing and culling.
 
+## Camera configurations
+
+Each row is one function in `examples/spatial_scene/src/cameras.rs`. It returns a `Camera` and a `Transform`,
+and the example edits both afterwards. They are not an engine API, and isometric is not a projection variant.
+Switching among them changes only those two values. Extraction and the wgpu backend have no branch on the name.
+
+| Name | Projection | Placement | Holds in the tests | Does not |
+|---|---|---|---|---|
+| `perspective` | Perspective, 50° vertical field of view | (0, 215, −420), yaw 0, pitch 0.3 rad | Occlusion both ways; a projected point picks back to itself | |
+| `orthographic` | Orthographic, height 400 | The same transform | The same, with no parallax. `Upright` height is `cos(0.3)` of a billboard | |
+| `isometric` | Orthographic, height 900 | Yaw 45°, pitch `atan(1/√2)`, looking at (0, 60, 300) | The same. It is a rotated orthographic camera | `RenderOrder.order` does not break the equal-world-depth ghost pair: the yaw separates their view depths |
+| `top-down` | Orthographic, height 1000 | Pitch 90°, looking along −Y, +Z toward the top of the image | Billboards face the camera. Flat decals are visible | `Upright` and vertical `Fixed` quads are edge-on |
+| `steep` | Perspective, 50° | Pitch 1.05 rad (about 60°), same focus | The same occlusion and picking | `Upright` is roughly half a billboard; that ratio is not a settled design |
+| `side` | Orthographic, height 400 | Level, looking along +Z | The same occlusion and picking | Flat ground decals are edge-on. Not a 2D-style game |
+| custom | Not available | | | `Camera` holds a closed enum (KI-11, D-25) |
+
 ## The example: `spatial_scene`
 
 ```text
 cargo run --release -p spatial_scene
-cargo run --release -p spatial_scene -- --screenshot out.png [--ortho] [--cam x,y,z] [--yaw deg] [--pitch deg]
+cargo run --release -p spatial_scene -- --screenshot out.png [--camera NAME | --ortho]
+    [--cam x,y,z] [--yaw deg] [--pitch deg] [--size WxH]
+    [--orientation billboard|upright|fixed] [--frames N]
 ```
 
-Four identical figures stand at Z = 0, 100, 300, 600. A pillar mesh at Z = 200 is behind figure B
-and in front of figure C; a spinning cube mesh passes through a tree sprite; a translucent sprite
-is blended over the floor after the opaque pass; a checkerboard floor of real mesh slabs gives the
-eye something to measure against.
+`NAME` is `perspective`, `orthographic`, `isometric`, `top-down`, `steep` or `side`. `--ortho` is the
+orthographic configuration. `--frames N` renders N frames and exits with an error if the GPU cache grew.
 
-Controls: `W/S` move in depth, `A/D` strafe, `Space/Shift` move up/down, arrows rotate, `P` toggles
-perspective/orthographic, `O` cycles sprite orientation, `R` resets, `Esc` quits. The window title
-prints, for each figure, its camera-space depth and how many pixels tall it appears; orthographic
-keeps those equal, perspective makes them shrink with depth.
+The world is a checkerboard of mesh slabs on the `XZ` plane (`+Y` up), four cutout figures at Z = 0, 100,
+300 and 600, a walker moved by a `Transform` write, overlapping cutout figures, cutout trees, blended ghosts
+(one pair with `RenderOrder`), a pillar, a spinning cube and a pyramid, and the flat decal bench at the left.
+Nothing in it is specific to one visual style. Everything is unlit.
 
-<img src="spatial_scene_occlusion.png" alt="Figure B in front of the pillar, figure C behind it, a cube cutting through a tree sprite">
+Controls: `W/S` move in depth, `A/D` strafe, `Space/Shift` move up/down, arrows rotate, `C` selects the next
+configuration, `P` toggles perspective/orthographic on the current pose, `O` cycles the figures' sprite
+orientation, `R` returns to the current configuration, `Esc` quits.
 
-Figure B (Z = 100) in front of the pillar (Z = 200), figure C (Z = 300) behind it, the cube cutting
-through the tree: all resolved by the depth buffer from real positions.
+<img src="spatial_scene_m6_perspective.png" alt="The same scene in perspective">
 
-<img src="spatial_scene_parallax.png" alt="Top row perspective, bottom row orthographic; right column moves the camera 200 units right">
+<img src="spatial_scene_m6_orthographic.png" alt="The same scene in orthographic">
 
-Top row perspective, bottom row orthographic. The right column moved the camera 200 units along
-+X. In perspective the near figure A slides off the left edge while distant D barely moves; in
+<img src="spatial_scene_m6_isometric.png" alt="The same scene through the isometric orthographic camera">
+
+<img src="spatial_scene_m6_top_down.png" alt="The same scene looking straight down">
+
+<img src="spatial_scene_m6_steep.png" alt="The same scene from about 60 degrees">
+
+<img src="spatial_scene_m6_side.png" alt="The same scene from the side, looking along +Z">
+
+Perspective, orthographic, isometric, top-down, steep and side, in that order. Top-down, the standing sprites
+are edge-on except the billboards, which lie flat on the ground. Side-on, the flat decals disappear.
+
+<img src="spatial_scene_m6_decals_perspective.png" alt="The decal bench from a low perspective camera">
+
+The decal bench, perspective, camera moved onto it. Nearest large pair: two cutout decals at equal height;
+red was spawned first and keeps the overlap. The yellow and blue pair is one unit apart in height, and blue
+wins. Farther up, one orange/cyan pair is the blended decal at the cutout's height and the other is the
+blended decal a unit above it. The torn red fragment at the bottom edge is the decal coplanar with the slabs.
+
+<img src="spatial_scene_m6_decals_top_down.png" alt="The same bench looking straight down">
+
+The same bench looking straight down. The equal-height red/green pair still gives the overlap to red. The
+decal that shares the slab plane is absent. Both pictures are illustrations of the 2026-10-14 Apple M5 run;
+the tests, not these pixels, are the verification.
+
+### Earlier pictures (M1 scene)
+
+These two are the scene before the walker, the ghost pairs and the decal bench. They are kept because they
+are the recorded evidence of occlusion and parallax from M1. `--screenshot` does not reproduce them.
+
+<img src="spatial_scene_occlusion.png" alt="M1 scene: figure B in front of the pillar, figure C behind it, a cube cutting through a tree sprite">
+
+M1 scene. Figure B (Z = 100) in front of the pillar (Z = 200), figure C (Z = 300) behind it, the cube cutting
+through the tree: resolved by the depth buffer from real positions.
+
+<img src="spatial_scene_parallax.png" alt="M1 scene: top row perspective, bottom row orthographic; right column moves the camera 200 units right">
+
+M1 scene. Top row perspective, bottom row orthographic. The right column moved the camera 200 units along
++X. In perspective the near figure slides off the left edge while the distant one barely moves; in
 orthographic everything shifts together.
 
 ## What this milestone deliberately does not include

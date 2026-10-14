@@ -52,9 +52,9 @@ without it.
 | 6 | Input and action mapping | Partial | Keys/mouse state with edges, `axis()`; no actions, gamepad, text | M3 |
 | 7 | Errors, logging, diagnostics, config | Absent / Minimal | Typed errors in crates; no logging; no runtime config; window-title stats | M3 (logging), M20 |
 | **Rendering** | | | | |
-| 8 | Cameras and projection | Working for ortho and perspective | Ortho + perspective, viewport, picking rays; 27 tests. Isometric, top-down, side and custom views are **intended, not demonstrated** (ADR-0004, R-16). One camera/frame; closed projection enum | M6 |
+| 8 | Cameras and projection | Working; six views demonstrated by the example | Ortho + perspective, viewport, picking rays; 27 camera tests. `spatial_scene` also renders isometric, top-down, steep and side through example-local constructors (not an engine preset API). One camera/frame; closed projection enum; custom projection still absent | M6 |
 | 9 | Spatial sprites | Working | Orientation modes, region, tint, cutout/alpha; batching test; no atlas packer | M5 |
-| 10 | Depth, transparency, ordering | Partial | One depth buffer shared by meshes and sprites (GPU tests); blended sprites sort by centre; meshes cannot blend | M5, M14 |
+| 10 | Depth, transparency, ordering | Partial | One depth buffer shared by meshes and sprites (GPU tests); blended sprites sort by centre; meshes cannot blend. Three coplanar conflicts are verified and unsolved (D-48) | M5, M6, M14 |
 | 11 | Meshes and materials | Partial / Placeholder | Indexed instanced meshes; `Material` = colour + albedo + `lit`, not an asset | M5 |
 | 12 | Textures, atlases | Partial | PNG; mipless, clamp-only, always sRGB; whole-texture re-upload | M5 |
 | 13 | Lighting and fog | Working, forward only | Ambient/directional/point/spot (16), fog; 1 GPU test; no shadows, normal maps | M14 |
@@ -210,25 +210,32 @@ Missing from the original category list and now tracked: **save games** (34), **
 
   | Configuration | Status today |
   |---|---|
-  | Perspective, orthographic | Implemented and tested (camera maths, GPU tests, `spatial_scene` `--ortho`) |
-  | Isometric (orthographic, rotated) | The camera takes any `Transform`, so the maths allows it. **No isometric scene, render test or preset exists.** Decided (ADR-0004): it will be an orthographic preset, not a projection type |
-  | Top-down | **Not demonstrated.** `Upright` sprites are edge-on from above; coplanar cutout content z-fights (R-16, D-48) |
-  | Side-scrolling | The default orientation; **no 2D-style game demonstrates it**; same coplanar-ordering gap |
+  | Perspective, orthographic | Implemented and tested (camera maths, GPU tests, `spatial_scene`) |
+  | Isometric (orthographic, rotated) | **Demonstrated** by an example-local constructor: orthographic, yaw 45°, pitch `atan(1/sqrt(2))`. Not a projection type and not an engine preset |
+  | Top-down | **Demonstrated** (orthographic, looking along −Y). `Upright` quads are edge-on; that behaviour is observed, not accepted as the final design (D-26) |
+  | Steep (about 60°) | **Demonstrated** (perspective). `Upright` is foreshortened to roughly half a billboard. Same caveat (D-26) |
+  | Side view | **Demonstrated** (orthographic, looking along +Z). Not a 2D-style game: no gameplay movement plane |
   | Custom projection | `Projection` trait exists; `Camera` stores a closed enum, so game code cannot supply one (KI-11, D-25) |
 
-* **Presets and style policy (ADR-0004; accepted 2026-10-13, nothing implemented).** Camera presets will be constructors
+  The six rows above share one world, one extraction path and one wgpu backend. What each one guarantees is
+  tabulated in [SPATIAL_RENDERING.md](SPATIAL_RENDERING.md). Constructors live in
+  `examples/spatial_scene/src/cameras.rs` and return a `Camera` plus a `Transform`. **There is no engine-level
+  preset API.** Signatures and default angles stay deferred (ADR-0004, with D-25).
+* **Presets and style policy (ADR-0004; accepted 2026-10-13).** Camera presets will be constructors
   over the one camera model and stay editable; style policies sit at the object, material, camera, renderer or
-  scene level with no universal style type. Today: sprite orientation is per `Sprite`, filtering per `Texture`;
-  there are **no camera presets** and no camera-level or renderer-level style policy.
+  scene level with no universal style type. Today: sprite orientation is per `Sprite`, filtering per `Texture`.
+  The example's six constructors are **not** that API: nothing in an engine crate builds a preset, and there is
+  no camera-level or renderer-level style policy.
 * **Required.** Multiple cameras with viewports, camera-to-texture, extensible projection (oblique,
   custom), resize safety, and the same behaviour of picking, culling, depth and lighting in every
-  configuration. **Planned.** M6, including a reusable camera-configuration test scene (`spatial_scene`
-  under named configurations). **Depends on.** D-25, D-08, D-48, D-07; D-06 is opt-in and not a dependency
-  of other views.
+  configuration. **Planned.** The rest of M6. The configuration test scene is done (below). **Depends on.**
+  D-25, D-08, D-48, D-07; D-06 is opt-in and not a dependency of other views.
 * **Integration.** UI world anchors, picking, audio listener, directional frames (D-31) and the editor
   viewport all read the active camera's view.
 * **Performance.** Per-camera extraction multiplies CPU cost; cull per camera.
-* **Tests/examples.** Two viewports in one target (GPU test); picture-in-picture in `spatial_scene`.
+* **Tests/examples.** `examples/spatial_scene/tests/configurations.rs` (16 tests, 2026-10-14): the same world
+  under all six configurations, project-then-pick, mesh/sprite occlusion both ways, orientation, and the three
+  coplanar conflicts. Two viewports in one target, and picture-in-picture, are still to do.
 * **Not initially.** Cameras as render graph nodes, stereo, post-processing.
 
 ### 9. Spatial sprites
@@ -240,14 +247,18 @@ Missing from the original category list and now tracked: **save games** (34), **
 * **Integration.** Sprites are bones' children, tiles' sibling path, particles' target path.
 * **Performance.** One instanced quad path; CPU extraction per frame.
 * **Tests/examples.** Existing; add table tests for sheet slicing (M8).
-* **Unresolved.** KI-21 (natural size ignores region), D-26 (`Upright` semantics for steep views; the three modes are a candidate set, not exhaustive).
+* **Unresolved.** KI-21 (natural size ignores region). D-26: `Upright` is observed, not settled. In the test
+  scene an orthographic `Upright` quad is `cos(pitch)` as tall as a billboard, a straight-down view makes it
+  edge-on, and a perspective view at about 60° leaves it roughly half as tall. That is what extraction does
+  today. It is not accepted as the final meaning for steep or oblique views. The three modes stay a candidate
+  set, not an exhaustive one.
 * **Not initially.** Sprite meshes (non-quad), 9-slice (UI), per-sprite shaders.
 
 ### 10. Depth, transparency, occlusion, render ordering
 * **Now.** One `Depth32Float` buffer, standard Z (`Less`). Order inside the single pass: opaque meshes,
   cutout sprites and tiles (depth write), then alpha sprites back to front (depth test, no write).
-  `RenderOrder { layer, order }` overrides blended sprite order only. By decision (ADR-0004, amended 2026-10-13) spatial depth, transparency sorting, render layers or queues and explicit order are distinct concepts; a deliberate-ordering mechanism for coplanar opaque and cutout content is **not implemented and not chosen**. GPU tests: nearer mesh occludes a
-  sprite, farther does not; blended sprite interleaves with meshes by depth. Limits: blended sprites sort
+  `RenderOrder { layer, order }` overrides blended sprite order only. By decision (ADR-0004, amended 2026-10-13) spatial depth, transparency sorting, render layers or queues and explicit order are distinct concepts. A deliberate-ordering mechanism for coplanar opaque and cutout content is **not implemented and not chosen**. The M6 scene verified three limits, each pinned by a test in `configurations.rs` (D-48): equal-height cutout decals follow spawn order (`equal_height_cutout_decals_are_decided_by_draw_order_not_by_space`); a cutout decal coplanar with a slab is shown or hidden depending on the camera (`known_conflict_a_decal_coplanar_with_a_mesh_is_hidden_or_shown_by_rounding`); a blended decal at the same height as a cutout one is likewise camera-dependent (`known_conflict_a_blended_decal_at_the_same_height_as_a_cutout_one_depends_on_the_camera`). GPU tests: nearer mesh occludes a
+  sprite, farther does not, under all six example configurations; blended sprite interleaves with meshes by depth in the single-camera test (not re-run per configuration). Limits: blended sprites sort
   by quad centre (KI-14); **meshes cannot be blended**; `RenderScene` is partitioned by primitive type
   (meshes, cutout, blended sprites), not by transparency class, so a blended mesh has no place to sort
   against blended sprites (R-1).

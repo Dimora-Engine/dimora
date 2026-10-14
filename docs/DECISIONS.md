@@ -49,7 +49,7 @@ is not approved; nothing marked Recommended may be described elsewhere as decide
 | Id | Topic | Status | Where recorded |
 |---|---|---|---|
 | OD-1 | Editor timing: the full editor stays late, behind a stability gate; developer tooling arrives incrementally; the runtime stays free of editor-specific state | **Confirmed** (2026-10-13) | [ADR-0003](adr/0003-incremental-tooling-editor-later.md), ROADMAP "Incremental developer tooling" |
-| OD-2 | Dimora is not defined by HD-2D or any single view; one spatial world supports orthographic, perspective, isometric, top-down, side-scrolling and custom cameras as intended capabilities; projection is separate from gameplay orientation and style; the showcase is a reusable multi-camera test scene | **Confirmed** as direction (2026-10-13). The six open questions were answered the same day; the answers are classified (accepted principle, provisional convention, deferred API decision, needs prototype evidence) in ADR-0004 "Resolution of the open questions". Mechanisms, owner response 2026-10-13: camera presets as constructors **Accepted**; style as policy **Accepted with clarification** (per level, no universal style abstraction); gameplay orientation as data **Accepted**; coplanar ordering **Amended** (spatial depth, transparency sorting, render layers or queues and explicit render order stay distinct; no generalised occlusion framework yet). The reusable test scene stays **Recommended**. None of this is implemented | [ADR-0004](adr/0004-one-spatial-world-many-camera-configurations.md), D-48 |
+| OD-2 | Dimora is not defined by HD-2D or any single view; one spatial world supports orthographic, perspective, isometric, top-down, side-scrolling and custom cameras as intended capabilities; projection is separate from gameplay orientation and style; the showcase is a reusable multi-camera test scene | **Confirmed** as direction (2026-10-13). The six open questions were answered the same day; the answers are classified (accepted principle, provisional convention, deferred API decision, needs prototype evidence) in ADR-0004 "Resolution of the open questions". Mechanisms, owner response 2026-10-13: camera presets as constructors **Accepted**; style as policy **Accepted with clarification** (per level, no universal style abstraction); gameplay orientation as data **Accepted**; coplanar ordering **Amended** (spatial depth, transparency sorting, render layers or queues and explicit render order stay distinct; no generalised occlusion framework yet). The test scene now exists in `spatial_scene` (example-local constructors, verified 2026-10-14). An engine-level preset API, style-policy APIs, gameplay-orientation components and a coplanar mechanism are still not implemented | [ADR-0004](adr/0004-one-spatial-world-many-camera-configurations.md), D-48 |
 | OD-3 | Licence: `MIT OR Apache-2.0` | **Proposed, not confirmed.** No licence files are added until the owner approves. Copyright holder also unconfirmed | TASKS.md "Licence audit" (KI-17) |
 | OD-4 | Use GitHub Actions if the repository is hosted on GitHub; validate on Windows, macOS and Linux; Windows early | **Confirmed** as direction (2026-10-13). That GitHub is the long-term host is **assumed** (the repository and its pull requests are on GitHub); the owner has not stated it | [ADR-0005](adr/0005-ci-on-github-actions.md) (Provisional), D-22 |
 | OD-5 | Does a licence also need a contributor policy (a CLA or DCO), given contributions from several authors and AI agents? | **Open** | TASKS.md "Licence audit" |
@@ -87,8 +87,8 @@ the risk register). **Prototype where the answer depends on a measurement; do no
 | D-07 | Depth convention (reverse-Z) | M6 | M6, M14 shadows | Open |
 | D-08 | Multi-camera and render targets | M6 | M6, M14, M22 | Open |
 | D-25 | Custom projections inside `Camera` | M6 (**first in M6**, [ADR-0004](adr/0004-one-spatial-world-many-camera-configurations.md)) | M6, M13 (oblique tiles) | Open |
-| D-48 | Camera configurations: gameplay orientation, coplanar ordering, orientation modes per view | M6 (decide before M7 and M8) | M6, M7, M8, M13, M14 | Principles accepted and `+Y` up / `XZ` ground retained as a **provisional convention** (ADR-0004, 2026-10-13); gameplay-orientation components deferred to M7 and M8 requirements; coplanar and isometric mechanisms **need M6 prototype evidence** |
-| D-26 | Sprite orientation modes beyond `Billboard`, `Upright`, `Fixed`; `Upright` semantics for steep and oblique views | M6 | none hard | Candidate initial set kept, not exhaustive (ADR-0004); semantics and extensions open, low priority |
+| D-48 | Camera configurations: gameplay orientation, coplanar ordering, orientation modes per view | M6 (decide before M7 and M8) | M6, M7, M8, M13, M14 | Principles accepted and `+Y` up / `XZ` ground retained as a **provisional convention** (ADR-0004, 2026-10-13). Prototype evidence recorded 2026-10-14 (three coplanar conflicts; no mechanism chosen). Gameplay-orientation components still deferred to M7 and M8 |
+| D-26 | Sprite orientation modes beyond `Billboard`, `Upright`, `Fixed`; `Upright` semantics for steep and oblique views | M6 | none hard | Candidate initial set kept, not exhaustive (ADR-0004). Observed 2026-10-14: orthographic height is `cos(pitch)` of a billboard, straight-down is edge-on, a 60° perspective view is roughly half. **Not accepted as the final design.** Extensions still open |
 | D-09 | Physics: custom or library | M7 | M7, M9 | Open |
 | D-28 | Character gameplay versus visuals | M8 (provisional), M9 | M9, M10, M11, M12, M18 | Open |
 | D-29 | Shared animation control vocabulary and state machine | M8 (vocabulary), M11 | M8, M9, M11, M12 | Open |
@@ -659,11 +659,21 @@ Each is open; none has a chosen answer. Leanings are starting points.
   up axis is not provided or planned. Details and implications: ADR-0004, question 3.
 * **Deferred API decisions.** The gameplay-orientation component design (until M7 movement and M8
   directional-animation requirements exist); preset signatures and defaults (with D-25).
-* **Needs prototype evidence (M6 test scene).** (1) The coplanar mechanism: the scene first identifies the real
-  coplanar ordering and depth-conflict cases, then a mechanism is chosen (candidates, none preferred: offset
-  helper, depth bias, extending `RenderOrder`, a layer or queue). (2) Whether isometric needs a specialised sort
-  or occlusion policy, decided only if the scene shows a concrete limitation; none is built speculatively.
-  (3) `Upright` and the other orientation modes under steep, top-down and isometric views (D-26).
+* **Prototype evidence (recorded 2026-10-14, Apple M5, Metal; tests in
+  `examples/spatial_scene/tests/configurations.rs`).** No mechanism was selected.
+  1. **Equal-height cutout decals** follow spawn order, not space
+     (`equal_height_cutout_decals_are_decided_by_draw_order_not_by_space`).
+  2. **A cutout decal coplanar with a mesh** is shown under some cameras and hidden under others
+     (`known_conflict_a_decal_coplanar_with_a_mesh_is_hidden_or_shown_by_rounding`). On that GPU, orthographic
+     showed it and the other four downward configurations hid it. The test locks the split, not the name.
+  3. **A blended decal at the same height as a cutout one** is likewise camera-dependent
+     (`known_conflict_a_blended_decal_at_the_same_height_as_a_cutout_one_depends_on_the_camera`). On that GPU,
+     isometric showed it and the other four hid it. Same caveat.
+  Decals one unit apart in height resolve by the depth test in all five downward configurations. Isometric did
+  not show a sorting failure beyond these coplanar cases, so no isometric occlusion policy is justified yet.
+  `Upright` measurements are under D-26: current behaviour, not a chosen design. Candidates for a later
+  mechanism, none preferred: an offset helper, a depth bias, extending `RenderOrder` to cutout content, a
+  layer or queue.
 * **Needed by.** Decided during M6, before M7 and M8 build on it. **Blocks.** M7, M8, M13, M14.
 
 ## Reopening a settled decision

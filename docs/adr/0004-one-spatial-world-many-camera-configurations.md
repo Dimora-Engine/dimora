@@ -56,6 +56,12 @@ B (owner direction). Views are configurations of the same world:
 | Side-scrolling | Camera looking along the depth axis, orthographic or perspective | The default camera orientation; **not demonstrated as a 2D-style game** |
 | Custom | A `Projection` implementation held by `Camera` | Trait exists; `Camera` holds a closed enum (KI-11) |
 
+The "Status today" column is the status when this ADR was accepted. **Update (2026-10-14):** `spatial_scene`
+demonstrates isometric, top-down and side, plus a steep perspective view, as example-local constructors, with
+GPU tests. Current status is in [../CAPABILITIES.md](../CAPABILITIES.md) and
+[../SPATIAL_RENDERING.md](../SPATIAL_RENDERING.md). An engine preset API and a coplanar mechanism are still
+not implemented. `Upright` under steep and top-down views was measured and is not accepted as the final design.
+
 ### Mechanism decisions (owner, 2026-10-13)
 
 The engineering recommendations that followed the direction were answered one by one. 1 to 3 are accepted with
@@ -307,3 +313,8 @@ rotating its entity. Evidence missing: a rendered isometric, top-down or side vi
 implementation of decisions 2 to 4. Revisit the decisions when M6's configuration test scene exists, or if a view
 cannot be expressed as a camera configuration without a second code path, or if a preset needs a
 view-specific code path in extraction or the backend.
+
+**Evidence added 2026-10-14.** The configuration test scene exists (`examples/spatial_scene`). It renders
+isometric, top-down and side, and records the coplanar cases and the `Upright` measurements in
+[../SPATIAL_RENDERING.md](../SPATIAL_RENDERING.md) and D-48. The constructors are example-local, so "any preset"
+as an engine API is still missing, as are decisions 2 to 4 as implementations. No view needed a second code path.

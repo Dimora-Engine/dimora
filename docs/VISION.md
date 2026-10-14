@@ -95,7 +95,7 @@ Primary use cases, in the order the roadmap proves them:
 
 ## Camera configurations and visual styles
 
-*Confirmed direction (owner, 2026-10-13); mechanism decisions (presets as constructors, style as per-level policy, gameplay orientation as data, coplanar ordering amended) accepted 2026-10-13 and recorded in [ADR-0004](adr/0004-one-spatial-world-many-camera-configurations.md). None is implemented yet.*
+*Confirmed direction (owner, 2026-10-13); mechanism decisions (presets as constructors, style as per-level policy, gameplay orientation as data, coplanar ordering amended) accepted 2026-10-13 and recorded in [ADR-0004](adr/0004-one-spatial-world-many-camera-configurations.md). The test scene demonstrates six configurations with example-local constructors (2026-10-14). An engine preset API, style policies beyond per-sprite orientation and per-texture filtering, gameplay-orientation data and a coplanar mechanism are not implemented.*
 
 Dimora's defining principle is the unified spatial world, not a look. It must support these views as
 **intended capabilities**, not as a promise to build every one in the next milestone:
@@ -104,9 +104,9 @@ Dimora's defining principle is the unified spatial world, not a look. It must su
 |---|---|---|
 | Perspective | `Perspective` projection, any camera placement | Implemented and tested |
 | Orthographic | `Orthographic` projection, any camera placement | Implemented and tested |
-| Isometric | Orthographic camera rotated by its transform; custom axes through a custom projection | Camera maths supports it; **no scene or test demonstrates it** |
-| Top-down | Camera looking along the world's down axis | **Not demonstrated**; sprite orientation and coplanar ordering need decisions (R-16, D-48) |
-| Side-scrolling | Camera looking along the depth axis | The default orientation; **not demonstrated as a 2D-style game** |
+| Isometric | Orthographic camera rotated by its transform; custom axes through a custom projection | **Demonstrated** by an example-local constructor in `spatial_scene`. Not an engine preset, and not a projection type |
+| Top-down | Camera looking along the world's down axis | **Demonstrated.** `Upright` sprites are edge-on; that is observed, not settled (D-26). Coplanar ordering is still open (D-48) |
+| Side-scrolling | Camera looking along the depth axis | **Demonstrated as a camera placement.** Not demonstrated as a 2D-style game |
 | Custom | A `Projection` supplied by game code | The trait exists; `Camera` holds a closed enum, so **not yet usable** (KI-11, D-25) |
 
 Three things are kept separate, and none may be implemented as another: **camera projection** (how the world
