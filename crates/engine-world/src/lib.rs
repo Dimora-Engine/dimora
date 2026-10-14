@@ -6,11 +6,12 @@
 //! [`World::entities`] for queries.
 //!
 //! Spatial components shared by everything that exists in the scene live here: [`Transform`],
-//! [`GlobalTransform`], [`Parent`]/[`Children`], [`Visibility`], [`Name`].
+//! [`GlobalTransform`], [`Parent`]/[`Children`], [`Visibility`], [`Name`], [`Interpolate`].
 
 mod commands;
 mod events;
 mod hierarchy;
+mod interpolate;
 mod resources;
 mod schedule;
 mod world;
@@ -20,6 +21,7 @@ pub use hecs::{Entity, EntityRef, Query, QueryBorrow};
 pub use commands::{CommandError, CommandFailure, CommandWriter};
 pub use engine_math::Transform;
 pub use hierarchy::{propagate_transforms, Children, GlobalTransform, HierarchyError, Parent};
+pub use interpolate::{snapshot_interpolation, Interpolate};
 pub use resources::Resources;
 pub use schedule::{Schedule, ScheduleError};
 pub use world::{Name, Visibility, World};

@@ -19,7 +19,8 @@ because they wait on the owner, not on code: licence files (KI-17) and CI (D-22,
 [ROADMAP.md](ROADMAP.md#m3-frame-model-input-and-platform-in-progress). M3a-1 through M3a-4 are done
 (evidence below). M3a-2 is commit `312a05f`. Lifecycle anchors are sealed on top of that commit
 (`ecf4fa1`, local, not pushed). M3a-3 is commit `cd802f0`, local, not pushed. M3a-4 (logging and
-diagnostics) is committed locally and is not pushed. M3a-5 is next and is not started. The
+diagnostics) is commit `5c4fd97`, local, not pushed. M3a-5 (fixed-step interpolation) is committed
+locally and is not pushed. M3a-6 is not started. M3a is not complete. The
 rendering regression baseline is commit `6dbabb8`.
 
 ## Completed work
@@ -172,7 +173,7 @@ yet reproduced.
 | KI-7 | ~~A child of an entity without a `Transform` stays at the origin~~ **Fixed by T3** (commit `498f77a`): such an entity counts as identity, at any depth | Verified (test failed before, passes after) | M2 |
 | KI-8 | ~~`World::despawn(parent)` leaves children with a dangling `Parent`~~ **Fixed by T3** (commit `e1f70b1`, D-03): `despawn` removes the whole subtree; `detach_children` keeps children as roots. `despawn_recursive` is gone | Verified | M2 |
 | KI-9 | Resource access is `RefCell`: a double borrow panics at runtime. Deferred commands and typed events are implemented (M3a-3). Change detection is still absent (ADR-0009) | Partial (the `RefCell` panic and change detection remain) | M3a-3 done; change detection stays deferred |
-| KI-10 | ~~Frame order is hard-wired in `Game::step`~~ Named stages and `before`/`after` are implemented (M3a-2). Still true: `FixedTimestep::alpha()` is not exposed, so there is no render interpolation | Partial (alpha and interpolation remain) | M3a-5 |
+| KI-10 | ~~Frame order is hard-wired in `Game::step`~~ Named stages and `before`/`after` are implemented (M3a-2). ~~`FixedTimestep::alpha()` is not exposed~~ Opt-in extract interpolation is implemented (M3a-5). `Game::step` still runs the stages in the documented order | Verified | M3a-5 |
 | KI-11 | `Camera` stores the closed `CameraProjection` enum, not an arbitrary `Projection` | Read | M6 |
 | KI-12 | Assets: synchronous loading; PNG is the only decoder (sprites, meshes, skeletons, clips are code-built); no hot-reload watcher; `AssetId` is a name hash and changes on rename. The collision check is **done by T3** (commit `8abee2e`): `insert`, `load` and `reload` return `AssetError::IdCollision` and never overwrite. Remaining limit: the check is per asset type (see "Task T3 results") | Read | M17 |
 | KI-13 | Skeletal animation has no blending, events, IK, skinning or file loading | Read | M11 |
@@ -377,8 +378,8 @@ Done on macOS arm64 (2026-10-13); see "Task T3 results" for the evidence and its
 
 Ordered by dependency. Each task is small enough to verify on its own. The milestone-level acceptance
 criteria (ordering test, command and event tests, interpolation test, logging test, byte-identical example
-screenshots against `6dbabb8`, ADRs) are in ROADMAP.md under M3a and are not repeated here. M3a-5 is the
-next task.
+screenshots against `6dbabb8`, ADRs) are in ROADMAP.md under M3a and are not repeated here. M3a-6 is the
+next task. M3a is not complete.
 
 | Task | Content | Prerequisite | Done when |
 |---|---|---|---|
@@ -386,7 +387,7 @@ next task.
 | M3a-2 | Named stages and `before`/`after` ordering; `Game::step` stops hard-wiring engine stages (KI-10) | M3a-1 | **Done.** Commit `312a05f`, plus the lifecycle-anchor seal. Evidence under "M3a-2 results" |
 | M3a-3 | `Commands` flushed at stage boundaries; typed event channels cleared per frame (KI-9) | M3a-2 | **Done.** Committed locally, not pushed. Evidence under "M3a-3 results" |
 | M3a-4 | Logging facade; asset failure, skipped renderable and surface loss each log once with the cause named (R-13). `Diagnostics` resource | M3a-1 | **Done.** Committed locally, not pushed. Evidence under "M3a-4 results" |
-| M3a-5 | Fixed-step alpha exposed and opt-in transform interpolation (R-3) | M3a-2 | 60 Hz fixed versus 144 Hz render test; simulation still reads the un-interpolated `Transform` |
+| M3a-5 | Fixed-step alpha exposed and opt-in transform interpolation (R-3) | M3a-2 | **Done, committed locally, not pushed.** 60 Hz fixed versus 144 Hz render test; simulation still reads the un-interpolated `Transform`. Evidence under "M3a-5 results" |
 | M3a-6 | No new public `hecs` types. The three-tier rule is already in ARCHITECTURE.md (ADR-0010, from M3a-1). This task reviews the `engine` re-exports. **Not started** | M3a-1 | `engine/src/lib.rs` re-exports reviewed; no new public `hecs` type added by M3a |
 
 M3b (input actions, scale factor, vsync, fullscreen) starts after M3a-3. M4, M5 and M6 are the next
@@ -502,6 +503,28 @@ CPU step time in the window title they already update.
 **Screenshots.** Re-rendered after this change and compared with `cmp -s` against `/tmp/m3a-baseline` (the images rendered from the engine at `6dbabb8`). Debug, 1280×720: `basic_2_5d`, `basic_2_5d --ortho`, `spatial_scene --camera perspective`, `spatial_scene --camera orthographic`. All four identical. SHA-256 unchanged: basic `c3c5874adeea119c98255c6c1d08208c0244224d930d86e8736c280ef88b38fe`, ortho `f2aedc0c4a65e13a33187f391d2a778d073b3befbf1ce207bc6484d961ac980f`, perspective `ec5f6252a88f642b454ae768f9eec8cdd5fba88a5aeb7a424fcefe5fda12275e`, orthographic `3551d84fe2ec1c14fc0729c7a86e2031c068285a6551597ee32d100f76805cde`.
 
 **Repository check.** `scripts/check.sh` on 2026-10-14, exit 0. All 4 steps: fmt, clippy `-D warnings`, `cargo test --workspace` with `DIMORA_REQUIRE_GPU=1` (**204 passed, 0 failed**; 18 in `headless.rs` and 16 in `configurations.rs` ran, none skipped), rustdoc `-D warnings`. `cargo test --workspace -- --list` reports 204 tests. New tests against M3a-3: failed-load warning, bounded missing-asset memory, three extract warning tests, surface-loss warning, window and render error logs, application-logger retention, default stderr install, command-failure log, discarded-event silence, stage timings, and render statistics after `render_to_rgba`.
+
+## M3a-5 results (2026-10-14)
+
+Opt-in fixed-step interpolation at extraction. Committed locally, not pushed. M3a-6 is still open, so M3a is not complete.
+
+**API.** `Interpolate` on an entity stores `previous: Option<Transform>`. `Interpolate::snap` sets that previous local to the transform the caller passes. `snapshot_interpolation` copies the current local into `previous` for every entity that has both. `Game::step` calls it at the start of each fixed iteration, before fixed-update systems. It is not a schedulable system. `FixedTimestep::alpha` is the accumulator divided by the step, clamped to a finite value in `0.0..=1.0`. A zero step and the eight-step stall leftover are `0.0`.
+
+**History.** One previous local per marked entity. No world copy and no animation timeline. Several fixed iterations in one frame leave `previous` as the local from before the last iteration. With no stored previous anywhere, extraction keeps using `GlobalTransform`.
+
+**Math.** `Transform::lerp`: linear translation, linear scale, `Quat::slerp` on the shortest arc. A scale sign change passes through zero. A rotation of 180 degrees is whatever `Quat::slerp` returns and is not special-cased. A non-finite previous, current, alpha, or blend result renders the current local and does not change the simulation.
+
+**Hierarchy.** The render matrix is the product of render-locals up the parent chain, matching `propagate_transforms`. An unmarked child follows a marked parent's blended local. A transform-less node stays identity. `set_parent` keeps the child's local and history, so extraction is the new parent composed with the local blend, and the entity pops. Removing `Parent` leaves both samples as the old local numbers. `detach_children` rewrites each direct child's local into world space and sets that child's `previous` to the rewritten local. Descendants are not rewritten. Despawning a parent removes the interpolated subtree. `snap` is still the explicit teleport.
+
+**Lifecycle.** A new entity with no previous renders at its current local. A spawn flushed after the snapshot waits until the next fixed iteration for history. Despawn removes the component, including when the despawned entity is the parent of an interpolated child. Adding the marker with `previous: None` changes nothing until a snapshot. Removing it restores the `GlobalTransform` path. A variable-step write of a marked local is included in the blend. That mixing is not supported. `update` and `fixed_update` still read `Transform`.
+
+**Cameras.** The same matrix feeds sprites, meshes, tilemaps, lights, and the active camera, for billboard, upright, and fixed sprites and for perspective, orthographic, and isometric placements. A camera interpolates only when it or an ancestor has a stored previous local. The examples do not mark one. Depth sorting is unchanged.
+
+**Screenshots.** Re-rendered after this change and compared with `cmp -s` against `/tmp/m3a-baseline` (the images rendered from the engine at `6dbabb8`). Debug, 1280×720: `basic_2_5d`, `basic_2_5d --ortho`, `spatial_scene --camera perspective`, `spatial_scene --camera orthographic`. All four identical. SHA-256 unchanged: basic `c3c5874adeea119c98255c6c1d08208c0244224d930d86e8736c280ef88b38fe`, ortho `f2aedc0c4a65e13a33187f391d2a778d073b3befbf1ce207bc6484d961ac980f`, perspective `ec5f6252a88f642b454ae768f9eec8cdd5fba88a5aeb7a424fcefe5fda12275e`, orthographic `3551d84fe2ec1c14fc0729c7a86e2031c068285a6551597ee32d100f76805cde`. The examples do not add `Interpolate`.
+
+**Repository check.** `scripts/check.sh` on 2026-10-14, after the hierarchy review, exit 0. All 4 steps: fmt, clippy `-D warnings`, `cargo test --workspace` with `DIMORA_REQUIRE_GPU=1` (the interpolation GPU test ran, none skipped), rustdoc `-D warnings`. `cargo test --workspace -- --list` reports **237 tests**. New tests against M3a-4: alpha across zero, one, and many steps and the stall cap; translation, quaternion, and scale blends, including a short arc near 180 degrees, a scale sign change, and a non-finite history; parent-child composition; teleport via `snap`; `detach_children` snapping the rewritten child and leaving the grandchild's blend; `set_parent` and removing `Parent` keeping both locals; reparenting an interpolated ancestor; despawn of a parent; spawn, despawn, and gaining or losing the marker; fixed-update and variable-update reads; the 60 Hz motion sampled at 144 Hz; and a GPU frame where an interpolated sprite and mesh move while an unmarked sprite does not.
+
+**GPU.** `interpolated_sprites_and_meshes_move_on_the_gpu_between_fixed_steps` rendered 64×64 frames. At alpha 0 the marked sprite and mesh sit on the previous pose. After a half step with no new fixed update they move toward the simulation pose and stay short of an unmarked sprite that was already there. A perspective camera on the same world keeps that separation. Extraction of the mesh matrix was checked in the same test, and the simulation transforms were unchanged after `render_to_rgba`.
 
 ## Planned systems and their state
 

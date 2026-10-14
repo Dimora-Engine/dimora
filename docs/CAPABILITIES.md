@@ -46,7 +46,7 @@ without it.
 | **Core runtime** | | | | |
 | 1 | Math, conventions, transforms | Working | 22 tests; `f32`; shear not representable | done |
 | 2 | ECS, world, hierarchy | Working, thin | `hecs` wrapper; commands and events included (ADR-0008). No change detection (D-02 provisional, not built) | M3, M4 |
-| 3 | Frame loop and scheduling | Partial | Named stages and `before`/`after` in `Game::step` (ADR-0007, M3a-2). Fixed systems see the fixed step; the frame delta is restored. Interpolation and `alpha` are not implemented | M3 |
+| 3 | Frame loop and scheduling | Partial | Named stages (M3a-2) and opt-in extract-only `Interpolate` (M3a-5, committed locally, not pushed). `FixedTimestep::alpha` is finite in `0..=1`. The blend does not write `Transform`. M3a-6 is still open | M3 |
 | 4 | Events and deferred commands | Working | FIFO commands flush per stage run and per fixed iteration. Typed events are visible to later stages and cleared after `input_clear` (ADR-0008). Reading copies the buffer (`T: Clone`). No observers | M3 |
 | 5 | Platform, window, timing | Working, narrow | winit loop, resize, exit; no DPI, fullscreen, vsync, multi-window | M3, M10 |
 | 6 | Input and action mapping | Partial | Keys/mouse state with edges, `axis()`; no actions, gamepad, text | M3 |
@@ -142,18 +142,33 @@ Missing from the original category list and now tracked: **save games** (34), **
   keep registration order. `advance_time` and `process_loads` stay first; `propagate_transforms` and
   `end_input_frame` stay last; `animate` accepts an explicit system on either side. During each fixed
   iteration `Time::delta` is the fixed step, then the frame delta is restored by `step` itself.
-  `elapsed` and `frame` advance once per step. Input edges last until `input_clear`. Extract and
-  render stay outside `step`. `FixedTimestep::alpha()` is unused. Both examples stay on `add_system`
-  (`update`).
-* **Required.** Fixed-step interpolation for rendering (ADR-0007, not built). A headless `step` exists.
-* **Planned.** Interpolation is M3a-5. **Depends on.** D-01 (implemented), D-02, D-10, D-44.
+  At the start of each fixed iteration, before user systems, `Interpolate::previous` is copied from
+  the current local. `elapsed` and `frame` advance once per step. Input edges last until `input_clear`.
+  Extract and render stay outside `step`. `FixedTimestep::alpha()` is the render blend factor, finite
+  and in `0.0..=1.0`. Both examples stay on `add_system` (`update`) and do not opt in.
+* **Interpolation.** Opt-in, extraction only (ADR-0007, M3a-5). `Transform::lerp` blends the stored
+  previous local toward the current one. The render world matrix is the product of those locals.
+  `Transform` and `GlobalTransform` stay the simulation. Fixed and variable systems read those.
+  An unmarked entity, including every entity in the current examples, extracts from `GlobalTransform`.
+  A camera interpolates only when it or an ancestor has a stored previous local. Teleport is
+  `Interpolate::snap`. `detach_children` stores the rewritten world local as that child's previous
+  local; descendants keep their own history. `set_parent` and removing `Parent` leave both samples
+  unchanged, so the entity pops instead of sliding between world poses. Not supported: variable-step
+  writes of a marked local (the blend includes them; fixed and variable systems still read
+  `Transform`), rotation exactly opposite (`Quat::slerp` is unstable there), scale sign changes
+  (they pass through zero), shear, and skeletal or physics interpolation.
+* **Required.** A headless `step` exists. M3a-6 (re-export review) is still open, so the frame-model
+  milestone is not finished.
+* **Planned.** Nothing further in M3a-5. **Depends on.** D-01 (implemented), D-02, D-10, D-44.
   **Integration.** Collision (fixed stage), animation (animate stage, camera read from previous
   propagation, D-31), UI (its own stage), scripts (one stage), scenes (apply at a boundary).
-* **Performance.** Sequential is the rule (ADR-0006) until a measured gameplay workload cannot meet its budget on one thread.
+* **Performance.** Sequential is the rule (ADR-0006) until a measured gameplay workload cannot meet its budget on one thread. The render-matrix walk runs only when some entity has a stored previous local.
 * **Tests/examples.** `engine-world` schedule tests and `engine` `tests/frame.rs` cover order, cycles,
-  the lifecycle anchors, the fixed delta and input edges. Interpolation and the 144 Hz versus 60 Hz render test are still M3a-5.
-* **Decided, not built.** Interpolation (ADR-0007), D-02 (ADR-0009, provisional). D-44 is settled and
-  matches the code. **Not initially.** Parallel execution, a dependency-graph scheduler.
+  the lifecycle anchors, the fixed delta and input edges. `engine-renderer/tests/interpolation.rs` and
+  `engine/tests/interpolation.rs` cover alpha, the blend, hierarchy, teleport, lifecycle, the 60 Hz
+  versus 144 Hz sample, and a GPU sprite/mesh frame. The examples do not enable interpolation.
+* **Decided, not built.** D-02 (ADR-0009, provisional). D-44 is settled and matches the code.
+  **Not initially.** Parallel execution, a dependency-graph scheduler, skeletal interpolation.
 
 ### 4. Events and deferred commands
 * **Purpose.** Communicate between systems without borrowing each other's state; mutate safely mid-stage.

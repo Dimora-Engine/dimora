@@ -236,7 +236,10 @@ Sprite {
 ```
 
 A sprite stores no screen or world position. The renderer takes `Transform + Sprite + Camera` and
-produces world-space quad geometry:
+produces world-space quad geometry. When any entity has a stored previous local, extraction
+substitutes the composed render matrix from ADR-0007 for `GlobalTransform` before placement, culling,
+and depth sorting. Those components are not written. With no stored previous, extraction still uses
+`GlobalTransform`.
 
 ```text
 GlobalTransform ──┐

@@ -62,7 +62,7 @@ the risk register). **Prototype where the answer depends on a measurement; do no
 
 | Tier | Decisions | Why now | How to resolve |
 |---|---|---|---|
-| **1. Before M3 code** | D-44 threading, D-01 scheduling, D-10 events and commands, D-02 change detection, D-45 public API tiers, D-47 format versioning, D-21 (logging half) | Every later system is written against the frame, mutation and threading model; R-5, R-7, R-8 get more expensive with every system added | **Decided 2026-10-14** (ADR-0006 through ADR-0012). D-02 is Provisional ("none until profiled"). Stages (D-01), commands and events (D-10), and logging (D-21) are implemented. Interpolation and change detection are not. Profiling is not |
+| **1. Before M3 code** | D-44 threading, D-01 scheduling, D-10 events and commands, D-02 change detection, D-45 public API tiers, D-47 format versioning, D-21 (logging half) | Every later system is written against the frame, mutation and threading model; R-5, R-7, R-8 get more expensive with every system added | **Decided 2026-10-14** (ADR-0006 through ADR-0012). D-02 is Provisional ("none until profiled"). Stages (D-01), commands and events (D-10), logging (D-21), and interpolation (D-01, M3a-5, committed locally, not pushed) are implemented. Change detection is not. Profiling is not |
 | **2. Before M4/M5** | D-18 (registry shape), D-16 (asset identity), D-05 (alpha classes and materials), D-27 (units) | Persisted data, render model and sprite sizing hang on them; R-1, R-4 | D-16 by a small prototype of a name table plus id; D-05 with a GPU test of a blended mesh against a blended sprite |
 | **3. Before M6** | D-25 projection and D-08 multi-camera and targets first, D-48 camera configurations, D-07 depth, then D-06 pixel policy (opt-in, lowest of these) | Shape of `RenderScene` and the pass list; R-2 | Prototype two cameras into one target |
 | **4. Before M9** | D-28, D-29 (vocabulary), D-30, D-31, D-11 (record) | Define the character and scene API that M10 to M18 depend on | Built against M8's sprite-sheet implementation and the second consumer |
@@ -77,7 +77,7 @@ the risk register). **Prototype where the answer depends on a measurement; do no
 | D-04 | GPU cache lifetime | M2 (T2) | M2 eviction, M17 unload | Decided, [ADR-0002](adr/0002-gpu-cache-lifetime.md) (2026-10-13) |
 | D-22 | Code host and CI provider | M2 | CI config, release | Provisional, [ADR-0005](adr/0005-ci-on-github-actions.md) (GitHub Actions; first-run results in TASKS.md) |
 | D-23 | Platform targets, MSRV policy, crates.io | M2 (MSRV), M24 | M24 | MSRV part decided in T1 (1.90); platforms and crates.io still Open |
-| D-01 | Scheduling model | M3 | M3, M7, M8, M10, M15 | Decided, [ADR-0007](adr/0007-named-stages-on-the-existing-schedule.md) (2026-10-14). Not implemented |
+| D-01 | Scheduling model | M3 | M3, M7, M8, M10, M15 | Decided, [ADR-0007](adr/0007-named-stages-on-the-existing-schedule.md) (2026-10-14). Stages in M3a-2. Interpolation in M3a-5 (committed locally, not pushed) |
 | D-02 | Change detection | M3 | M3, M4 (dirty transforms), M23 | Provisional, [ADR-0009](adr/0009-no-change-detection-until-measured.md) (2026-10-14): none until a profile |
 | D-10 | Events and deferred commands | M3 | M3, M4, M7, M8, M18 | Decided, [ADR-0008](adr/0008-commands-and-per-frame-events.md) (2026-10-14). Implemented in M3a-3 |
 | D-18 | Scene format, serde, component registry | M4 (registry shape), M19 | M4, M18, M19, M22 | Open |
@@ -167,8 +167,9 @@ frames. Implemented in T2.
 **Decided 2026-10-14: [ADR-0007](adr/0007-named-stages-on-the-existing-schedule.md).** Named stages and
 `before`/`after` on the existing `Schedule`. During each fixed iteration, `Time::delta` is the fixed
 step and is restored to the frame delta afterward. Interpolation is opt-in and extraction-only, and it
-never writes `Transform` or `GlobalTransform`. `Game::step` is still the hard-wired order; M3a-2
-implements the stages. Rendering regression baseline: commit `6dbabb8`.
+never writes `Transform` or `GlobalTransform`. `Game::step` is still the hard-wired order. M3a-2
+implements the stages. M3a-5 implements the marker, the previous local, and the extract-time blend
+(committed locally, not pushed). Rendering regression baseline: commit `6dbabb8`.
 
 ### D-02 Change detection
 

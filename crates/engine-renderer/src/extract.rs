@@ -7,6 +7,7 @@ use crate::components::{
     AmbientLight, Fog, Light, LightKind, Mesh, RenderOrder, Sprite, SpriteBlend, SpriteOrientation, TileMap,
 };
 use crate::frustum::Frustum;
+use crate::interpolate::{render_poses, RenderPoses};
 use crate::missing::{resolve, MissingAssetWarnings};
 use crate::scene::*;
 
@@ -18,22 +19,28 @@ use crate::scene::*;
 /// read; nothing here touches a GPU. Returns `None` if there is no active camera.
 ///
 /// `transforms` must be up to date: call `engine_world::propagate_transforms` first.
+///
+/// An entity with [`engine_world::Interpolate`] and a stored previous local is drawn from a
+/// render matrix blended toward its current local. That blend is not written to `Transform` or
+/// `GlobalTransform`. Sprites, meshes, tilemaps, lights, and the active camera share it. With no
+/// stored previous local anywhere, every matrix is that entity's `GlobalTransform`.
 pub fn extract_scene(world: &World, assets: &AssetManager, target_size: Vec2) -> Option<RenderScene> {
-    let (camera, view) = active_camera(world, target_size)?;
+    let poses = render_poses(world);
+    let (camera, view) = active_camera(world, target_size, &poses)?;
     let frustum = Frustum::from_view_proj(&view.view_proj);
     let mut stats = ExtractStats::default();
 
     let ambient = world.try_resource::<AmbientLight>().map_or(AmbientLight::default(), |a| *a);
     let ambient = [ambient.color.r, ambient.color.g, ambient.color.b].map(|c| c * ambient.intensity);
     let fog = world.try_resource::<Fog>().map_or(Fog::default(), |f| *f);
-    let lights = extract_lights(world, &view);
+    let lights = extract_lights(world, &view, &poses);
     stats.lights = lights.len() as u32;
 
     let mut cutout: Vec<SpriteInstance> = Vec::new();
     let mut blended: Vec<(SortKey, SpriteInstance)> = Vec::new();
     let mut watch = world.try_resource::<MissingAssetWarnings>().is_some_and(|warnings| !warnings.is_empty());
 
-    for (_, (sprite, global, vis, order)) in
+    for (entity, (sprite, global, vis, order)) in
         world.query::<(&Sprite, &GlobalTransform, Option<&Visibility>, Option<&RenderOrder>)>().iter()
     {
         if matches!(vis, Some(Visibility::Hidden)) {
@@ -44,7 +51,7 @@ pub fn extract_scene(world: &World, assets: &AssetManager, target_size: Vec2) ->
         };
         let size = sprite.size.unwrap_or_else(|| asset.world_size());
         let anchor = sprite.anchor.unwrap_or(asset.pivot);
-        let placement = sprite_placement(&global.matrix, sprite.orientation, &view);
+        let placement = sprite_placement(&poses.matrix(entity, global), sprite.orientation, &view);
         let model = quad_matrix(&placement, size, anchor);
         if !quad_visible(&frustum, &model) {
             stats.sprites_culled += 1;
@@ -68,18 +75,18 @@ pub fn extract_scene(world: &World, assets: &AssetManager, target_size: Vec2) ->
         }
     }
 
-    for (_, (map, global, vis)) in world.query::<(&TileMap, &GlobalTransform, Option<&Visibility>)>().iter() {
+    for (entity, (map, global, vis)) in world.query::<(&TileMap, &GlobalTransform, Option<&Visibility>)>().iter() {
         if matches!(vis, Some(Visibility::Hidden)) {
             continue;
         }
         let Some(texture) = resolve(world, assets, map.texture, "tilemap", &mut watch, &mut stats) else {
             continue;
         };
-        extract_tilemap(map, &global.matrix, texture, &frustum, &mut cutout, &mut stats);
+        extract_tilemap(map, &poses.matrix(entity, global), texture, &frustum, &mut cutout, &mut stats);
     }
 
     let mut meshes = Vec::new();
-    for (_, (mesh, global, vis)) in world.query::<(&Mesh, &GlobalTransform, Option<&Visibility>)>().iter() {
+    for (entity, (mesh, global, vis)) in world.query::<(&Mesh, &GlobalTransform, Option<&Visibility>)>().iter() {
         if matches!(vis, Some(Visibility::Hidden)) {
             continue;
         }
@@ -87,7 +94,7 @@ pub fn extract_scene(world: &World, assets: &AssetManager, target_size: Vec2) ->
             continue;
         };
         let (center, radius) = data.bounding_sphere();
-        let m = &global.matrix;
+        let m = poses.matrix(entity, global);
         let max_scale = m.cols[0].xyz().length().max(m.cols[1].xyz().length()).max(m.cols[2].xyz().length());
         if !frustum.intersects_sphere(m.transform_point3(center), radius * max_scale) {
             stats.meshes_culled += 1;
@@ -95,7 +102,7 @@ pub fn extract_scene(world: &World, assets: &AssetManager, target_size: Vec2) ->
         }
         stats.meshes_visible += 1;
         meshes.push(MeshInstance {
-            model: *m,
+            model: m,
             mesh: mesh.asset,
             color: mesh.material.base_color.to_array(),
             texture: mesh.material.base_texture,
@@ -132,7 +139,7 @@ struct SortKey {
     order: i32,
 }
 
-fn active_camera(world: &World, target_size: Vec2) -> Option<(Camera, CameraView)> {
+fn active_camera(world: &World, target_size: Vec2, poses: &RenderPoses) -> Option<(Camera, CameraView)> {
     let mut best: Option<(Entity, Camera, GlobalTransform)> = None;
     for (e, (camera, global)) in world.query::<(&Camera, &GlobalTransform)>().iter() {
         let better = match &best {
@@ -140,23 +147,25 @@ fn active_camera(world: &World, target_size: Vec2) -> Option<(Camera, CameraView
             Some((be, bc, _)) => (camera.order, e.id()) < (bc.order, be.id()),
         };
         if camera.active && better {
-            best = Some((e, *camera, *global));
+            let placed = GlobalTransform { matrix: poses.matrix(e, global) };
+            best = Some((e, *camera, placed));
         }
     }
-    let (_, camera, global) = best?;
-    Some((camera, CameraView::new(&camera, &global, target_size)))
+    let (_, camera, placed) = best?;
+    Some((camera, CameraView::new(&camera, &placed, target_size)))
 }
 
-fn extract_lights(world: &World, view: &CameraView) -> Vec<LightData> {
+fn extract_lights(world: &World, view: &CameraView, poses: &RenderPoses) -> Vec<LightData> {
     let mut lights: Vec<LightData> = world
         .query::<(&Light, &GlobalTransform)>()
         .iter()
-        .map(|(_, (light, global))| {
+        .map(|(entity, (light, global))| {
             let c = light.color;
+            let placed = GlobalTransform { matrix: poses.matrix(entity, global) };
             LightData {
                 kind: light.kind,
-                position: global.translation(),
-                direction: global.forward().normalized(),
+                position: placed.translation(),
+                direction: placed.forward().normalized(),
                 color: [c.r, c.g, c.b].map(|v| v * light.intensity),
             }
         })

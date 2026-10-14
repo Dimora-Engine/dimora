@@ -72,9 +72,21 @@ impl FixedTimestep {
         n
     }
 
-    /// Fraction of the next step already accumulated, for render interpolation.
+    /// Fraction of the next step already accumulated, in `0.0..=1.0`, for render interpolation.
+    ///
+    /// A zero step, a non-finite ratio, or the leftover dropped by the eight-step stall cap yields
+    /// `0.0`. Values that rounding would push past 1 stay at 1.
     pub fn alpha(&self) -> f32 {
-        self.accumulator.as_secs_f32() / self.step.as_secs_f32()
+        let step = self.step.as_secs_f32();
+        if step <= 0.0 || !step.is_finite() {
+            return 0.0;
+        }
+        let alpha = self.accumulator.as_secs_f32() / step;
+        if alpha.is_finite() {
+            alpha.clamp(0.0, 1.0)
+        } else {
+            0.0
+        }
     }
 }
 
@@ -96,6 +108,44 @@ mod tests {
     fn stalls_are_capped() {
         let mut t = FixedTimestep::new(60);
         assert_eq!(t.accumulate(Duration::from_secs(10)), 8);
+        assert_eq!(t.alpha(), 0.0, "the dropped leftover does not leave a partial step");
         assert_eq!(t.accumulate(Duration::ZERO), 0);
+        assert_eq!(t.alpha(), 0.0);
+    }
+
+    #[test]
+    fn alpha_tracks_the_leftover_and_stays_finite() {
+        let mut t = FixedTimestep::new(60);
+        assert_eq!(t.alpha(), 0.0, "the first frame has no accumulated time");
+
+        let step = t.step();
+        assert_eq!(t.accumulate(Duration::ZERO), 0);
+        assert_eq!(t.alpha(), 0.0);
+
+        assert_eq!(t.accumulate(step / 2), 0);
+        assert!((t.alpha() - 0.5).abs() < 1e-4, "one partial step and no fixed update: {}", t.alpha());
+
+        let rest = t.step - t.accumulator;
+        assert_eq!(t.accumulate(rest), 1, "the partial step completes");
+        assert_eq!(t.alpha(), 0.0);
+
+        assert_eq!(t.accumulate(step * 2 + step / 2), 2);
+        assert!((t.alpha() - 0.5).abs() < 1e-5, "two consumed steps leave the same fraction: {}", t.alpha());
+
+        let over =
+            FixedTimestep { step: Duration::from_secs(1), accumulator: Duration::from_secs(3), max_steps_per_frame: 8 };
+        assert_eq!(over.alpha(), 1.0);
+        let zero_step =
+            FixedTimestep { step: Duration::ZERO, accumulator: Duration::from_millis(1), max_steps_per_frame: 8 };
+        assert_eq!(zero_step.alpha(), 0.0);
+        let empty = FixedTimestep { step: Duration::ZERO, accumulator: Duration::ZERO, max_steps_per_frame: 8 };
+        assert_eq!(empty.alpha(), 0.0);
+
+        let mut rolling = FixedTimestep::new(60);
+        for n in 0..32 {
+            let steps = rolling.accumulate(Duration::from_millis(n * 3));
+            let alpha = rolling.alpha();
+            assert!(alpha.is_finite() && (0.0..=1.0).contains(&alpha), "{alpha} after {steps} steps");
+        }
     }
 }

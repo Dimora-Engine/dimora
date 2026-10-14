@@ -57,8 +57,9 @@ first" tiers in [docs/DECISIONS.md](docs/DECISIONS.md#what-to-resolve-first).
 * **Now: close M2.** All numbered tasks are done (T1 to T3). Two items remain, both blocked on the owner
   rather than on code: licence files (KI-17, waiting for the owner to confirm a licence) and owner confirmation of GitHub as host (CI itself is done on the PR branch, see TASKS.md). Neither blocks
   M3, so M2 is closed for planning purposes once they are listed as carried items in TASKS.md.
-* **Now: M3a, the frame model** (see M3 below). Design decisions are recorded (2026-10-14). Named stages
-  (M3a-2) and commands and events (M3a-3) are implemented. Logging and interpolation are not. It is first because
+* **Now: M3a, the frame model** (see M3 below). Design decisions are recorded (2026-10-14). Named stages,
+  commands and events, logging, and opt-in interpolation are implemented locally and are not pushed.
+  The public-API review (M3a-6) is not started. It is first because
   collision, animation, scenes, UI and scripting all hang off its stages, commands and events, and because
   three high-cost risks (R-5, R-7, R-8) are cheapest to settle before more systems exist.
 * **Then, in order:** M3b input and platform; M4 scenes and the registry shape; M5 materials and textures;
@@ -197,7 +198,7 @@ Each row is a capability nobody builds yet whose *shape* constrains work in the 
 | Scripting | M18 | Commands, events and a component registry must exist first; scripts get a small versioned surface, not `hecs` or renderer types | Requirements 7 and 9; D-40 to D-45 |
 | Multiple cameras, render targets and a custom projection | M6 | Six views are demonstrated by example-local constructors in `spatial_scene` (2026-10-14). `RenderScene` still holds one view and `Camera` a closed projection enum; do not add features that assume one view, one projection or one ground plane | R-2, R-16; D-08, D-25, D-48; ADR-0004 |
 | Blended meshes, particles, skinned characters | M5, M12, M15 | They need a transparency class in the render model before they exist | R-1; D-05 |
-| Fixed-step interpolation | M3a | No previous-transform data exists. The approach is decided (ADR-0007): opt-in, extraction-only, never writes `Transform` or `GlobalTransform`. Not built | R-3 |
+| Fixed-step interpolation | M3a | **Done (M3a-5, committed locally, not pushed).** Opt-in, extraction-only, never writes `Transform` or `GlobalTransform` (ADR-0007) | R-3 |
 | UI in screen and world space | M10 | Window scale factor, sub-rectangle texture update and an overlay pass; M3b and M5 carry the prerequisites | R-12, KI-24, KI-25; D-24, D-37 to D-39 |
 | Three character representations | M8, M11, M12 | One gameplay entity with a replaceable visual subtree; gameplay must not name rendering types | D-28 to D-34 |
 | Save games | M18 to M24 | Not a scene file; needs its own versioned format and a state store shaped alongside the script API | D-46, D-47 |
@@ -270,9 +271,10 @@ and verified: M3a (the frame model; the immediate milestone) and M3b (input and 
 once M3a's stage and event API is merged; it does not need M3a's interpolation.
 
 **Status.** In progress. M3a-1 through M3a-4 are done. M3a-3 is committed locally (`cd802f0`) and is not
-pushed. M3a-4 (logging and diagnostics) is committed locally and is not pushed. M3a-5, M3a-6, and
-all of M3b are not started. Interpolation is not in the code. Profiling is not in the code. The
-rendering regression baseline is commit `6dbabb8`.
+pushed. M3a-4 (logging and diagnostics) is committed locally (`5c4fd97`) and is not pushed. M3a-5
+(fixed-step interpolation) is committed locally and is not pushed. M3a-6 and all of M3b are not
+started. Profiling is not in the code. The rendering regression baseline is commit `6dbabb8`. M3a is
+not complete.
 
 **Prerequisites.** M2 (closed for planning). Decisions recorded before implementation code, 2026-10-14:
 D-44 ([ADR-0006](docs/adr/0006-simulation-stays-single-threaded.md)), D-01
@@ -301,8 +303,11 @@ D-44 ([ADR-0006](docs/adr/0006-simulation-stays-single-threaded.md)), D-01
    load, a skipped renderable, and a lost surface or render error each log once with the asset or cause
    named. `Diagnostics` holds per-stage CPU timings, the frame delta, the fixed-step count, and the
    existing render and cache counts. Examples print a few of those numbers. Profiling stays in M20.
-5. Expose the fixed-step alpha and add opt-in transform interpolation for entities moved in the fixed
-   stage, without changing what simulation reads (R-3).
+5. Fixed-step alpha and opt-in transform interpolation — **done (M3a-5, committed locally, not pushed).**
+   `FixedTimestep::alpha` is a finite fraction in `0.0..=1.0`. `Interpolate` stores one previous
+   local, copied at the start of each fixed iteration. Extraction blends it toward the current local
+   and does not write `Transform` or `GlobalTransform` (R-3, ADR-0007). Entities that do not opt in,
+   including both examples, are unchanged.
 6. Stop adding public `hecs` types. The three-tier rule is already in ARCHITECTURE.md (ADR-0010). This
    task reviews the `engine` re-exports against that rule. The full list waits for M9.
 
@@ -316,7 +321,8 @@ D-44 ([ADR-0006](docs/adr/0006-simulation-stays-single-threaded.md)), D-01
   frame (test).
 - A fixed-step entity moved at 60 Hz with a 144 Hz render rate produces monotonically increasing
   interpolated positions in successive extracted scenes (test through `Game::step` + `extract`), and a
-  system reading `Transform` in the fixed stage sees the un-interpolated value.
+  system reading `Transform` in the fixed stage sees the un-interpolated value. Met by M3a-5,
+  committed locally and not pushed. M3a stays open until M3a-6.
 - A failed asset load produces exactly one log record containing the asset name (test with a capturing
   logger).
 - Existing behaviour is unchanged: `scripts/check.sh` passes and the headless screenshots of

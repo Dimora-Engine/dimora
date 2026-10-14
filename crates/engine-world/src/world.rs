@@ -84,8 +84,13 @@ impl World {
     /// rotation and scale (their local `Transform` is rewritten to the old world transform).
     /// The children's own subtrees are untouched.
     ///
+    /// A rewritten child that has [`Interpolate`](crate::Interpolate) stores that new local as its
+    /// previous local. The old previous local was in parent space, so blending it with the rewritten
+    /// local would slide across two coordinate spaces. Descendants keep their own locals and history.
+    ///
     /// A child with no `Transform` is a plain grouping node. If it has children of its own it is
-    /// given a `Transform` so that they stay in place. Errors if `parent` does not exist.
+    /// given a `Transform` so that they stay in place, and that inserted local is stored the same way.
+    /// Errors if `parent` does not exist.
     pub fn detach_children(&mut self, parent: Entity) -> Result<(), NoSuchEntity> {
         if !self.contains(parent) {
             return Err(NoSuchEntity);
@@ -97,17 +102,29 @@ impl World {
             let local = self.entities.get::<&Transform>(child).ok().map(|t| t.to_matrix());
             match local {
                 Some(local) => {
+                    let rewritten = Transform::from_matrix(&(parent_matrix * local));
                     if let Ok(mut t) = self.entities.get::<&mut Transform>(child) {
-                        *t = Transform::from_matrix(&(parent_matrix * local));
+                        *t = rewritten;
                     }
+                    self.snap_interpolation_history(child, rewritten);
                 }
                 None if self.entities.get::<&Children>(child).is_ok() => {
-                    let _ = self.entities.insert_one(child, Transform::from_matrix(&parent_matrix));
+                    let rewritten = Transform::from_matrix(&parent_matrix);
+                    let _ = self.entities.insert_one(child, rewritten);
+                    self.snap_interpolation_history(child, rewritten);
                 }
                 None => {}
             }
         }
         Ok(())
+    }
+
+    /// If `entity` opted into interpolation, store `current` so extraction does not blend a local
+    /// from a coordinate space this call just left.
+    fn snap_interpolation_history(&mut self, entity: Entity, current: Transform) {
+        if let Ok(mut mark) = self.entities.get::<&mut crate::Interpolate>(entity) {
+            mark.previous = Some(current);
+        }
     }
 
     /// World matrix of `entity` from the local transforms along its chain of parents (an entity
@@ -133,8 +150,9 @@ impl World {
     }
 
     /// Removes one component. Removing [`Parent`] unlinks the entity and leaves its local
-    /// [`Transform`] as it was. Removing [`Children`] detaches those children at their world
-    /// transform, the same as [`World::detach_children`]. Any other component is removed on its own.
+    /// [`Transform`] and interpolation history as they were. Removing [`Children`] detaches those
+    /// children at their world transform, the same as [`World::detach_children`]. Any other
+    /// component is removed on its own.
     pub fn remove<T: Component>(&mut self, entity: Entity) -> Result<(), ComponentError> {
         if TypeId::of::<T>() == TypeId::of::<Parent>() {
             return self.unlink_parent(entity);
@@ -187,6 +205,10 @@ impl World {
     // ---- hierarchy ------------------------------------------------------------------------
 
     /// Makes `child` a child of `parent`, removing it from any previous parent.
+    ///
+    /// The child's local [`Transform`] is not rewritten, and interpolation history is left as it
+    /// was. Both samples stay in parent-local space, so the entity moves with the new parent
+    /// instead of sliding from its old world pose.
     pub fn set_parent(&mut self, child: Entity, parent: Entity) -> Result<(), HierarchyError> {
         if child == parent || self.is_ancestor(child, parent) {
             return Err(HierarchyError::Cycle);
@@ -410,6 +432,47 @@ mod tests {
 
         w.despawn(parent).unwrap();
         assert!(w.contains(child) && w.contains(grandchild), "despawning the old parent no longer reaches them");
+    }
+
+    #[test]
+    fn detach_children_snaps_only_the_rewritten_childs_interpolation_history() {
+        let mut w = World::new();
+        let parent = w.spawn((Transform::from_xyz(10.0, 0.0, 0.0),));
+        let child_local = Transform::from_xyz(1.0, 0.0, 0.0);
+        let child = w.spawn_child(parent, (child_local, crate::Interpolate { previous: Some(child_local) }));
+        let grandchild_previous = Transform::from_xyz(0.0, 0.0, 0.0);
+        let grandchild_local = Transform::from_xyz(2.0, 0.0, 0.0);
+        let grandchild =
+            w.spawn_child(child, (grandchild_local, crate::Interpolate { previous: Some(grandchild_previous) }));
+
+        w.detach_children(parent).unwrap();
+
+        let rewritten = *w.component::<Transform>(child).unwrap();
+        assert!((rewritten.position.x - 11.0).abs() < 1e-3);
+        assert_eq!(w.component::<crate::Interpolate>(child).unwrap().previous, Some(rewritten));
+        assert_eq!(w.component::<crate::Interpolate>(grandchild).unwrap().previous, Some(grandchild_previous));
+        assert_eq!(*w.component::<Transform>(grandchild).unwrap(), grandchild_local);
+
+        let other = w.spawn((Transform::from_xyz(20.0, 0.0, 0.0),));
+        w.set_parent(child, other).unwrap();
+        assert_eq!(*w.component::<Transform>(child).unwrap(), rewritten);
+        assert_eq!(w.component::<crate::Interpolate>(child).unwrap().previous, Some(rewritten));
+
+        w.remove::<Parent>(child).unwrap();
+        assert_eq!(*w.component::<Transform>(child).unwrap(), rewritten);
+        assert_eq!(w.component::<crate::Interpolate>(child).unwrap().previous, Some(rewritten));
+    }
+
+    #[test]
+    fn detach_children_snaps_a_transform_less_grouping_child() {
+        let mut w = World::new();
+        let parent = w.spawn((Transform::from_xyz(7.0, 0.0, 0.0),));
+        let group = w.spawn_child(parent, (crate::Interpolate { previous: Some(Transform::IDENTITY) },));
+        let _leaf = w.spawn_child(group, (Transform::from_xyz(1.0, 0.0, 0.0),));
+        w.detach_children(parent).unwrap();
+        let rewritten = *w.component::<Transform>(group).unwrap();
+        assert!((rewritten.position.x - 7.0).abs() < 1e-4);
+        assert_eq!(w.component::<crate::Interpolate>(group).unwrap().previous, Some(rewritten));
     }
 
     #[test]

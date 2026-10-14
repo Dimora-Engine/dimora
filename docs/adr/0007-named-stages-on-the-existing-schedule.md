@@ -113,22 +113,43 @@ Unsupported, on purpose, in this first version:
 * **No history yet.** Until a fixed iteration has stored a previous local, extraction uses the current local. A newly created entity is not interpolated.
 * **Teleport.** A discontinuous move will slide across the gap. The supported teleport is to set the stored previous local equal to the current local at that moment. There is no distance threshold.
 * **Destruction.** A despawned entity is gone. There is nothing to interpolate.
-* **Variable-step writes.** The marker means the local is written in `fixed_update`. Writing it again in `update` makes the blend include that write. That is not supported.
+* **Variable-step writes.** The marker means the local is written in `fixed_update`. Writing it again in `update` makes the blend include that write. Fixed-update and variable-update systems still read `Transform`, the simulation value. Arbitrary mixing of fixed-step and variable-step motion on one marked entity is not supported, and there is no second blend mode for it.
 * **Rotation at 180 degrees.** `Quat::slerp` takes the shortest arc and is unstable exactly opposite. No special case.
 * **Scale that changes sign.** Lerp can pass through zero. No special case.
 * **Shear.** `Transform` is translation, rotation and scale. The blend is of those three, not of a general matrix.
+* **Hierarchy discontinuities.** History is a local transform, and previous and current must stay in the same space. `detach_children` rewrites each direct child's local into world space and sets that child's stored previous local equal to the rewritten local, so extraction does not blend parent-space numbers with world-space numbers. A transform-less grouping child that gains a world `Transform` is stored the same way. Descendants keep their own locals and history. `set_parent` does not rewrite the local, so previous and current stay parent-local offsets: the entity pops onto the new parent, and extraction is `new parent * lerp(previous local, current local)`, not a lerp of the old world pose and the new one. Reparenting an ancestor leaves the marked entity's own local space unchanged; it pops with that ancestor and keeps its local blend. Removing `Parent` leaves the local unchanged, so both samples stay the old numbers and are both read as root-local. Despawning a parent removes the subtree, so there is no history left to blend. `Interpolate::snap` remains the explicit teleport. There is no hierarchy-animation system.
+* **Non-finite values.** A non-finite previous local, current local, alpha, or blend result is not blended. Extraction uses the current local. Simulation values are left as they are.
 
 Parent and child: a marked parent contributes an interpolated local, and an unmarked child contributes
 its current local, so the child follows the smoothed parent. A marked child interpolates its own
-local on top of whatever its ancestors contributed. Neither case writes the simulation transforms.
+local on top of whatever its ancestors contributed. The render matrix is that product. It is not a
+lerp of two world matrices. Neither case writes the simulation transforms. A transform-less node
+stays identity, as in `propagate_transforms`.
 
-Entities without the marker, which is every entity in the current examples, extract exactly as they
-do at `6dbabb8`.
+`FixedTimestep::alpha` is the accumulator divided by the step, clamped to a finite value in
+`0.0..=1.0`. A zero-length step, a non-finite ratio, and the leftover dropped by the eight-step
+stall are `0.0`. After a normal step the accumulator is below one step, so alpha is in `[0, 1)`.
+
+The copy into the previous local is not a system. `Game::step` does it at the start of each fixed
+iteration, before user fixed systems, so `before` / `after` cannot move it. A command flushed at
+the end of that iteration is absent from the snapshot until a later iteration.
+
+If no entity has a stored previous local, extraction reads `GlobalTransform` and does not build
+another set of matrices. That matches blending every current local, once `propagate_transforms`
+has run. Entities without the marker, which is every entity in the current examples, therefore
+extract exactly as they do at `6dbabb8`.
+
+Sprites, meshes, tilemaps, lights, and the active camera consume one render matrix per entity.
+Billboard, upright, and fixed sprites, and perspective, orthographic, and isometric camera
+placements, all use that matrix. A camera is interpolated only when it or an ancestor has a stored
+previous local. An unmarked camera matches `GlobalTransform`. There is no separate camera-smoothing
+path, and the examples do not mark the camera. Depth sorting and depth testing are unchanged; they
+use the position in that matrix.
 
 ## Consequences and follow-up
 
 * M3a-2 implements the stages and ports the examples without moving their systems out of `update`.
-* M3a-5 implements `alpha`, the marker, the previous local, and the extract-time blend.
+* M3a-5 implements `alpha`, the `Interpolate` marker, the previous local, and the extract-time blend. It is committed locally and is not pushed. Skeletal interpolation, physics, and a general animation history are not part of it.
 * M3b, collision, and animation events attach to these stages. They do not add a scheduler.
 * This decision does not add pause, time scale, or a fixed-step elapsed clock.
 

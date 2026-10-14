@@ -7,7 +7,7 @@ use engine_math::Vec2;
 use engine_platform::WindowConfig;
 use engine_renderer::{extract_scene, AmbientLight, ExtractStats, MissingAssetWarnings, RenderScene};
 use engine_renderer_wgpu::{CacheStats, FrameStats, GpuContext, RenderError, SceneRenderer};
-use engine_world::{propagate_transforms, Schedule, ScheduleError, World};
+use engine_world::{propagate_transforms, snapshot_interpolation, Schedule, ScheduleError, World};
 
 use crate::diagnostics::{Diagnostics, StageDurations};
 
@@ -290,7 +290,9 @@ impl Game {
     ///
     /// Stages run in order: `time`, `loads`, `fixed_update` (zero to eight times), `update`,
     /// `animate`, `post_update`, `input_clear`. During each fixed iteration `Time::delta` is the
-    /// fixed step; it is restored to `dt` before `update`. `Time::elapsed_secs` and `Time::frame`
+    /// fixed step; it is restored to `dt` before `update`. At the start of each fixed iteration,
+    /// before fixed-update systems, a marked entity's current local is copied into
+    /// [`engine_world::Interpolate::previous`]. That copy is not a system. `Time::elapsed_secs` and `Time::frame`
     /// advance once per call. Input edges stay visible until `input_clear`. Extract and render
     /// are not part of this call.
     ///
@@ -331,6 +333,7 @@ impl Game {
         let started = Instant::now();
         for _ in 0..steps {
             self.world.resource_mut::<Time>().set_delta(fixed_dt);
+            snapshot_interpolation(&mut self.world);
             self.fixed_update.run(&mut self.world);
             self.world.flush_commands_in(Stage::FixedUpdate.name());
         }

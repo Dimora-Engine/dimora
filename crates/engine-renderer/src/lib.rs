@@ -15,6 +15,7 @@ pub mod camera;
 pub mod components;
 mod extract;
 pub mod frustum;
+mod interpolate;
 mod missing;
 pub mod projection;
 pub mod scene;

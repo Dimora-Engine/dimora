@@ -3,7 +3,8 @@
 Status: describes the working tree. The M6 spatial scene is commit `6dbabb8` (2026-10-14); that commit is
 the screenshot baseline for M3a. M3a-2 adds named stages on that code (ADR-0007). M3a-3 adds deferred
 commands and typed events (ADR-0008). M3a-4 adds the `log` crate and a `Diagnostics` resource
-(ADR-0012). Interpolation (ADR-0007) is not in the code. Profiling is not in the code. The M2 audit
+(ADR-0012). M3a-5 adds opt-in extract-only interpolation (ADR-0007); it is committed locally and is not
+pushed. Profiling is not in the code. The M2 audit
 date was 2026-10-13 at `4857158`.
 Everything outside the sections "Proposed future architecture" and "Proposed boundaries" exists in the
 repository today, except that "Cross-system requirements and risks" mixes requirements (what must hold) with
@@ -28,7 +29,7 @@ About 8,000 lines of Rust in nine library crates and two examples.
 |---|---|---|---|
 | `engine-math` | `Vec2/3/4`, `Quat`, `Mat3/4`, `Transform`, `Rect`. `f32`, column-major, left-handed | none | none |
 | `engine-core` | `Color`, `Time`, `FixedTimestep`, `Key`/`Input` state | math | none |
-| `engine-world` | `World` (wraps `hecs` + typed resources), sequential `Schedule`, `Parent`/`Children`, `GlobalTransform`, `propagate_transforms`, `Name`, `Visibility` | math | `hecs` |
+| `engine-world` | `World` (wraps `hecs` + typed resources), sequential `Schedule`, `Parent`/`Children`, `GlobalTransform`, `propagate_transforms`, `Interpolate`, `Name`, `Visibility` | math | `hecs` |
 | `engine-assets` | `AssetId`, `AssetKind`, `AssetHandle<T>`, `AssetManager`, `AssetSource` (filesystem, memory), `Texture`, `SpriteAsset`, `MeshData` | math | `image` (PNG), `bytemuck` |
 | `engine-renderer` | Backend-agnostic render model: `Camera`, projections, frustum, render components (`Sprite`, `Mesh`, `Material`, `TileMap`, `Light`, ...), `extract_scene` -> `RenderScene` | math, core, world, assets | none |
 | `engine-renderer-wgpu` | The wgpu backend: pipelines, GPU caches, instance buffers, window/offscreen presentation, WGSL shaders. Consumes `RenderScene` only | math, assets, renderer | `wgpu`, `pollster`, `bytemuck` |
@@ -147,7 +148,8 @@ logs once and the runner exits. Discarded events are counted and not logged.
 ```text
 time (advance Time, accumulate the fixed step)
   -> loads (AssetManager::process_loads)
-  -> fixed_update (0 to 8 times; Time::delta is the fixed step, then restored)
+  -> fixed_update (0 to 8 times; each iteration copies marked locals, then runs systems;
+     Time::delta is the fixed step, then restored)
   -> update (user systems; both examples stay here; they see the frame delta)
   -> animate (animate_system, frame delta)
   -> post_update (propagate_transforms; full pass, no dirty tracking)
@@ -156,6 +158,24 @@ time (advance Time, accumulate the fixed step)
 
 `elapsed` and `frame` advance once per `step`, not once per fixed iteration. Extract and render are
 not stages: `Game::extract()` then `WindowRenderer::render` (or `render_to_rgba` offscreen).
+
+`Interpolate` is an opt-in component (ADR-0007). The fixed loop copies that entity's current local
+`Transform` into `Interpolate::previous` before user fixed systems. `FixedTimestep::alpha` is a
+finite fraction in `0.0..=1.0` of the accumulator; the eight-step stall drops the leftover and alpha
+is then 0. Extraction blends `previous` toward the current local with `Transform::lerp` (translation
+and scale lerp, `Quat::slerp` on the shortest arc) and composes those locals up the parent chain.
+The result is a temporary render matrix. It is not stored, and it is not written to `Transform` or
+`GlobalTransform`. Fixed-update and variable-update systems therefore keep reading the simulation.
+An unmarked child of a marked parent uses its current local on the parent's blended local, so it
+follows the smoothed parent. A non-finite history, factor, or result uses the current local.
+`Interpolate::snap` sets the stored previous local to a transform the caller passes, which is how a
+teleport avoids sliding. `detach_children` does the same for each direct child whose local it
+rewrites into world space, and leaves descendants' history alone. `set_parent` and removing
+`Parent` leave both samples unchanged. A variable-step write of a marked local is included in the
+blend and is not a supported motion mode. With no stored previous anywhere, extraction reads
+`GlobalTransform` as before. Sprites, meshes, tilemaps, lights, and the active camera share that
+one matrix, for every sprite orientation and every camera placement. An unmarked camera matches
+`GlobalTransform`. Depth sorting is unchanged.
 
 Extraction (`extract_scene`): choose the active camera, build `CameraView`, build the frustum, gather
 lights (cap 16, directional first, rest nearest to camera), then per renderable: visibility check,
@@ -285,9 +305,8 @@ transform (D-28).
 **4. Tilemaps, physics and spatial queries.** One coordinate system: a tilemap is an entity with a
 `Transform`; tiles, colliders and queries are in world space and 3D, so objects at different Z do not
 collide. Colliders belong to the gameplay entity, not to a visual child. Simulation reads `Transform`
-(fixed step), never the interpolated render transform. Debug draw is the way to see all of it.
-*Gap:* nothing stores a previous or render transform (R-3). The approach is decided in ADR-0007
-(opt-in, extraction-only, never writes `Transform` or `GlobalTransform`) and is not built.
+(fixed step), never the interpolated render transform. The opt-in previous local for that render
+transform is `Interpolate` (ADR-0007, M3a-5). Debug draw is the way to see all of it.
 
 **5. Screen-space and world-space UI.** Two subsystems with a thin join: the UI runtime owns layout,
 interaction and a plain-data draw list; the backend draws it in an overlay pass. They share the device,
@@ -363,7 +382,7 @@ systems they touch. Each cites evidence from this audit.
 |---|---|---|---|---|
 | R-1 | **`RenderScene` is partitioned by primitive type** (meshes, cutout sprites, blended sprites), not by transparency class. A blended mesh, particle or skinned character has no place to sort against blended sprites | `scene.rs`; the pass order in `scene_renderer.rs`; meshes have no blend mode | Moderate to high: extraction, backend passes and tests for all renderables | Decide transparency classes in D-05 at the start of M5, before particles or blended meshes exist |
 | R-2 | **One camera, one target per frame**; `RenderScene` holds a single view | `extract.rs::active_camera`; KI-5 | High: shadows, editor viewports, render-to-texture and minimaps need a list of views | D-08 in M6 turns the scene into a list of camera passes; do not add features that assume one view |
-| R-3 | **No transform timeline.** `Transform` is current state only: no previous state for interpolation, no dirty tracking, a full propagation pass, and a one-frame latency rule for camera-dependent animation | `hierarchy.rs`; KI-9, KI-10, D-02 | Moderate; additive if done early (a `PreviousTransform` or render-transform stage), invasive once gameplay code depends on a single transform | Approach settled in ADR-0007 (opt-in previous local, blend only at extract). Not built. Dirty tracking stays out (ADR-0009) until a profile |
+| R-3 | **No transform timeline beyond one previous local.** `Transform` is current simulation state. `Interpolate` stores one previous local for opt-in extract interpolation. There is still no dirty tracking, propagation is still a full pass, and camera-dependent animation still has a one-frame latency rule | `interpolate.rs`, `hierarchy.rs`; KI-9, KI-10, D-02 | Moderate if a later system starts reading the render matrix as simulation | M3a-5 stores the previous local and blends only at extract. Dirty tracking stays out (ADR-0009) until a profile |
 | R-4 | **Asset identity and retention.** Handles are name hashes with no recoverable name, no reference counting, ids change on rename, and the collision guard is per type | `handle.rs`, `manager.rs`; D-16 | High once scene files, sheets or bundles exist | Decide D-16 before any persisted format (sheet descriptors in M8 are the first); keep names in the manager so handles can be serialized by name or id |
 | R-5 | **Mutation model.** Systems may still mutate the world directly. Resources are `RefCell` (a double borrow panics). Commands and events exist and follow ADR-0008 | `commands.rs`, `events.rs`, `resources.rs`; KI-9 | A second mutation path, or holding the command writer across a flush, reintroduces the alias | Built in M3a-3. Direct `spawn` remains for code that holds no query. No observers |
 | R-6 | **No format versioning policy.** Nothing persisted exists yet, which is the cheap moment to set one | no `serde`, no formats | Very high after the first release | Settled in ADR-0011. The first encoder writes a version; loaders return errors for unknown versions. No format in M3a |
@@ -392,7 +411,7 @@ These are settled; revisit only with a concrete problem.
 | ECS | `hecs` wrapped by `engine_world::World` | Small archetype ECS with no app framework; gameplay goes through our `World`. **Caveat (R-7): the wrapper does not hide `hecs` today** (`World.entities` is public, `query`/`get` return hecs types, `Entity` is hecs's). ADR-0010 does not wrap `hecs` in M3a; it stops new public `hecs` types and leaves the existing leak until M9. `bevy_ecs` is more capable (scheduling, change detection) but would shape the engine around its conventions. Cost: we build scheduling and events ourselves; change tracking waits on a profile (ADR-0009) |
 | Simulation threading (D-44) | The calling thread owns `World` for the whole step; other threads see `Send` snapshots only | ADR-0006. Already how the code works. Parallel gameplay systems are a later decision |
 | Change detection (D-02) | None until a recorded profile | ADR-0009, Provisional. The full propagation pass stays. The interpolation previous-local is not a dirty bit |
-| Scheduling (D-01) | Named stages on the existing `Schedule`, `before` / `after` by system name, fixed-step delta restored after `fixed_update` | ADR-0007, implemented in M3a-2. One thread (ADR-0006). Interpolation is not built |
+| Scheduling (D-01) | Named stages on the existing `Schedule`, `before` / `after` by system name, fixed-step delta restored after `fixed_update`, opt-in extract interpolation | ADR-0007. Stages in M3a-2. Interpolation in M3a-5 (committed locally, not pushed). One thread (ADR-0006) |
 | Commands and events (D-10) | One FIFO command queue flushed per stage run, including each fixed iteration. Typed events become visible at the next stage boundary and clear after `input_clear` | ADR-0008, implemented in M3a-3. No observers. A fixed iteration does not see events from the same stage |
 | Logging (D-21) | The `log` crate, a stderr logger only when none is installed, and a `Diagnostics` resource | ADR-0012, implemented in M3a-4. Not a profiler. Profiling stays in M20 |
 | Graphics | `wgpu` | One API over Vulkan/Metal/DX12 |
@@ -414,10 +433,6 @@ Direction only; none of this exists in the code. Where an ADR is cited, the deci
 implementation is still a later task. Each item is a roadmap milestone with its own acceptance
 criteria. Open decisions stay in [DECISIONS.md](DECISIONS.md).
 
-* **Interpolation** (M3a-5, decided, not built). Stages, commands and events are in "Rendering flow"
-  (ADR-0007, ADR-0008). Still to build, from the interpolation section of ADR-0007: opt-in extract-only
-  interpolation that never writes `Transform` or `GlobalTransform`. Screenshot baseline remains commit
-  `6dbabb8`.
 * **Scenes as units** (M4): scene membership, load/unload, a component registry as the base for
   serialization and script exposure.
 * **Material assets and sampler/colour-space-aware textures, sub-rectangle texture updates** (M5).
