@@ -3,8 +3,9 @@
 Status: describes the working tree. The M6 spatial scene is commit `6dbabb8` (2026-10-14); that commit is
 the screenshot baseline for M3a. M3a-2 adds named stages on that code (ADR-0007). M3a-3 adds deferred
 commands and typed events (ADR-0008). M3a-4 adds the `log` crate and a `Diagnostics` resource
-(ADR-0012). M3a-5 adds opt-in extract-only interpolation (ADR-0007); it is committed locally and is not
-pushed. Profiling is not in the code. The M2 audit
+(ADR-0012). M3a-5 adds opt-in extract-only interpolation (ADR-0007, `523f553`). M3a-6 reviews the
+public re-exports (ADR-0010) and adds no new `hecs`, `wgpu` or `winit` type. M3a is complete locally
+and is not pushed. Profiling is not in the code. The M2 audit
 date was 2026-10-13 at `4857158`.
 Everything outside the sections "Proposed future architecture" and "Proposed boundaries" exists in the
 repository today, except that "Cross-system requirements and risks" mixes requirements (what must hold) with
@@ -327,8 +328,8 @@ derived asset data in a component), unloads are driven by scene unload (M4) and 
 use the same surface: the component registry (names, visibility, field access), commands applied at
 stage boundaries, events, and the action layer. An editor viewport needs camera-to-texture (D-08) and
 picking through the collision/ray queries, not through GPU readback. The surface is listed in
-`docs/API_SURFACE.md` at M9 (not yet written). *Gap:* none of registry, commands or events exists. Command and event
-semantics are settled in ADR-0008 and are not built.
+`docs/API_SURFACE.md` at M9 (not yet written). *Today:* commands and events exist (M3a-3, ADR-0008).
+The component registry and the action layer do not.
 
 **8. Serialization and hot reload shape foundational data.** To be serializable and reloadable,
 components must be plain data with no GPU objects, borrowed references or cached derived values; every
@@ -340,15 +341,23 @@ at a stage boundary. *Today:* components built so far satisfy the plain-data rul
 That is R-4.
 
 **9. Which public APIs must stay stable, which stay internal.** The three tiers are the rule
-([ADR-0010](adr/0010-three-tier-public-api.md), D-45). The inventory of which items sit in which tier
-is still M9's `docs/API_SURFACE.md`, which is not written. M3a adds no public `hecs` type and does not
-wrap `hecs`. Existing `winit` and `wgpu` re-exports stay until that list:
+([ADR-0010](adr/0010-three-tier-public-api.md), D-45). M3a-6 reviewed the re-exports after M3a-5
+(`523f553`). The item-by-item inventory is still M9's `docs/API_SURFACE.md`, which is not written.
+M3a adds no public `hecs` type, no new `hecs` re-export, and no `wgpu` or `winit` type on a new
+public interface. It does not wrap `hecs`. Existing `winit` and `wgpu` re-exports stay.
+
+Contract types M3a added, all plain data: `Interpolate`; `FixedTimestep::alpha`; `CommandWriter`,
+`CommandError` and `CommandFailure`; caller-defined events through `World::send` and `World::events`;
+`Diagnostics` and `StageDurations`. `snapshot_interpolation` is the copy the frame loop runs. It is
+public on `engine-world` because `Game` is another crate, and it is not in the prelude.
+`CommandWriter::spawn` and `insert` take `hecs::DynamicBundle`, the same trait `World::spawn` already
+takes. That is the existing storage leak, not a new `hecs` type. The render-pose walk is `pub(crate)`.
 
 | Tier | Contents | Change rule |
 |---|---|---|
-| **Contract** | Gameplay-facing components (`Transform`, `Name`, `Visibility`, `Camera`, `Sprite`, `Mesh`, `Light` as they stabilise), asset handles, actions, events, commands, the script API, every on-disk format | Changed only through a recorded decision and, for formats, a version bump with migration |
+| **Contract** | Gameplay-facing components (`Transform`, `Name`, `Visibility`, `Camera`, `Sprite`, `Mesh`, `Light`, `Interpolate`), asset handles, commands, events, `Diagnostics` / `StageDurations`, `FixedTimestep::alpha`, and, once they exist, actions, the script API, and every on-disk format | Changed only through a recorded decision and, for formats, a version bump with migration |
 | **Backend seam** | `RenderScene`, the future UI draw list, `Pose` | Changed with all consumers in one commit; documented |
-| **Internal** | `hecs` types, `World.entities`, schedule internals, `wgpu`/`winit` re-exports, `SceneRenderer` internals, extraction helpers | Free to change; not named in docs or examples as supported |
+| **Internal** | `hecs` types (`Entity`, `EntityRef`, `Query`, `QueryBorrow`, `World.entities`, `DynamicBundle` on spawn and command insert), schedule internals, `wgpu`/`winit` re-exports, `SceneRenderer` internals, extraction helpers including the render-pose walk | Free to change; not named in docs or examples as supported |
 
 **10. One world, many camera configurations** ([ADR-0004](adr/0004-one-spatial-world-many-camera-configurations.md);
 confirmed owner direction; mechanism decisions accepted or amended 2026-10-13. The test scene demonstrates six

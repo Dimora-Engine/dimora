@@ -50,12 +50,25 @@ goal of M3a.
 ## Consequences and follow-up
 
 * M3a-6 is this rule, plus a review that the M3a commits did not add a public `hecs` type. The review
-  happens with the code, so this ADR is the M3a-1 half of that task.
+  is recorded below. M9 still owns the inventory.
 * M9 writes `docs/API_SURFACE.md` and decides, item by item, what happens to the leaks.
-* Commands and events (ADR-0008), when they land, are contract types. Their fields are plain data.
+* Commands and events (ADR-0008) are contract types. Their fields are plain data. `Interpolate`,
+  `Diagnostics` and `StageDurations` are contract types as well.
 
 ## Evidence and revisit conditions
 
 The re-exports are in `crates/engine-world/src/lib.rs`, `crates/engine-platform/src/lib.rs` and
 `crates/engine-renderer-wgpu/src/lib.rs`. Reopen only if M9's inventory finds a contract that cannot
 be expressed without a public `hecs` type, and names that type.
+
+### M3a-6 review (2026-10-14)
+
+Reviewed after M3a-5 (`523f553`). No public signature was removed or renamed.
+
+* No new public `hecs` type and no new `hecs` re-export. `pub use hecs::{Entity, EntityRef, Query, QueryBorrow}` is unchanged. `Entity` remains in the engine prelude. `World.entities` remains a public `hecs::World`.
+* `CommandWriter::spawn` and `insert` take `hecs::DynamicBundle`, the same trait `World::spawn` already takes. It was not wrapped.
+* No `wgpu` or `winit` type appears on `Interpolate`, `snapshot_interpolation`, `Diagnostics`, `StageDurations`, `CommandWriter`, `CommandError`, `CommandFailure`, or `World::send` / `World::events`. `FixedTimestep::alpha` is a method on the existing `engine-core` type.
+* `pub use wgpu` and `pub use winit` stay. The facade still re-exports `engine_platform` and `engine_renderer_wgpu`, which is how those crates remain reachable. They were not removed.
+* Contract additions, in the prelude: `Interpolate`, `FixedTimestep`, `CommandWriter`, `CommandError`, `CommandFailure`, `Diagnostics`, `StageDurations`. `snapshot_interpolation` is the frame-loop copy. It is public on `engine-world` and not in the prelude. The render-pose walk is `pub(crate)`.
+* Names match the rest of the API: `snap` for a teleport, `alpha` for the blend factor, `CommandError` for one failure and `CommandFailure` for that failure plus its stage. The new types document the unsupported variable-step mix and the hierarchy cases.
+* `docs/API_SURFACE.md` is still M9. This review does not close the leak.

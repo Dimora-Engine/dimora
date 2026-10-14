@@ -46,7 +46,8 @@ impl Interpolate {
 ///
 /// The frame loop calls this at the start of each fixed iteration, before fixed-update systems.
 /// A later iteration in the same frame overwrites `previous`, leaving the local from before the
-/// last iteration.
+/// last iteration. It is public so that loop, in another crate, can call it. It is not part of
+/// the engine prelude.
 pub fn snapshot_interpolation(world: &mut World) {
     for (_, (local, interpolate)) in world.entities.query::<(&Transform, &mut Interpolate)>().iter() {
         interpolate.previous = Some(*local);

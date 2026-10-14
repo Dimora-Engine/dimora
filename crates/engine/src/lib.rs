@@ -38,7 +38,12 @@ pub use diagnostics::{Diagnostics, StageDurations};
 pub use game::{Game, GameConfig, RenderStats, Stage, Viewport, WindowControl};
 pub use logging::install_stderr_logger;
 
-/// Everything a typical game needs in scope.
+/// Gameplay types a typical game needs in scope.
+///
+/// This is the contract surface (ADR-0010): components, asset handles, commands, diagnostics and
+/// the frame types. `Entity` is the existing `hecs` id and stays until M9. `RenderScene`, and the
+/// `wgpu` and `winit` re-exports on [`crate::renderer_wgpu`] and [`crate::platform`], are not in
+/// this module.
 pub mod prelude {
     pub use crate::{Diagnostics, Game, GameConfig, RenderStats, Stage, StageDurations, Viewport, WindowControl};
     pub use engine_animation::{

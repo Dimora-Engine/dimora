@@ -46,7 +46,7 @@ without it.
 | **Core runtime** | | | | |
 | 1 | Math, conventions, transforms | Working | 22 tests; `f32`; shear not representable | done |
 | 2 | ECS, world, hierarchy | Working, thin | `hecs` wrapper; commands and events included (ADR-0008). No change detection (D-02 provisional, not built) | M3, M4 |
-| 3 | Frame loop and scheduling | Partial | Named stages (M3a-2) and opt-in extract-only `Interpolate` (M3a-5, committed locally, not pushed). `FixedTimestep::alpha` is finite in `0..=1`. The blend does not write `Transform`. M3a-6 is still open | M3 |
+| 3 | Frame loop and scheduling | Working | Named stages, deferred commands, typed events, logging, diagnostics, and opt-in extract-only `Interpolate` (M3a, local, not pushed). `FixedTimestep::alpha` is finite in `0..=1`. The blend does not write `Transform`. The public-API review (M3a-6) added no new `hecs` type. Limits: no pause or time scale, no variable-step mix on a marked entity, no parallel systems | M3 |
 | 4 | Events and deferred commands | Working | FIFO commands flush per stage run and per fixed iteration. Typed events are visible to later stages and cleared after `input_clear` (ADR-0008). Reading copies the buffer (`T: Clone`). No observers | M3 |
 | 5 | Platform, window, timing | Working, narrow | winit loop, resize, exit; no DPI, fullscreen, vsync, multi-window | M3, M10 |
 | 6 | Input and action mapping | Partial | Keys/mouse state with edges, `axis()`; no actions, gamepad, text | M3 |
@@ -157,9 +157,9 @@ Missing from the original category list and now tracked: **save games** (34), **
   writes of a marked local (the blend includes them; fixed and variable systems still read
   `Transform`), rotation exactly opposite (`Quat::slerp` is unstable there), scale sign changes
   (they pass through zero), shear, and skeletal or physics interpolation.
-* **Required.** A headless `step` exists. M3a-6 (re-export review) is still open, so the frame-model
-  milestone is not finished.
-* **Planned.** Nothing further in M3a-5. **Depends on.** D-01 (implemented), D-02, D-10, D-44.
+* **Required.** A headless `step` exists. M3a-6 reviewed the re-exports (ADR-0010). The frame-model
+  slice is complete locally and is not pushed. M3b (input and platform) is not started.
+* **Planned.** Nothing further in M3a. **Depends on.** D-01 (implemented), D-02, D-10, D-44.
   **Integration.** Collision (fixed stage), animation (animate stage, camera read from previous
   propagation, D-31), UI (its own stage), scripts (one stage), scenes (apply at a boundary).
 * **Performance.** Sequential is the rule (ADR-0006) until a measured gameplay workload cannot meet its budget on one thread. The render-matrix walk runs only when some entity has a stored previous local.

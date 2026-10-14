@@ -57,9 +57,9 @@ first" tiers in [docs/DECISIONS.md](docs/DECISIONS.md#what-to-resolve-first).
 * **Now: close M2.** All numbered tasks are done (T1 to T3). Two items remain, both blocked on the owner
   rather than on code: licence files (KI-17, waiting for the owner to confirm a licence) and owner confirmation of GitHub as host (CI itself is done on the PR branch, see TASKS.md). Neither blocks
   M3, so M2 is closed for planning purposes once they are listed as carried items in TASKS.md.
-* **Now: M3a, the frame model** (see M3 below). Design decisions are recorded (2026-10-14). Named stages,
-  commands and events, logging, and opt-in interpolation are implemented locally and are not pushed.
-  The public-API review (M3a-6) is not started. It is first because
+* **Now: M3a is complete locally and is not pushed** (see M3 below). Named stages, commands and events,
+  logging, opt-in interpolation, and the public-API review are done. M3b is next and is not started.
+  M3a was first because
   collision, animation, scenes, UI and scripting all hang off its stages, commands and events, and because
   three high-cost risks (R-5, R-7, R-8) are cheapest to settle before more systems exist.
 * **Then, in order:** M3b input and platform; M4 scenes and the registry shape; M5 materials and textures;
@@ -202,7 +202,7 @@ Each row is a capability nobody builds yet whose *shape* constrains work in the 
 | UI in screen and world space | M10 | Window scale factor, sub-rectangle texture update and an overlay pass; M3b and M5 carry the prerequisites | R-12, KI-24, KI-25; D-24, D-37 to D-39 |
 | Three character representations | M8, M11, M12 | One gameplay entity with a replaceable visual subtree; gameplay must not name rendering types | D-28 to D-34 |
 | Save games | M18 to M24 | Not a scene file; needs its own versioned format and a state store shaped alongside the script API | D-46, D-47 |
-| Public API stability | M9 | Every re-exported type is a promise; stop adding public `hecs` types now | R-7; D-45 |
+| Public API stability | M9 | Every re-exported type is a promise. M3a-6 stopped adding public `hecs` types; the inventory is still M9 | R-7; D-45 |
 | The editor (viewport, inspector, undo, play-in-editor), behind a stability gate | M22 | The runtime stays free of editor state; components must be named, plain, serializable data with field metadata; mutations go through undoable commands; entities and assets need stable ids; the editor's viewport is the real renderer, so it needs camera-to-texture and picking through queries | ARCHITECTURE.md requirement 7 and R-15; D-08, D-10, D-18, D-20 |
 | Gamepad, localisation, accessibility | later | Action maps and text and layout decisions can foreclose them if they assume keyboards, ASCII or fixed pixels | CAPABILITIES.md, additional categories |
 | Cross-platform determinism | M9 | Replay equality is promised on one platform only; platform trigonometry can differ | R-9 |
@@ -270,18 +270,16 @@ input and platform layer sufficient for a real game. Delivered in **two slices**
 and verified: M3a (the frame model; the immediate milestone) and M3b (input and platform). M3b may start
 once M3a's stage and event API is merged; it does not need M3a's interpolation.
 
-**Status.** In progress. M3a-1 through M3a-4 are done. M3a-3 is committed locally (`cd802f0`) and is not
-pushed. M3a-4 (logging and diagnostics) is committed locally (`5c4fd97`) and is not pushed. M3a-5
-(fixed-step interpolation) is committed locally and is not pushed. M3a-6 and all of M3b are not
-started. Profiling is not in the code. The rendering regression baseline is commit `6dbabb8`. M3a is
-not complete.
+**Status.** M3a is complete locally and is not pushed. M3a-3 is `cd802f0`, M3a-4 is `5c4fd97`, M3a-5 is
+`523f553`. M3a-6 is the public-API review in this documentation. All of M3b is not started. Profiling
+is not in the code. The rendering regression baseline is commit `6dbabb8`.
 
 **Prerequisites.** M2 (closed for planning). Decisions recorded before implementation code, 2026-10-14:
 D-44 ([ADR-0006](docs/adr/0006-simulation-stays-single-threaded.md)), D-01
 ([ADR-0007](docs/adr/0007-named-stages-on-the-existing-schedule.md)), D-10
 ([ADR-0008](docs/adr/0008-commands-and-per-frame-events.md)), D-02
 ([ADR-0009](docs/adr/0009-no-change-detection-until-measured.md), Provisional: none until profiled), D-45
-([ADR-0010](docs/adr/0010-three-tier-public-api.md), rule only), D-47
+([ADR-0010](docs/adr/0010-three-tier-public-api.md), rule and M3a-6 review), D-47
 ([ADR-0011](docs/adr/0011-persisted-formats-carry-a-version.md)), D-21 logging
 ([ADR-0012](docs/adr/0012-logging-uses-the-log-crate.md)). Profiling stays open for M20.
 
@@ -308,8 +306,9 @@ D-44 ([ADR-0006](docs/adr/0006-simulation-stays-single-threaded.md)), D-01
    local, copied at the start of each fixed iteration. Extraction blends it toward the current local
    and does not write `Transform` or `GlobalTransform` (R-3, ADR-0007). Entities that do not opt in,
    including both examples, are unchanged.
-6. Stop adding public `hecs` types. The three-tier rule is already in ARCHITECTURE.md (ADR-0010). This
-   task reviews the `engine` re-exports against that rule. The full list waits for M9.
+6. Stop adding public `hecs` types — **done (M3a-6).** The three-tier rule is ADR-0010. The review
+   found no new public `hecs` type, no new `hecs` re-export, and no `wgpu` or `winit` type on a new
+   public interface. Existing leaks stay. The full list waits for M9.
 
 **Dependencies.** D-44, D-01, D-10, D-02, D-45, D-47, D-21.
 
@@ -321,8 +320,8 @@ D-44 ([ADR-0006](docs/adr/0006-simulation-stays-single-threaded.md)), D-01
   frame (test).
 - A fixed-step entity moved at 60 Hz with a 144 Hz render rate produces monotonically increasing
   interpolated positions in successive extracted scenes (test through `Game::step` + `extract`), and a
-  system reading `Transform` in the fixed stage sees the un-interpolated value. Met by M3a-5,
-  committed locally and not pushed. M3a stays open until M3a-6.
+  system reading `Transform` in the fixed stage sees the un-interpolated value. Met by M3a-5
+  (`523f553`): `sixty_hertz_motion_sampled_at_one_hundred_forty_four_hertz_stays_behind_and_smooth`.
 - A failed asset load produces exactly one log record containing the asset name (test with a capturing
   logger).
 - Existing behaviour is unchanged: `scripts/check.sh` passes and the headless screenshots of

@@ -15,13 +15,11 @@ because they wait on the owner, not on code: licence files (KI-17) and CI (D-22,
 
 **M6 is in progress for one task.** The camera-configuration test scene was requested and is verified (below). The rest of M6 is not started. Milestone order is unchanged.
 
-**M3a, the frame model, is in progress.** Full scope and acceptance criteria:
-[ROADMAP.md](ROADMAP.md#m3-frame-model-input-and-platform-in-progress). M3a-1 through M3a-4 are done
-(evidence below). M3a-2 is commit `312a05f`. Lifecycle anchors are sealed on top of that commit
-(`ecf4fa1`, local, not pushed). M3a-3 is commit `cd802f0`, local, not pushed. M3a-4 (logging and
-diagnostics) is commit `5c4fd97`, local, not pushed. M3a-5 (fixed-step interpolation) is committed
-locally and is not pushed. M3a-6 is not started. M3a is not complete. The
-rendering regression baseline is commit `6dbabb8`.
+**M3a, the frame model, is complete locally and is not pushed.** Full scope and acceptance criteria:
+[ROADMAP.md](ROADMAP.md#m3-frame-model-input-and-platform-in-progress). M3a-2 is commit `312a05f`.
+Lifecycle anchors are `ecf4fa1`. M3a-3 is `cd802f0`. M3a-4 is `5c4fd97`. M3a-5 is `523f553`. M3a-6
+is the public-API review recorded below. M3b is not started. The rendering regression baseline is
+commit `6dbabb8`.
 
 ## Completed work
 
@@ -378,8 +376,8 @@ Done on macOS arm64 (2026-10-13); see "Task T3 results" for the evidence and its
 
 Ordered by dependency. Each task is small enough to verify on its own. The milestone-level acceptance
 criteria (ordering test, command and event tests, interpolation test, logging test, byte-identical example
-screenshots against `6dbabb8`, ADRs) are in ROADMAP.md under M3a and are not repeated here. M3a-6 is the
-next task. M3a is not complete.
+screenshots against `6dbabb8`, ADRs) are in ROADMAP.md under M3a and are not repeated here. M3a is
+complete locally and is not pushed. M3b is not started.
 
 | Task | Content | Prerequisite | Done when |
 |---|---|---|---|
@@ -388,7 +386,7 @@ next task. M3a is not complete.
 | M3a-3 | `Commands` flushed at stage boundaries; typed event channels cleared per frame (KI-9) | M3a-2 | **Done.** Committed locally, not pushed. Evidence under "M3a-3 results" |
 | M3a-4 | Logging facade; asset failure, skipped renderable and surface loss each log once with the cause named (R-13). `Diagnostics` resource | M3a-1 | **Done.** Committed locally, not pushed. Evidence under "M3a-4 results" |
 | M3a-5 | Fixed-step alpha exposed and opt-in transform interpolation (R-3) | M3a-2 | **Done, committed locally, not pushed.** 60 Hz fixed versus 144 Hz render test; simulation still reads the un-interpolated `Transform`. Evidence under "M3a-5 results" |
-| M3a-6 | No new public `hecs` types. The three-tier rule is already in ARCHITECTURE.md (ADR-0010, from M3a-1). This task reviews the `engine` re-exports. **Not started** | M3a-1 | `engine/src/lib.rs` re-exports reviewed; no new public `hecs` type added by M3a |
+| M3a-6 | No new public `hecs` types. Review the `engine` re-exports against ADR-0010 | M3a-1 | **Done, committed locally with this review, not pushed.** No new public `hecs` type, no new `hecs` re-export, no `wgpu` or `winit` type on a new public interface. Evidence under "M3a-6 results" |
 
 M3b (input actions, scale factor, vsync, fullscreen) starts after M3a-3. M4, M5 and M6 are the next
 milestones; M7 (collision) and M8 (sprite sheets) follow M3a, M4, M5 and M6, then M9 (stable character and
@@ -506,7 +504,7 @@ CPU step time in the window title they already update.
 
 ## M3a-5 results (2026-10-14)
 
-Opt-in fixed-step interpolation at extraction. Committed locally, not pushed. M3a-6 is still open, so M3a is not complete.
+Opt-in fixed-step interpolation at extraction. Commit `523f553`, local, not pushed.
 
 **API.** `Interpolate` on an entity stores `previous: Option<Transform>`. `Interpolate::snap` sets that previous local to the transform the caller passes. `snapshot_interpolation` copies the current local into `previous` for every entity that has both. `Game::step` calls it at the start of each fixed iteration, before fixed-update systems. It is not a schedulable system. `FixedTimestep::alpha` is the accumulator divided by the step, clamped to a finite value in `0.0..=1.0`. A zero step and the eight-step stall leftover are `0.0`.
 
@@ -525,6 +523,20 @@ Opt-in fixed-step interpolation at extraction. Committed locally, not pushed. M3
 **Repository check.** `scripts/check.sh` on 2026-10-14, after the hierarchy review, exit 0. All 4 steps: fmt, clippy `-D warnings`, `cargo test --workspace` with `DIMORA_REQUIRE_GPU=1` (the interpolation GPU test ran, none skipped), rustdoc `-D warnings`. `cargo test --workspace -- --list` reports **237 tests**. New tests against M3a-4: alpha across zero, one, and many steps and the stall cap; translation, quaternion, and scale blends, including a short arc near 180 degrees, a scale sign change, and a non-finite history; parent-child composition; teleport via `snap`; `detach_children` snapping the rewritten child and leaving the grandchild's blend; `set_parent` and removing `Parent` keeping both locals; reparenting an interpolated ancestor; despawn of a parent; spawn, despawn, and gaining or losing the marker; fixed-update and variable-update reads; the 60 Hz motion sampled at 144 Hz; and a GPU frame where an interpolated sprite and mesh move while an unmarked sprite does not.
 
 **GPU.** `interpolated_sprites_and_meshes_move_on_the_gpu_between_fixed_steps` rendered 64×64 frames. At alpha 0 the marked sprite and mesh sit on the previous pose. After a half step with no new fixed update they move toward the simulation pose and stay short of an unmarked sprite that was already there. A perspective camera on the same world keeps that separation. Extraction of the mesh matrix was checked in the same test, and the simulation transforms were unchanged after `render_to_rgba`.
+
+## M3a-6 results (2026-10-14)
+
+Public-API review against ADR-0010. No signature was removed or renamed. `docs/API_SURFACE.md` was not written.
+
+**Contract.** `Interpolate`, `FixedTimestep::alpha`, `CommandWriter`, `CommandError`, `CommandFailure`, caller-defined events (`World::send`, `World::events`), `Diagnostics` and `StageDurations`. These are plain data or methods on plain data. The ones a game imports are in `engine::prelude`.
+
+**Not in the prelude.** `snapshot_interpolation` is public on `engine-world` because `Game::step` lives in another crate. The render-pose walk (`RenderPoses`) is `pub(crate)` in `engine-renderer`.
+
+**Internal, unchanged.** `pub use hecs::{Entity, EntityRef, Query, QueryBorrow}` and `World.entities`. `Entity` stays in the prelude. `CommandWriter::spawn` and `insert` take `hecs::DynamicBundle`, the same trait `World::spawn` already takes. `pub use wgpu` and `pub use winit` stay, and the facade still re-exports those crates. None of the new M3a types names `wgpu` or `winit`.
+
+**Acceptance, re-checked against the suite that `scripts/check.sh` runs.** Ordering and cycles: `stages_run_in_order_and_builtins_stay_at_their_anchors`, `a_cycle_is_rejected_and_run_keeps_the_previous_order`. Commands: `a_queued_spawn_stays_invisible_until_the_stage_ends`. Events: `events_cross_stage_boundaries_and_not_fixed_iterations_or_the_next_frame`. Interpolation: the 60 Hz / 144 Hz test named in ROADMAP, plus the hierarchy tests in M3a-5. Logging: `a_failed_load_warns_once_per_occurrence_and_names_the_asset`. Screenshots: the four images under M3a-5, compared with `cmp -s` to `6dbabb8` after the hierarchy snap. This review did not change extraction, so those images were not re-rendered. ADRs 0006 through 0012 exist. D-02 stays deferred to profiling (ADR-0009).
+
+**Repository check.** `scripts/check.sh` on 2026-10-14, after these comments, exit 0. All 4 steps passed, including rustdoc `-D warnings`. `cargo test --workspace -- --list` still reports 237 tests. The GPU tests were not skipped.
 
 ## Planned systems and their state
 

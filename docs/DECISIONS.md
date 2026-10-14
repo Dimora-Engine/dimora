@@ -118,7 +118,7 @@ the risk register). **Prototype where the answer depends on a measurement; do no
 | D-20 | Editor technology | M22 | M22 | Open |
 | D-21 | Logging and profiling crates | **Logging: M3**; profiling: M20 | M3 and every error path; M20, M23 | Logging decided, [ADR-0012](adr/0012-logging-uses-the-log-crate.md) (2026-10-14). Implemented in M3a-4 (committed locally, not pushed). Profiling still Open (M20) |
 | D-44 | Threading and `Send`/`Sync` model | M3 (design note) | M3, M17, M18, M23 | Decided, [ADR-0006](adr/0006-simulation-stays-single-threaded.md) (2026-10-14). Matches the code |
-| D-45 | Public API tiers; how much of `hecs`, `winit`, `wgpu` is public | M3 (rule), M9 (list) | M9, M18, M22 | Decided (the rule), [ADR-0010](adr/0010-three-tier-public-api.md) (2026-10-14). The list is still M9 |
+| D-45 | Public API tiers; how much of `hecs`, `winit`, `wgpu` is public | M3 (rule), M9 (list) | M9, M18, M22 | Decided (the rule), [ADR-0010](adr/0010-three-tier-public-api.md) (2026-10-14). M3a-6 reviewed the M3a additions. The list is still M9 |
 | D-46 | Save games and persisted game state | M18 (shape), M19 | M18, M19, M24 | Open |
 | D-47 | Versioning policy for every persisted format | Before M17 | M17, M19, M21, D-46 | Decided, [ADR-0011](adr/0011-persisted-formats-carry-a-version.md) (2026-10-14). No format exists yet |
 
@@ -596,7 +596,11 @@ if a measured gameplay workload cannot meet its budget on one thread.
 ### D-45 Public API tiers
 
 **Decided 2026-10-14: [ADR-0010](adr/0010-three-tier-public-api.md).** Three tiers: contract, backend
-seam, and internal. M3a adds no public `hecs` type and does not wrap `hecs`. Existing `winit` and
+seam, and internal. M3a-6 reviewed the re-exports after M3a-5 (`523f553`). M3a adds no public `hecs`
+type, no new `hecs` re-export, and no `wgpu` or `winit` type on a new public interface. It does not
+wrap `hecs`. `CommandWriter` uses the existing `hecs::DynamicBundle` trait. Contract additions are
+`Interpolate`, `FixedTimestep::alpha`, commands, events, `Diagnostics` and `StageDurations`.
+`snapshot_interpolation` is public on `engine-world` and not in the prelude. Existing `winit` and
 `wgpu` re-exports stay until M9 writes `docs/API_SURFACE.md`. The leak is still in the code.
 
 ### D-46 Save games and persisted game state
