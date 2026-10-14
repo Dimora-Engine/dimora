@@ -17,8 +17,8 @@ because they wait on the owner, not on code: licence files (KI-17) and CI (D-22,
 
 **M3a, the frame model, is in progress.** Full scope and acceptance criteria:
 [ROADMAP.md](ROADMAP.md#m3-frame-model-input-and-platform-in-progress). M3a-1 and M3a-2 are done
-(evidence below). M3a-3 has not started. The rendering regression baseline is commit `6dbabb8`.
-M3a-2 is in the working tree and is not committed.
+(evidence below). M3a-2 is commit `312a05f`. Lifecycle anchors are sealed on top of that commit.
+M3a-3 has not started. The rendering regression baseline is commit `6dbabb8`.
 
 ## Completed work
 
@@ -371,17 +371,17 @@ Done on macOS arm64 (2026-10-13); see "Task T3 results" for the evidence and its
 - The capability audit table now lives in [docs/CAPABILITIES.md](docs/CAPABILITIES.md); update its rows in
   the same commit as any change that moves a system's status.
 
-## Next tasks: M3a, the frame model (design done; implementation not started)
+## Next tasks: M3a, the frame model
 
 Ordered by dependency. Each task is small enough to verify on its own. The milestone-level acceptance
 criteria (ordering test, command and event tests, interpolation test, logging test, byte-identical example
-screenshots against `6dbabb8`, ADRs) are in ROADMAP.md under M3a and are not repeated here. M3a-2 is the
-next task. It does not start until the owner says so.
+screenshots against `6dbabb8`, ADRs) are in ROADMAP.md under M3a and are not repeated here. M3a-3 is the
+next task.
 
 | Task | Content | Prerequisite | Done when |
 |---|---|---|---|
 | M3a-1 | **Design note, prototype and ADRs** for D-44, D-01, D-10, D-45, D-47, D-21, and D-02 ("deferred to profiling" is acceptable). A throwaway prototype of stages plus a command buffer is run against the `RefCell` resources (KI-9). No engine code is merged | Owner approval | **Done 2026-10-14.** Evidence under "M3a-1 results". The prototype is not in the tree |
-| M3a-2 | Named stages and `before`/`after` ordering; `Game::step` stops hard-wiring engine stages (KI-10) | M3a-1 | **Done.** Evidence under "M3a-2 results". Not committed |
+| M3a-2 | Named stages and `before`/`after` ordering; `Game::step` stops hard-wiring engine stages (KI-10) | M3a-1 | **Done.** Commit `312a05f`, plus the lifecycle-anchor seal. Evidence under "M3a-2 results" |
 | M3a-3 | `Commands` flushed at stage boundaries; typed event channels cleared per frame (KI-9) | M3a-2 | Command-while-iterating test; event visible later the same frame and gone the next |
 | M3a-4 | Logging facade; asset failure, skipped renderable and surface loss each log once with the cause named (R-13) | M3a-1 | Capturing-logger test: one record naming the asset |
 | M3a-5 | Fixed-step alpha exposed and opt-in transform interpolation (R-3) | M3a-2 | 60 Hz fixed versus 144 Hz render test; simulation still reads the un-interpolated `Transform` |
@@ -421,7 +421,7 @@ The `log` dependency waits for M3a-4. Interpolation waits for M3a-5.
 ## M3a-2 results (2026-10-14)
 
 Named stages and `before` / `after` on the existing `Schedule`. No commands, events, interpolation,
-logging, or parallel execution. Not committed.
+logging, or parallel execution. Committed as `312a05f`. The lifecycle-anchor seal is the change on top of that commit.
 
 **API.** `Stage` is `time`, `loads`, `fixed_update`, `update`, `animate`, `post_update`, `input_clear`.
 `Game::add_system` and `Game::add_fixed_system` keep their signatures and append to `update` and
@@ -434,10 +434,15 @@ per `step`. Input edges last until `input_clear`. Extract and render stay outsid
 
 Built-ins, and where an unconstrained system sits relative to them: `advance_time`, `process_loads` and
 `animate` run first in their stages; `propagate_transforms` and `end_input_frame` run last.
+`advance_time`, `process_loads`, `propagate_transforms` and `end_input_frame` are sealed there: an
+explicit `before` / `after` on the closed side returns `MustRunAfter` or `MustRunBefore` and does not
+change the schedule. `animate` stays open, so a system may be placed before or after `animate_system`.
+The frame-delta restore sits in `Game::step` between the fixed loop and `update`, so system order
+cannot move it.
 
 **Screenshots.** Byte-identical to images rendered from the engine and example code at `6dbabb8` (the M3a-1 commit `9876f7d` does not change those files). Same commands, 1280×720, debug: `basic_2_5d`, `basic_2_5d --ortho`, `spatial_scene --camera perspective`, `spatial_scene --camera orthographic`. `cmp` reported all four identical. SHA-256: basic `c3c5874a…`, ortho `f2aedc0c…`, perspective `ec5f6252…`, orthographic `3551d84f…`.
 
-**Repository check.** `scripts/check.sh` on 2026-10-14, exit 0. All 4 steps: fmt, clippy `-D warnings`, `cargo test --workspace` with `DIMORA_REQUIRE_GPU=1` (**173 passed, 0 failed**; 18 in `headless.rs` and 16 in `configurations.rs` ran, none skipped), rustdoc `-D warnings`. The new tests are 9 schedule tests in `engine-world` and 6 in `crates/engine/tests/frame.rs`.
+**Repository check.** `scripts/check.sh` on 2026-10-14, exit 0. All 4 steps: fmt, clippy `-D warnings`, `cargo test --workspace` with `DIMORA_REQUIRE_GPU=1` (**174 passed, 0 failed**; 18 in `headless.rs` and 16 in `configurations.rs` ran, none skipped), rustdoc `-D warnings`. The new tests are 9 schedule tests in `engine-world` and 7 in `crates/engine/tests/frame.rs`, including `lifecycle_builtins_stay_at_the_ends_of_their_stages`. Examples `basic_2_5d` and `spatial_scene` compiled and their existing tests passed. Extract and render were not changed, so the screenshot comparison above still stands.
 
 ## Planned systems and their state
 

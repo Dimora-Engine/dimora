@@ -116,7 +116,10 @@ is exact only for uniform scale.
 Each stage is a `Schedule`. Inside a stage, `before` / `after` order named systems; systems with no
 constraint keep registration order, and a ready-set tie goes to the earlier registration. A cycle,
 a duplicate name, a missing target or a self-dependency is rejected and the schedule is left unchanged
-(ADR-0007).
+(ADR-0007). `advance_time` and `process_loads` stay first in their stages. `propagate_transforms` and
+`end_input_frame` stay last. A constraint on the closed side is rejected. `animate` may have systems
+on either side when the constraint is explicit. `Game::step` restores the frame delta after the fixed
+loop; that restore is not a system.
 
 ```text
 time (advance Time, accumulate the fixed step)

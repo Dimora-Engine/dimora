@@ -32,11 +32,6 @@ fn stages_run_in_order_and_builtins_stay_at_their_anchors() {
     let parent = game.world.spawn((Transform::IDENTITY,));
     let child = game.world.spawn_child(parent, (Transform::from_xyz(0.0, 0.0, 1.0),));
 
-    game.add_to_stage_before(Stage::Time, "before_time", Stage::ADVANCE_TIME, |world| {
-        assert_eq!(world.resource::<Time>().frame(), 0);
-        world.resource_mut::<Vec<&str>>().push("before_time");
-    })
-    .unwrap();
     game.add_to_stage(Stage::Time, "after_time", |world| {
         assert_eq!(world.resource::<Time>().frame(), 1);
         world.resource_mut::<Vec<&str>>().push("after_time");
@@ -56,20 +51,18 @@ fn stages_run_in_order_and_builtins_stay_at_their_anchors() {
     })
     .unwrap();
     game.add_to_stage(Stage::InputClear, "before_clear", push("before_clear")).unwrap();
-    game.add_to_stage_after(Stage::InputClear, "after_clear", Stage::END_INPUT_FRAME, push("after_clear")).unwrap();
 
-    assert_eq!(game.system_order(Stage::Time), ["before_time", Stage::ADVANCE_TIME, "after_time"]);
+    assert_eq!(game.system_order(Stage::Time), [Stage::ADVANCE_TIME, "after_time"]);
     assert_eq!(game.system_order(Stage::Loads), [Stage::PROCESS_LOADS, "loads"]);
     assert_eq!(game.system_order(Stage::Animate), ["before_animate", Stage::ANIMATE, "after_animate"]);
     assert_eq!(game.system_order(Stage::PostUpdate), ["before_propagate", Stage::PROPAGATE_TRANSFORMS]);
-    assert_eq!(game.system_order(Stage::InputClear), ["before_clear", Stage::END_INPUT_FRAME, "after_clear"]);
+    assert_eq!(game.system_order(Stage::InputClear), ["before_clear", Stage::END_INPUT_FRAME]);
 
     let step = fixed_step();
     game.step(step);
     assert_eq!(
         log(&game),
         [
-            "before_time",
             "after_time",
             "loads",
             "fixed",
@@ -78,7 +71,6 @@ fn stages_run_in_order_and_builtins_stay_at_their_anchors() {
             "after_animate",
             "before_propagate",
             "before_clear",
-            "after_clear",
         ]
     );
     let child_pos = game.world.component::<GlobalTransform>(child).unwrap().translation();
@@ -169,14 +161,9 @@ fn input_edges_survive_fixed_and_update_and_clear_at_the_end() {
         world.resource_mut::<Vec<bool>>().push(pressed);
     })
     .unwrap();
-    game.add_to_stage_after(Stage::InputClear, "after_clear", Stage::END_INPUT_FRAME, |world| {
-        let pressed = world.resource::<Input>().key_pressed(Key::W);
-        world.resource_mut::<Vec<bool>>().push(pressed);
-    })
-    .unwrap();
 
     game.step(fixed_step() * 2);
-    assert_eq!(*game.world.resource::<Vec<bool>>(), vec![true, true, true, true, false]);
+    assert_eq!(*game.world.resource::<Vec<bool>>(), vec![true, true, true, true]);
     let input = game.world.resource::<Input>();
     assert!(input.key_down(Key::W));
     assert!(!input.key_pressed(Key::W));
@@ -193,4 +180,55 @@ fn duplicate_stage_names_and_missing_targets_fail_without_changing_the_order() {
     let missing = err(game.add_to_stage_before(Stage::Update, "early", "nobody", |_| {}));
     assert_eq!(missing, ScheduleError::MissingTarget { system: "early", target: "nobody" });
     assert_eq!(game.system_order(Stage::Update), ["player"]);
+}
+
+#[test]
+fn lifecycle_builtins_stay_at_the_ends_of_their_stages() {
+    let mut game = Game::new(GameConfig::default());
+
+    let before_time = err(game.add_to_stage_before(Stage::Time, "too_early", Stage::ADVANCE_TIME, |_| {}));
+    assert_eq!(before_time, ScheduleError::MustRunAfter { system: "too_early", anchor: Stage::ADVANCE_TIME });
+    assert_eq!(game.system_order(Stage::Time), [Stage::ADVANCE_TIME]);
+
+    let before_loads = err(game.add_to_stage_before(Stage::Loads, "before_loads", Stage::PROCESS_LOADS, |_| {}));
+    assert_eq!(before_loads, ScheduleError::MustRunAfter { system: "before_loads", anchor: Stage::PROCESS_LOADS });
+    assert_eq!(game.system_order(Stage::Loads), [Stage::PROCESS_LOADS]);
+
+    let after_propagate =
+        err(game.add_to_stage_after(Stage::PostUpdate, "too_late", Stage::PROPAGATE_TRANSFORMS, |_| {}));
+    assert_eq!(
+        after_propagate,
+        ScheduleError::MustRunBefore { system: "too_late", anchor: Stage::PROPAGATE_TRANSFORMS }
+    );
+    assert_eq!(game.system_order(Stage::PostUpdate), [Stage::PROPAGATE_TRANSFORMS]);
+
+    let after_input = err(game.add_to_stage_after(Stage::InputClear, "after_clear", Stage::END_INPUT_FRAME, |_| {}));
+    assert_eq!(after_input, ScheduleError::MustRunBefore { system: "after_clear", anchor: Stage::END_INPUT_FRAME });
+    assert_eq!(game.system_order(Stage::InputClear), [Stage::END_INPUT_FRAME]);
+
+    game.add_to_stage_before(Stage::Animate, "pose", Stage::ANIMATE, |_| {}).unwrap();
+    game.add_to_stage_after(Stage::Animate, "read_pose", Stage::ANIMATE, |_| {}).unwrap();
+    assert_eq!(game.system_order(Stage::Animate), ["pose", Stage::ANIMATE, "read_pose"]);
+
+    game.add_to_stage(Stage::Time, "sees_frame", |_| {}).unwrap();
+    game.add_to_stage_before(Stage::Time, "still_after_time", "sees_frame", |_| {}).unwrap();
+    assert_eq!(game.system_order(Stage::Time), [Stage::ADVANCE_TIME, "still_after_time", "sees_frame"]);
+
+    game.add_to_stage(Stage::Loads, "after_assets", |_| {}).unwrap();
+    game.add_to_stage_before(Stage::Loads, "still_after_loads", "after_assets", |_| {}).unwrap();
+    assert_eq!(game.system_order(Stage::Loads), [Stage::PROCESS_LOADS, "still_after_loads", "after_assets"]);
+
+    game.add_to_stage(Stage::PostUpdate, "moves", |_| {}).unwrap();
+    game.add_to_stage_after(Stage::PostUpdate, "moves_later", "moves", |_| {}).unwrap();
+    assert_eq!(game.system_order(Stage::PostUpdate), ["moves", "moves_later", Stage::PROPAGATE_TRANSFORMS]);
+
+    game.add_to_stage(Stage::InputClear, "reads_edges", |_| {}).unwrap();
+    game.add_to_stage_before(Stage::InputClear, "reads_earlier", "reads_edges", |_| {}).unwrap();
+    assert_eq!(game.system_order(Stage::InputClear), ["reads_earlier", "reads_edges", Stage::END_INPUT_FRAME]);
+
+    game.send_input(InputEvent::Key { key: Key::W, pressed: true });
+    game.step(fixed_step());
+    assert_eq!(game.world.resource::<Time>().frame(), 1);
+    assert!(game.world.resource::<Input>().key_down(Key::W));
+    assert!(!game.world.resource::<Input>().key_pressed(Key::W));
 }

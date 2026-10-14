@@ -20,6 +20,10 @@ pub enum ScheduleError {
     SelfDependency(&'static str),
     /// The constraints cannot be ordered. Names are in registration order.
     Cycle(Vec<&'static str>),
+    /// `system` would run before `anchor`. The anchor stays first in its stage.
+    MustRunAfter { system: &'static str, anchor: &'static str },
+    /// `system` would run after `anchor`. The anchor stays last in its stage.
+    MustRunBefore { system: &'static str, anchor: &'static str },
 }
 
 impl core::fmt::Display for ScheduleError {
@@ -36,6 +40,12 @@ impl core::fmt::Display for ScheduleError {
             ScheduleError::Cycle(names) => {
                 let list = names.iter().map(|n| format!("`{n}`")).collect::<Vec<_>>().join(", ");
                 write!(f, "system order contains a cycle involving {list}")
+            }
+            ScheduleError::MustRunAfter { system, anchor } => {
+                write!(f, "system `{system}` must run after `{anchor}`")
+            }
+            ScheduleError::MustRunBefore { system, anchor } => {
+                write!(f, "system `{system}` must run before `{anchor}`")
             }
         }
     }
@@ -79,7 +89,7 @@ impl Schedule {
         name: &'static str,
         system: impl FnMut(&mut World) + 'static,
     ) -> Result<&mut Self, ScheduleError> {
-        self.insert(name, system, None)
+        self.add_ordered(name, &[], &[], system)
     }
 
     /// Appends a system that runs before `before`. `before` must already be registered.
@@ -89,7 +99,7 @@ impl Schedule {
         before: &'static str,
         system: impl FnMut(&mut World) + 'static,
     ) -> Result<&mut Self, ScheduleError> {
-        self.insert(name, system, Some(Constraint::Before(before)))
+        self.add_ordered(name, &[before], &[], system)
     }
 
     /// Appends a system that runs after `after`. `after` must already be registered.
@@ -99,7 +109,36 @@ impl Schedule {
         after: &'static str,
         system: impl FnMut(&mut World) + 'static,
     ) -> Result<&mut Self, ScheduleError> {
-        self.insert(name, system, Some(Constraint::After(after)))
+        self.add_ordered(name, &[], &[after], system)
+    }
+
+    /// Appends a system that runs before every name in `before` and after every name in `after`.
+    ///
+    /// Every target must already be registered. A repeated target is one edge. On error the
+    /// schedule is unchanged.
+    pub fn add_ordered(
+        &mut self,
+        name: &'static str,
+        before: &[&'static str],
+        after: &[&'static str],
+        system: impl FnMut(&mut World) + 'static,
+    ) -> Result<&mut Self, ScheduleError> {
+        if self.index_of(name).is_some() {
+            return Err(ScheduleError::DuplicateName(name));
+        }
+        let before = self.bound_list(name, before)?;
+        let after = self.bound_list(name, after)?;
+        self.systems.push(Entry { name, system: Box::new(system), before, after });
+        match self.compute_order() {
+            Ok(order) => {
+                self.order = order;
+                Ok(self)
+            }
+            Err(e) => {
+                self.systems.pop();
+                Err(e)
+            }
+        }
     }
 
     /// Requires `system` to run before `before`. Both names must already be registered.
@@ -130,48 +169,20 @@ impl Schedule {
         }
     }
 
-    fn insert(
-        &mut self,
-        name: &'static str,
-        system: impl FnMut(&mut World) + 'static,
-        constraint: Option<Constraint>,
-    ) -> Result<&mut Self, ScheduleError> {
-        if self.index_of(name).is_some() {
-            return Err(ScheduleError::DuplicateName(name));
-        }
-        let (before, after) = match constraint {
-            Some(c) => self.lists_for_new(name, c)?,
-            None => (Vec::new(), Vec::new()),
-        };
-        self.systems.push(Entry { name, system: Box::new(system), before, after });
-        match self.compute_order() {
-            Ok(order) => {
-                self.order = order;
-                Ok(self)
+    fn bound_list(&self, name: &'static str, targets: &[&'static str]) -> Result<Vec<&'static str>, ScheduleError> {
+        let mut list = Vec::with_capacity(targets.len());
+        for &target in targets {
+            if target == name {
+                return Err(ScheduleError::SelfDependency(name));
             }
-            Err(e) => {
-                self.systems.pop();
-                Err(e)
+            if self.index_of(target).is_none() {
+                return Err(ScheduleError::MissingTarget { system: name, target });
+            }
+            if !list.contains(&target) {
+                list.push(target);
             }
         }
-    }
-
-    fn lists_for_new(
-        &self,
-        name: &'static str,
-        constraint: Constraint,
-    ) -> Result<(Vec<&'static str>, Vec<&'static str>), ScheduleError> {
-        let target = constraint.target();
-        if target == name {
-            return Err(ScheduleError::SelfDependency(name));
-        }
-        if self.index_of(target).is_none() {
-            return Err(ScheduleError::MissingTarget { system: name, target });
-        }
-        Ok(match constraint {
-            Constraint::Before(_) => (vec![target], Vec::new()),
-            Constraint::After(_) => (Vec::new(), vec![target]),
-        })
+        Ok(list)
     }
 
     fn constrain(&mut self, system: &'static str, constraint: Constraint) -> Result<(), ScheduleError> {

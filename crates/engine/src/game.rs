@@ -103,26 +103,31 @@ impl Stage {
         }
     }
 
-    /// Built-in system for this stage, and whether unconstrained systems run after it (`First`)
-    /// or before it (`Last`). `fixed_update` and `update` have no built-in.
-    fn builtin(self) -> Option<(&'static str, BuiltinPlace)> {
+    /// Where this stage's built-in sits. `fixed_update` and `update` have none.
+    ///
+    /// `SealedFirst` and `SealedLast` are lifecycle ends: every system in the stage stays on the
+    /// built-in's open side, including one with an explicit `before` / `after`. `FlexibleFirst`
+    /// is the default place only; an explicit constraint may run on either side.
+    fn anchor(self) -> Option<Anchor> {
         match self {
-            Stage::Time => Some((Self::ADVANCE_TIME, BuiltinPlace::First)),
-            Stage::Loads => Some((Self::PROCESS_LOADS, BuiltinPlace::First)),
+            Stage::Time => Some(Anchor::SealedFirst(Self::ADVANCE_TIME)),
+            Stage::Loads => Some(Anchor::SealedFirst(Self::PROCESS_LOADS)),
             Stage::FixedUpdate | Stage::Update => None,
-            Stage::Animate => Some((Self::ANIMATE, BuiltinPlace::First)),
-            Stage::PostUpdate => Some((Self::PROPAGATE_TRANSFORMS, BuiltinPlace::Last)),
-            Stage::InputClear => Some((Self::END_INPUT_FRAME, BuiltinPlace::Last)),
+            Stage::Animate => Some(Anchor::FlexibleFirst(Self::ANIMATE)),
+            Stage::PostUpdate => Some(Anchor::SealedLast(Self::PROPAGATE_TRANSFORMS)),
+            Stage::InputClear => Some(Anchor::SealedLast(Self::END_INPUT_FRAME)),
         }
     }
 }
 
 #[derive(Clone, Copy)]
-enum BuiltinPlace {
-    /// Unconstrained systems run after the built-in.
-    First,
-    /// Unconstrained systems run before the built-in.
-    Last,
+enum Anchor {
+    /// Every system runs after this built-in.
+    SealedFirst(&'static str),
+    /// Unconstrained systems run after this built-in. An explicit constraint may run on either side.
+    FlexibleFirst(&'static str),
+    /// Every system runs before this built-in.
+    SealedLast(&'static str),
 }
 
 #[derive(Clone, Copy)]
@@ -225,6 +230,13 @@ impl Game {
     /// and `input_clear`, that puts it before the built-in. `fixed_update` and `update` have no
     /// built-in, so this is registration order. The target of a constraint has to be registered
     /// already; [`Game::add_to_stage_before`] and [`Game::add_to_stage_after`] are the explicit forms.
+    ///
+    /// `advance_time` and `process_loads` stay first in their stages. `propagate_transforms` and
+    /// `end_input_frame` stay last. A constraint on the closed side returns
+    /// [`ScheduleError::MustRunAfter`] or [`ScheduleError::MustRunBefore`] and leaves the schedule
+    /// unchanged. `animate` is the exception: an explicit constraint may place a system before or
+    /// after it. Restoring the frame delta after `fixed_update` is done by [`Game::step`], so
+    /// system order cannot move it.
     pub fn add_to_stage(
         &mut self,
         stage: Stage,
@@ -331,26 +343,24 @@ impl Game {
         system: impl FnMut(&mut World) + 'static,
         explicit: Option<ExplicitOrder>,
     ) -> Result<(), ScheduleError> {
-        let schedule = self.schedule_mut(stage);
-        match explicit {
-            Some(ExplicitOrder::Before(before)) => {
-                schedule.add_system_before(name, before, system)?;
-            }
-            Some(ExplicitOrder::After(after)) => {
-                schedule.add_system_after(name, after, system)?;
-            }
-            None => match stage.builtin() {
-                Some((builtin, BuiltinPlace::First)) => {
-                    schedule.add_system_after(name, builtin, system)?;
-                }
-                Some((builtin, BuiltinPlace::Last)) => {
-                    schedule.add_system_before(name, builtin, system)?;
-                }
-                None => {
-                    schedule.add_system(name, system)?;
-                }
-            },
+        let anchor = stage.anchor();
+        if let Some(error) = explicit.and_then(|order| sealed_violation(name, anchor, order)) {
+            return Err(error);
         }
+        let mut before = Vec::new();
+        let mut after = Vec::new();
+        match anchor {
+            Some(Anchor::SealedFirst(builtin)) => after.push(builtin),
+            Some(Anchor::SealedLast(builtin)) => before.push(builtin),
+            Some(Anchor::FlexibleFirst(builtin)) if explicit.is_none() => after.push(builtin),
+            Some(Anchor::FlexibleFirst(_)) | None => {}
+        }
+        match explicit {
+            Some(ExplicitOrder::Before(target)) => before.push(target),
+            Some(ExplicitOrder::After(target)) => after.push(target),
+            None => {}
+        }
+        self.schedule_mut(stage).add_ordered(name, &before, &after, system)?;
         Ok(())
     }
 
@@ -386,6 +396,18 @@ impl Game {
 
 fn wgpu_rgba8_srgb() -> engine_renderer_wgpu::wgpu::TextureFormat {
     engine_renderer_wgpu::wgpu::TextureFormat::Rgba8UnormSrgb
+}
+
+fn sealed_violation(name: &'static str, anchor: Option<Anchor>, order: ExplicitOrder) -> Option<ScheduleError> {
+    match (anchor, order) {
+        (Some(Anchor::SealedFirst(anchor)), ExplicitOrder::Before(target)) if target == anchor => {
+            Some(ScheduleError::MustRunAfter { system: name, anchor })
+        }
+        (Some(Anchor::SealedLast(anchor)), ExplicitOrder::After(target)) if target == anchor => {
+            Some(ScheduleError::MustRunBefore { system: name, anchor })
+        }
+        _ => None,
+    }
 }
 
 fn advance_time(world: &mut World) {

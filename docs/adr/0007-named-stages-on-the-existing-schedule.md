@@ -61,6 +61,26 @@ World stages, in order:
 The runner still applies input events before `step`, then calls `step`, then extract, then render.
 Extract and render are frame phases in the `engine` crate. They are not stages in `engine-world`.
 
+### Lifecycle anchors
+
+Ordering inside a stage stays configurable, except four built-ins that are the ends of their stages.
+A constraint that would put a system on the closed side is rejected and the schedule is left unchanged.
+
+| Built-in | Stays |
+|---|---|
+| `advance_time` | First in `time`, so every system in that stage sees the frame that `step` just started |
+| `process_loads` | First in `loads`, so a later system in that stage sees assets processed for this step |
+| `propagate_transforms` | Last in `post_update`, so it reads transforms written by the systems before it |
+| `end_input_frame` | Last in `input_clear`, so systems in that stage still see this step's input edges |
+
+`animate` is first only for a system with no explicit constraint. An explicit `before` or `after` may
+place a system on either side, so one system can write a pose before `animate_system` and another
+can read the result after it.
+
+`fixed_update` and `update` have no built-in. `Game::step` restores `Time::delta` to the frame delta
+after the fixed loop and before `update`. That restore is not a system, so `before` / `after` cannot
+move it.
+
 ### Fixed-step delta
 
 During each `fixed_update` iteration, `Time::delta` (and `delta_secs`) is the fixed step. After the

@@ -139,10 +139,12 @@ Missing from the original category list and now tracked: **save games** (34), **
 * **Purpose.** A defined, documented frame so systems can depend on stage order.
 * **Now.** `Game::step` runs `time`, `loads`, `fixed_update` (0 to 8 times), `update`, `animate`,
   `post_update`, `input_clear`. `before` / `after` order systems inside a stage; unconstrained systems
-  keep registration order. During each fixed iteration `Time::delta` is the fixed step, then the frame
-  delta is restored. `elapsed` and `frame` advance once per step. Input edges last until `input_clear`.
-  Extract and render stay outside `step`. `FixedTimestep::alpha()` is unused. Both examples stay on
-  `add_system` (`update`).
+  keep registration order. `advance_time` and `process_loads` stay first; `propagate_transforms` and
+  `end_input_frame` stay last; `animate` accepts an explicit system on either side. During each fixed
+  iteration `Time::delta` is the fixed step, then the frame delta is restored by `step` itself.
+  `elapsed` and `frame` advance once per step. Input edges last until `input_clear`. Extract and
+  render stay outside `step`. `FixedTimestep::alpha()` is unused. Both examples stay on `add_system`
+  (`update`).
 * **Required.** Fixed-step interpolation for rendering (ADR-0007, not built). A headless `step` exists.
 * **Planned.** Interpolation is M3a-5. **Depends on.** D-01 (implemented), D-02, D-10, D-44.
   **Integration.** Collision (fixed stage), animation (animate stage, camera read from previous
