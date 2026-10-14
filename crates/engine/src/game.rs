@@ -289,10 +289,21 @@ impl Game {
     /// fixed step; it is restored to `dt` before `update`. `Time::elapsed_secs` and `Time::frame`
     /// advance once per call. Input edges stay visible until `input_clear`. Extract and render
     /// are not part of this call.
+    ///
+    /// Deferred commands flush after every stage run, and after each fixed iteration. Events sent
+    /// in a stage become visible to later stages once that stage's run has finished. `fixed_update`
+    /// is one stage: its events stay invisible through the remaining iterations and become visible
+    /// to `update`. Events still pending after `input_clear` are dropped. [`World::discarded_events`]
+    /// counts them until the next call. Command failures stay readable until the next call, each
+    /// tagged with the stage that flushed it.
     pub fn step(&mut self, dt: Duration) {
+        self.world.clear_command_failures();
+        self.world.clear_discarded_events();
         self.world.resource_mut::<StepClock>().dt = dt;
         self.time.run(&mut self.world);
+        self.after_stage(Stage::Time);
         self.loads.run(&mut self.world);
+        self.after_stage(Stage::Loads);
 
         let (steps, fixed_dt, frame_delta) = {
             let steps = self.world.resource::<StepClock>().fixed_steps;
@@ -303,13 +314,25 @@ impl Game {
         for _ in 0..steps {
             self.world.resource_mut::<Time>().set_delta(fixed_dt);
             self.fixed_update.run(&mut self.world);
+            self.world.flush_commands_in(Stage::FixedUpdate.name());
         }
+        self.world.promote_events();
         self.world.resource_mut::<Time>().set_delta(frame_delta);
 
         self.update.run(&mut self.world);
+        self.after_stage(Stage::Update);
         self.animate.run(&mut self.world);
+        self.after_stage(Stage::Animate);
         self.post_update.run(&mut self.world);
+        self.after_stage(Stage::PostUpdate);
         self.input_clear.run(&mut self.world);
+        self.world.flush_commands_in(Stage::InputClear.name());
+        self.world.clear_events();
+    }
+
+    fn after_stage(&mut self, stage: Stage) {
+        self.world.flush_commands_in(stage.name());
+        self.world.promote_events();
     }
 
     fn schedule(&self, stage: Stage) -> &Schedule {

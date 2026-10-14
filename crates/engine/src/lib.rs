@@ -52,6 +52,7 @@ pub mod prelude {
         Perspective, Projection, RenderOrder, Sprite, SpriteBlend, SpriteOrientation, TileMap, ViewportRect,
     };
     pub use engine_world::{
-        Children, Entity, GlobalTransform, Name, Parent, Schedule, ScheduleError, Visibility, World,
+        Children, CommandError, CommandFailure, CommandWriter, Entity, GlobalTransform, Name, Parent, Schedule,
+        ScheduleError, Visibility, World,
     };
 }

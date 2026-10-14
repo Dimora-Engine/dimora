@@ -45,9 +45,9 @@ without it.
 |---|---|---|---|---|
 | **Core runtime** | | | | |
 | 1 | Math, conventions, transforms | Working | 22 tests; `f32`; shear not representable | done |
-| 2 | ECS, world, hierarchy | Working, thin | `hecs` wrapper; 19 tests; no events, change detection or commands in the code (D-10 decided, D-02 provisional, neither built) | M3, M4 |
+| 2 | ECS, world, hierarchy | Working, thin | `hecs` wrapper; commands and events included (ADR-0008). No change detection (D-02 provisional, not built) | M3, M4 |
 | 3 | Frame loop and scheduling | Partial | Named stages and `before`/`after` in `Game::step` (ADR-0007, M3a-2). Fixed systems see the fixed step; the frame delta is restored. Interpolation and `alpha` are not implemented | M3 |
-| 4 | Events and deferred commands | Absent | No command queue or event buffer. FIFO commands and stage-boundary events are decided (ADR-0008) and not implemented | M3 |
+| 4 | Events and deferred commands | Working | FIFO commands flush per stage run and per fixed iteration. Typed events are visible to later stages and cleared after `input_clear` (ADR-0008). Reading copies the buffer (`T: Clone`). No observers | M3 |
 | 5 | Platform, window, timing | Working, narrow | winit loop, resize, exit; no DPI, fullscreen, vsync, multi-window | M3, M10 |
 | 6 | Input and action mapping | Partial | Keys/mouse state with edges, `axis()`; no actions, gamepad, text | M3 |
 | 7 | Errors, logging, diagnostics, config | Absent / Minimal | Typed errors in crates; no logging. The `log` crate is decided (ADR-0012) and not added. No runtime config; window-title stats | M3 (logging), M20 |
@@ -151,19 +151,34 @@ Missing from the original category list and now tracked: **save games** (34), **
   propagation, D-31), UI (its own stage), scripts (one stage), scenes (apply at a boundary).
 * **Performance.** Sequential is the rule (ADR-0006) until a measured gameplay workload cannot meet its budget on one thread.
 * **Tests/examples.** `engine-world` schedule tests and `engine` `tests/frame.rs` cover order, cycles,
-  the fixed delta and input edges. Interpolation and the 144 Hz versus 60 Hz render test are still M3a-5.
+  the lifecycle anchors, the fixed delta and input edges. Interpolation and the 144 Hz versus 60 Hz render test are still M3a-5.
 * **Decided, not built.** Interpolation (ADR-0007), D-02 (ADR-0009, provisional). D-44 is settled and
   matches the code. **Not initially.** Parallel execution, a dependency-graph scheduler.
 
 ### 4. Events and deferred commands
 * **Purpose.** Communicate between systems without borrowing each other's state; mutate safely mid-stage.
-* **Now.** Nothing in the code. Double borrow of a `RefCell` resource panics at run time (KI-9). Semantics are decided (ADR-0008): FIFO commands flushed per stage run, events visible only after the emitting stage, cleared at the end of `step`. A throwaway program confirmed a queue resource can be appended during a query and that `spawn` during that query does not compile.
-* **Required.** The command buffer and typed event channels from ADR-0008. M3a-3 builds them.
+* **Now.** `World::commands` queues `spawn`, `despawn`, `insert`, `remove`, `set_parent` and
+  `detach_children`. The queue flushes in call order at the end of each stage run and between fixed
+  iterations, through the existing world methods. A failed command writes nothing, is recorded on
+  `command_failures`, and does not stop the queue. `spawn` reserves an id immediately; queries see it
+  only after the flush. Inserting `Parent` or `Children` in a bundle fails; hierarchy edits use
+  `set_parent`, `detach_children` and `remove`. `World::send` / `World::events` are typed queues.
+  An event is invisible inside the sending stage, visible to later stages of the same `step`, and
+  cleared after `input_clear`. A send in `input_clear` is not delivered next frame;
+  `discarded_events` counts it until the next step. Fixed iterations do not see events sent in
+  `fixed_update`. `events` returns a copy, so two systems can read the same events. `commands()`
+  does not hold the queue borrow, so a second writer in the same system is safe. `try_commands()`
+  returns `None` when the queue is already borrowed. `command_failures()` keeps each `CommandError`
+  with the stage that flushed it, until the next step. A double borrow of one resource still
+  panics (KI-9). There is no observer list.
+* **Required.** Met by ADR-0008 for the command set and the event lifetime. Collision, animation and
+  UI events are later consumers, not part of this queue.
 * **Depends on.** D-01. **Integration.** Collision events, animation events, scene load/unload, asset
   failure, UI callbacks, script mutations. The scripting boundary requires it.
-* **Tests/examples.** Commands queued while iterating; event visible later in the same frame and gone the
-  next.
-* **Not initially.** Observers/reactive triggers, event persistence, networking.
+* **Tests/examples.** `engine-world` command and event tests, and `engine` `tests/deferred.rs`: queue
+  during a query, stage-boundary visibility, FIFO, hierarchy rejection, fixed-iteration flush, same-stage
+  and cross-stage events, frame clearing, and a direct `spawn` that stays immediate.
+* **Not initially.** Observers/reactive triggers, event persistence, networking. Change detection (D-02).
 
 ### 5. Platform, window, timing
 * **Now.** winit 0.30 loop, resize, exit, title, `ControlFlow::Poll`, default present mode. `Time` and

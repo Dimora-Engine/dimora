@@ -32,6 +32,15 @@ impl Resources {
         Some(RefMut::map(cell.borrow_mut(), |b| b.downcast_mut::<T>().expect("resource type matches its TypeId")))
     }
 
+    /// `Ok(None)` when `T` was never inserted. `Err(())` when it is already borrowed.
+    pub(crate) fn try_get_mut<T: 'static>(&self) -> Result<Option<RefMut<'_, T>>, ()> {
+        let Some(cell) = self.map.get(&TypeId::of::<T>()) else {
+            return Ok(None);
+        };
+        let guard = cell.try_borrow_mut().map_err(|_| ())?;
+        Ok(Some(RefMut::map(guard, |b| b.downcast_mut::<T>().expect("resource type matches its TypeId"))))
+    }
+
     pub fn remove<T: 'static>(&mut self) -> Option<T> {
         self.map.remove(&TypeId::of::<T>()).and_then(|c| c.into_inner().downcast().ok().map(|b| *b))
     }

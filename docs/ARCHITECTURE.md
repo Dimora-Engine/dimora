@@ -1,8 +1,8 @@
 # Architecture
 
 Status: describes the working tree. The M6 spatial scene is commit `6dbabb8` (2026-10-14); that commit is
-the screenshot baseline for M3a. M3a-2 adds named stages on that code (ADR-0007). Commands, events and
-interpolation (ADR-0008, the interpolation section of ADR-0007) and logging (ADR-0012) are not in the
+the screenshot baseline for M3a. M3a-2 adds named stages on that code (ADR-0007). M3a-3 adds deferred
+commands and typed events (ADR-0008). Interpolation (ADR-0007) and logging (ADR-0012) are not in the
 code. The M2 audit date was 2026-10-13 at `4857158`.
 Everything outside the sections "Proposed future architecture" and "Proposed boundaries" exists in the
 repository today, except that "Cross-system requirements and risks" mixes requirements (what must hold) with
@@ -121,6 +121,15 @@ a duplicate name, a missing target or a self-dependency is rejected and the sche
 on either side when the constraint is explicit. `Game::step` restores the frame delta after the fixed
 loop; that restore is not a system.
 
+Deferred commands flush after each stage run, and after each fixed iteration. A command applies
+through the existing `World` methods, in queue order. A failure is recorded and the queue continues.
+Events sent in a stage become visible to later stages when that run finishes. `fixed_update` is one
+stage, so its events stay invisible across the remaining iterations and become visible to `update`.
+The queues are cleared after `input_clear`. A send in that stage is not delivered later in the step
+or on the next step. `discarded_events` counts those pending events until the next step. Extract and
+render do not read events. `command_failures` is the only command-failure record. Each entry names
+the stage that flushed it. The list stays readable after `step` returns.
+
 ```text
 time (advance Time, accumulate the fixed step)
   -> loads (AssetManager::process_loads)
@@ -161,10 +170,13 @@ These exist and work:
 * **`Projection` trait and `non_exhaustive` `CameraProjection`.** Partial, see above.
 * **`Sprite.orientation`** (`#[non_exhaustive]`) and the single function `sprite_placement`.
 * **`Material`** is a small struct at the one place a material system would attach.
+* **Commands and events.** `World::commands` queues spawn, despawn, insert, remove, `set_parent`
+  and `detach_children` until the stage flush. `World::send` / `World::events` are typed queues
+  with no callbacks. A new event type needs no registration.
 
 These are *not* extension points yet, despite existing as ideas in earlier docs: there is no shadow or
-normal-map hook of any kind, no render graph or custom pass API, no user shader support, no event
-system, no ordering across stages except the fixed stage list, no asset-loading pipeline beyond PNG.
+normal-map hook of any kind, no render graph or custom pass API, no user shader support, no ordering
+across stages except the fixed stage list, no asset-loading pipeline beyond PNG.
 
 ## Known architectural weaknesses
 
@@ -179,10 +191,10 @@ Each is verified by reading the code or by a test run; identifiers refer to the 
    `detach_children` keeps children as roots at the same world transform). Remaining limit: there is no
    dirty tracking, so the pass is O(entities) every frame.
 3. **Scheduling (KI-9, KI-10).** Named stages and `before` / `after` are in `Game::step` (ADR-0007, M3a-2).
-   Still absent: deferred commands and events (ADR-0008, M3a-3), change detection (ADR-0009), and
-   exposure of `FixedTimestep::alpha()` (M3a-5). Resource access is still `RefCell`. A throwaway program
-   (ADR-0008, not in the tree) appended a queue resource during a query, and `spawn` in that same loop
-   did not compile.
+   Deferred commands and typed events are implemented (ADR-0008, M3a-3). Still absent: change detection (ADR-0009)
+   and exposure of `FixedTimestep::alpha()` (M3a-5). Resource access is still `RefCell`: a second borrow
+   of the same resource panics, including a second `World::commands` while a writer is alive. Direct
+   `spawn` during a query still does not compile; the command queue is the path that does.
 4. **One camera per frame (KI-5).** `Camera.viewport` is honoured, but only one camera renders, so
    split-screen, minimaps and render-to-texture are not possible, and the editor cannot get a second
    viewport.
@@ -339,7 +351,7 @@ systems they touch. Each cites evidence from this audit.
 | R-2 | **One camera, one target per frame**; `RenderScene` holds a single view | `extract.rs::active_camera`; KI-5 | High: shadows, editor viewports, render-to-texture and minimaps need a list of views | D-08 in M6 turns the scene into a list of camera passes; do not add features that assume one view |
 | R-3 | **No transform timeline.** `Transform` is current state only: no previous state for interpolation, no dirty tracking, a full propagation pass, and a one-frame latency rule for camera-dependent animation | `hierarchy.rs`; KI-9, KI-10, D-02 | Moderate; additive if done early (a `PreviousTransform` or render-transform stage), invasive once gameplay code depends on a single transform | Approach settled in ADR-0007 (opt-in previous local, blend only at extract). Not built. Dirty tracking stays out (ADR-0009) until a profile |
 | R-4 | **Asset identity and retention.** Handles are name hashes with no recoverable name, no reference counting, ids change on rename, and the collision guard is per type | `handle.rs`, `manager.rs`; D-16 | High once scene files, sheets or bundles exist | Decide D-16 before any persisted format (sheet descriptors in M8 are the first); keep names in the manager so handles can be serialized by name or id |
-| R-5 | **Mutation model.** Systems mutate the world directly; resources are `RefCell` (double borrow panics); no commands or events | `resources.rs`; KI-9 | Grows with every system written; scripting and scenes cannot be built safely without it | Semantics settled in ADR-0008. Not built (M3a-3). Write no second mutation path before that |
+| R-5 | **Mutation model.** Systems may still mutate the world directly. Resources are `RefCell` (a double borrow panics). Commands and events exist and follow ADR-0008 | `commands.rs`, `events.rs`, `resources.rs`; KI-9 | A second mutation path, or holding the command writer across a flush, reintroduces the alias | Built in M3a-3. Direct `spawn` remains for code that holds no query. No observers |
 | R-6 | **No format versioning policy.** Nothing persisted exists yet, which is the cheap moment to set one | no `serde`, no formats | Very high after the first release | Settled in ADR-0011. The first encoder writes a version; loaders return errors for unknown versions. No format in M3a |
 | R-7 | **Public API leakage.** The facade re-exports every crate, including `engine_platform::winit` and `engine_renderer_wgpu::wgpu`; `World.entities` is a public `hecs::World`; `Entity` is hecs's | `engine/src/lib.rs`, `world.rs`, `platform/src/lib.rs` | High after M9 and M18 promise stability | Rule settled in ADR-0010. The leak stays until M9's list. M3a adds no public `hecs` type and does not wrap `hecs` |
 | R-8 | **Threading model.** `World` is `!Sync` (`RefCell` resources), systems are non-`Send` closures, asset data is `Send + Sync`. The simulation is single-threaded; async loading, parallel extraction and scripts cross this line only as `Send` data | `schedule.rs`, `resources.rs`, `Asset` bound | High if parallel systems are wanted later | Settled in ADR-0006. The calling thread owns `World`. M3a's scheduler must not assume parallel systems |
@@ -366,7 +378,8 @@ These are settled; revisit only with a concrete problem.
 | ECS | `hecs` wrapped by `engine_world::World` | Small archetype ECS with no app framework; gameplay goes through our `World`. **Caveat (R-7): the wrapper does not hide `hecs` today** (`World.entities` is public, `query`/`get` return hecs types, `Entity` is hecs's). ADR-0010 does not wrap `hecs` in M3a; it stops new public `hecs` types and leaves the existing leak until M9. `bevy_ecs` is more capable (scheduling, change detection) but would shape the engine around its conventions. Cost: we build scheduling and events ourselves; change tracking waits on a profile (ADR-0009) |
 | Simulation threading (D-44) | The calling thread owns `World` for the whole step; other threads see `Send` snapshots only | ADR-0006. Already how the code works. Parallel gameplay systems are a later decision |
 | Change detection (D-02) | None until a recorded profile | ADR-0009, Provisional. The full propagation pass stays. The interpolation previous-local is not a dirty bit |
-| Scheduling (D-01) | Named stages on the existing `Schedule`, `before` / `after` by system name, fixed-step delta restored after `fixed_update` | ADR-0007, implemented in M3a-2. One thread (ADR-0006). Commands, events and interpolation are not built |
+| Scheduling (D-01) | Named stages on the existing `Schedule`, `before` / `after` by system name, fixed-step delta restored after `fixed_update` | ADR-0007, implemented in M3a-2. One thread (ADR-0006). Interpolation is not built |
+| Commands and events (D-10) | One FIFO command queue flushed per stage run, including each fixed iteration. Typed events become visible at the next stage boundary and clear after `input_clear` | ADR-0008, implemented in M3a-3. No observers. A fixed iteration does not see events from the same stage |
 | Graphics | `wgpu` | One API over Vulkan/Metal/DX12 |
 | Windowing | `winit` 0.30 (`ApplicationHandler`) | Standard; surfaces work with wgpu |
 | Math | Own `f32` crate | Small, deterministic, shaped for `Transform`/`Quat` |
@@ -386,13 +399,10 @@ Direction only; none of this exists in the code. Where an ADR is cited, the deci
 implementation is still a later task. Each item is a roadmap milestone with its own acceptance
 criteria. Open decisions stay in [DECISIONS.md](DECISIONS.md).
 
-* **Commands, events and interpolation** (M3a, decided, not built). Stages are in "Rendering flow"
-  (ADR-0007, M3a-2). Still to build, from [ADR-0008](adr/0008-commands-and-per-frame-events.md) and the
-  interpolation section of ADR-0007: a FIFO command queue flushed at the end of each stage run, including
-  each fixed iteration; typed events that become visible at the next stage boundary and clear after
-  `input_clear`; opt-in extract-only interpolation that never writes `Transform` or `GlobalTransform`.
-  No observer framework. M3a-3 is commands and events. M3a-5 is interpolation. Screenshot baseline
-  remains commit `6dbabb8`.
+* **Interpolation** (M3a-5, decided, not built). Stages, commands and events are in "Rendering flow"
+  (ADR-0007, ADR-0008). Still to build, from the interpolation section of ADR-0007: opt-in extract-only
+  interpolation that never writes `Transform` or `GlobalTransform`. Screenshot baseline remains commit
+  `6dbabb8`.
 * **Scenes as units** (M4): scene membership, load/unload, a component registry as the base for
   serialization and script exposure.
 * **Material assets and sampler/colour-space-aware textures, sub-rectangle texture updates** (M5).

@@ -62,7 +62,7 @@ the risk register). **Prototype where the answer depends on a measurement; do no
 
 | Tier | Decisions | Why now | How to resolve |
 |---|---|---|---|
-| **1. Before M3 code** | D-44 threading, D-01 scheduling, D-10 events and commands, D-02 change detection, D-45 public API tiers, D-47 format versioning, D-21 (logging half) | Every later system is written against the frame, mutation and threading model; R-5, R-7, R-8 get more expensive with every system added | **Decided 2026-10-14** (ADR-0006 through ADR-0012). D-02 is Provisional ("none until profiled"). The throwaway prototype's findings are in ADR-0008. None of this is implemented |
+| **1. Before M3 code** | D-44 threading, D-01 scheduling, D-10 events and commands, D-02 change detection, D-45 public API tiers, D-47 format versioning, D-21 (logging half) | Every later system is written against the frame, mutation and threading model; R-5, R-7, R-8 get more expensive with every system added | **Decided 2026-10-14** (ADR-0006 through ADR-0012). D-02 is Provisional ("none until profiled"). Stages (D-01), commands and events (D-10) are implemented. Logging, interpolation and change detection are not |
 | **2. Before M4/M5** | D-18 (registry shape), D-16 (asset identity), D-05 (alpha classes and materials), D-27 (units) | Persisted data, render model and sprite sizing hang on them; R-1, R-4 | D-16 by a small prototype of a name table plus id; D-05 with a GPU test of a blended mesh against a blended sprite |
 | **3. Before M6** | D-25 projection and D-08 multi-camera and targets first, D-48 camera configurations, D-07 depth, then D-06 pixel policy (opt-in, lowest of these) | Shape of `RenderScene` and the pass list; R-2 | Prototype two cameras into one target |
 | **4. Before M9** | D-28, D-29 (vocabulary), D-30, D-31, D-11 (record) | Define the character and scene API that M10 to M18 depend on | Built against M8's sprite-sheet implementation and the second consumer |
@@ -79,7 +79,7 @@ the risk register). **Prototype where the answer depends on a measurement; do no
 | D-23 | Platform targets, MSRV policy, crates.io | M2 (MSRV), M24 | M24 | MSRV part decided in T1 (1.90); platforms and crates.io still Open |
 | D-01 | Scheduling model | M3 | M3, M7, M8, M10, M15 | Decided, [ADR-0007](adr/0007-named-stages-on-the-existing-schedule.md) (2026-10-14). Not implemented |
 | D-02 | Change detection | M3 | M3, M4 (dirty transforms), M23 | Provisional, [ADR-0009](adr/0009-no-change-detection-until-measured.md) (2026-10-14): none until a profile |
-| D-10 | Events and deferred commands | M3 | M3, M4, M7, M8, M18 | Decided, [ADR-0008](adr/0008-commands-and-per-frame-events.md) (2026-10-14). Not implemented |
+| D-10 | Events and deferred commands | M3 | M3, M4, M7, M8, M18 | Decided, [ADR-0008](adr/0008-commands-and-per-frame-events.md) (2026-10-14). Implemented in M3a-3 |
 | D-18 | Scene format, serde, component registry | M4 (registry shape), M19 | M4, M18, M19, M22 | Open |
 | D-27 | Units and pixels per unit | M5 | M5, M8, M9, M13 | Open |
 | D-05 | Materials, alpha modes, blended meshes | M5 | M5, M14 | Open |
@@ -182,8 +182,12 @@ store used for interpolation is not change detection. Revisit only with that pro
 flushed at the end of each stage run, including each fixed iteration, through the existing `World`
 methods. A failed command changes nothing and does not stop the queue. Typed events become visible at
 the next stage boundary, not to other systems in the emitting stage, and not across fixed iterations.
-Queues clear at the end of `step`. No observers. Not implemented (M3a-3). The throwaway check is in
-the ADR.
+Queues clear at the end of `step`. No observers. Implemented in M3a-3 (`World::commands`,
+`World::send`, `World::events`). The writer does not hold the queue borrow; `try_commands` returns
+`None` when the queue is already borrowed. Each failure is a `CommandFailure` and stays readable
+after `step` until the next step starts. Events still pending at the end-of-step clear are counted
+by `discarded_events` for that same window and are not delivered on the next step. The throwaway
+check that preceded the implementation is in the ADR.
 
 ### D-18 Scene format, serde, component registry
 

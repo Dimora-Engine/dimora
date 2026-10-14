@@ -41,7 +41,7 @@ tests on Linux and, per TASKS.md, on macOS).
 **Partial:** tilemaps (no chunking), skeletal animation (a data model with one player), input (keys and
 mouse, no actions), assets (PNG only, synchronous), materials and textures (placeholders).
 
-**Absent:** scheduling stages, events and commands, scenes, collision, sprite-sheet animation, 3D
+**Absent:** scenes, collision, sprite-sheet animation, 3D
 characters, UI, audio, particles, shadows, scripting, serialization, importers, bundles, debug tools, an
 editor, CI, packaging, logging.
 
@@ -58,7 +58,7 @@ first" tiers in [docs/DECISIONS.md](docs/DECISIONS.md#what-to-resolve-first).
   rather than on code: licence files (KI-17, waiting for the owner to confirm a licence) and owner confirmation of GitHub as host (CI itself is done on the PR branch, see TASKS.md). Neither blocks
   M3, so M2 is closed for planning purposes once they are listed as carried items in TASKS.md.
 * **Now: M3a, the frame model** (see M3 below). Design decisions are recorded (2026-10-14). Named stages
-  are implemented (M3a-2). Commands, events, logging and interpolation are not. It is first because
+  (M3a-2) and commands and events (M3a-3) are implemented. Logging and interpolation are not. It is first because
   collision, animation, scenes, UI and scripting all hang off its stages, commands and events, and because
   three high-cost risks (R-5, R-7, R-8) are cheapest to settle before more systems exist.
 * **Then, in order:** M3b input and platform; M4 scenes and the registry shape; M5 materials and textures;
@@ -268,9 +268,9 @@ input and platform layer sufficient for a real game. Delivered in **two slices**
 and verified: M3a (the frame model; the immediate milestone) and M3b (input and platform). M3b may start
 once M3a's stage and event API is merged; it does not need M3a's interpolation.
 
-**Status.** In progress. M3a-1 (design) and M3a-2 (named stages) are done. M3a-3 through M3a-6 and all
-of M3b are not started. Commands, events, logging and interpolation are not in the code. The rendering
-regression baseline is commit `6dbabb8`.
+**Status.** In progress. M3a-1 (design), M3a-2 (named stages) and M3a-3 (commands and events) are done.
+M3a-3 is committed locally and is not pushed. M3a-4 through M3a-6 and all of M3b are not started.
+Logging and interpolation are not in the code. The rendering regression baseline is commit `6dbabb8`.
 
 **Prerequisites.** M2 (closed for planning). Decisions recorded before implementation code, 2026-10-14:
 D-44 ([ADR-0006](docs/adr/0006-simulation-stays-single-threaded.md)), D-01
@@ -291,8 +291,10 @@ D-44 ([ADR-0006](docs/adr/0006-simulation-stays-single-threaded.md)), D-01
    `post_update`, `input_clear`. Extract and render stay outside `step`. User systems attach to a stage,
    with `before` / `after` by name. Both examples stay in `update`. Fixed systems see the fixed step;
    the frame delta is restored afterward (ADR-0007).
-3. Deferred command buffer (`Commands`) flushed at stage boundaries, and typed event channels cleared per
-   frame (D-10). Later consumers: collision (M7), animation events (M8, M11), UI (M10), scripts (M18).
+3. Deferred command buffer and typed events — **done (M3a-3).** FIFO commands flush at
+   the end of each stage run and between fixed iterations. Typed events become visible at the next
+   stage boundary and clear after `input_clear` (ADR-0008). Later consumers: collision (M7), animation
+   events (M8, M11), UI (M10), scripts (M18). Those consumers are not built.
 4. Logging facade used by the engine crates (D-21): a failed asset load, a skipped renderable and a lost
    surface each log once with the asset or cause named.
    Also a `Diagnostics` resource with per-stage and frame timings and the existing render and cache counts,
@@ -1010,8 +1012,8 @@ commands (M3), the component registry (M4), animation (M8, M11), UI (M10), audio
 **Prerequisites.** M3, M4, M9, M10, M16, M17, and the decisions D-40 to D-43. At least one of M8 and M11
 must exist for the animation API to be real.
 
-**What exists today.** Nothing: no scripting, no component registry, no command buffer or events, no
-`serde`. Those gaps are why scripting is scheduled late; building it now would force an API onto code
+**What exists today.** Commands and events exist (M3a-3). There is no scripting, no component registry
+and no `serde`. Those gaps are why scripting is scheduled late; building it now would force an API onto code
 that is about to change.
 
 **Tasks.**

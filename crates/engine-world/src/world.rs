@@ -1,7 +1,8 @@
+use std::any::TypeId;
 use std::cell::{Ref, RefMut};
 
 use engine_math::{Mat4, Transform};
-use hecs::{Component, ComponentError, DynamicBundle, Entity, NoSuchEntity, Query, QueryBorrow};
+use hecs::{Component, ComponentError, DynamicBundle, Entity, MissingComponent, NoSuchEntity, Query, QueryBorrow};
 
 use crate::hierarchy::{Children, HierarchyError, Parent};
 use crate::resources::{missing, Resources};
@@ -26,7 +27,6 @@ pub enum Visibility {
 
 /// Entities + components + resources. Systems are plain functions over `&mut World`
 /// (see [`crate::Schedule`]).
-#[derive(Default)]
 pub struct World {
     /// The underlying component storage, exposed for queries:
     /// `world.entities.query::<(&Transform, &mut Velocity)>()`.
@@ -34,9 +34,18 @@ pub struct World {
     resources: Resources,
 }
 
+impl Default for World {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl World {
     pub fn new() -> Self {
-        Self::default()
+        let mut world = Self { entities: hecs::World::new(), resources: crate::resources::Resources::default() };
+        world.insert_resource(crate::commands::Commands::default());
+        world.insert_resource(crate::events::EventQueues::default());
+        world
     }
 
     // ---- entities -------------------------------------------------------------------------
@@ -123,6 +132,40 @@ impl World {
         self.entities.insert(entity, bundle)
     }
 
+    /// Removes one component. Removing [`Parent`] unlinks the entity and leaves its local
+    /// [`Transform`] as it was. Removing [`Children`] detaches those children at their world
+    /// transform, the same as [`World::detach_children`]. Any other component is removed on its own.
+    pub fn remove<T: Component>(&mut self, entity: Entity) -> Result<(), ComponentError> {
+        if TypeId::of::<T>() == TypeId::of::<Parent>() {
+            return self.unlink_parent(entity);
+        }
+        if TypeId::of::<T>() == TypeId::of::<Children>() {
+            return self.unlink_children(entity);
+        }
+        self.entities.remove_one::<T>(entity).map(|_| ())
+    }
+
+    fn unlink_parent(&mut self, child: Entity) -> Result<(), ComponentError> {
+        if !self.contains(child) {
+            return Err(ComponentError::NoSuchEntity);
+        }
+        if self.entities.get::<&Parent>(child).is_err() {
+            return Err(ComponentError::MissingComponent(MissingComponent::new::<Parent>()));
+        }
+        self.detach(child);
+        Ok(())
+    }
+
+    fn unlink_children(&mut self, parent: Entity) -> Result<(), ComponentError> {
+        if !self.contains(parent) {
+            return Err(ComponentError::NoSuchEntity);
+        }
+        if self.entities.get::<&Children>(parent).is_err() {
+            return Err(ComponentError::MissingComponent(MissingComponent::new::<Children>()));
+        }
+        self.detach_children(parent).map_err(|_| ComponentError::NoSuchEntity)
+    }
+
     pub fn get<'a, Q: Query>(&'a self, entity: Entity) -> Result<hecs::QueryOne<'a, Q>, NoSuchEntity> {
         self.entities.query_one::<Q>(entity)
     }
@@ -201,6 +244,10 @@ impl World {
 
     pub fn try_resource<T: 'static>(&self) -> Option<Ref<'_, T>> {
         self.resources.get::<T>()
+    }
+
+    pub(crate) fn try_resource_mut<T: 'static>(&self) -> Result<Option<RefMut<'_, T>>, ()> {
+        self.resources.try_get_mut()
     }
 
     pub fn remove_resource<T: 'static>(&mut self) -> Option<T> {

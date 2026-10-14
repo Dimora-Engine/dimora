@@ -8,6 +8,8 @@
 //! Spatial components shared by everything that exists in the scene live here: [`Transform`],
 //! [`GlobalTransform`], [`Parent`]/[`Children`], [`Visibility`], [`Name`].
 
+mod commands;
+mod events;
 mod hierarchy;
 mod resources;
 mod schedule;
@@ -15,6 +17,7 @@ mod world;
 
 pub use hecs::{Entity, EntityRef, Query, QueryBorrow};
 
+pub use commands::{CommandError, CommandFailure, CommandWriter};
 pub use engine_math::Transform;
 pub use hierarchy::{propagate_transforms, Children, GlobalTransform, HierarchyError, Parent};
 pub use resources::Resources;

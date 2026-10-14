@@ -71,6 +71,17 @@ Consequences of that order, using the methods as they behave now:
 A system may still call `spawn` and `despawn` directly when it does not hold a query. The queue is
 how a structural change survives a query, and how stage order stays deterministic.
 
+The writer returned by `World::commands` does not hold the queue borrow. Each call appends and
+releases it, so a system may take a second writer, including while a query is open. `try_commands`
+returns `None` when the queue is already borrowed. `commands` panics in that same overlap, which is
+the resource rule for every other `RefCell`. Ordinary system code does not hold that borrow.
+
+Each recorded failure is a `CommandFailure`: the `CommandError` plus the stage name when `Game::step`
+flushed it. The list is the only failure record. It stays readable after `step` returns and is cleared
+at the start of the next `step`. A logger prints that list. It does not store a second copy. A failed
+command still writes nothing, and the hierarchy methods are still the ones that keep `Parent` and
+`Children` consistent.
+
 ### Events
 
 A typed queue. Sending appends. Nothing is invoked.
@@ -87,9 +98,12 @@ tick uses commands or writes a component, not an event.
 The queues are cleared at the end of `step`, after `input_clear`, before the next `step`. They are
 not cleared between fixed iterations.
 
-`input_clear` is the last world stage. An event sent there has no later stage. It is cleared at the
-end of `step` and no system reads it. A sender that needs a reader uses an earlier stage. Extract
-and render do not read events.
+`input_clear` is the last world stage. An event sent there has no later stage in the same `step`,
+and it is not delivered on the next `step`. It is cleared at the end of `step`. `discarded_events`
+counts how many events were still pending at that clear, and the count stays readable until the next
+`step` starts. Promoted events are not counted: they were already visible. A sender that needs a
+reader uses an earlier stage. Extract and render do not read events. `input_clear` stays a stage
+systems can join, so they can still read this step's input edges before `end_input_frame`.
 
 Within one type, order is send order. The same event sent twice is two events. Events do not modify
 the world.
