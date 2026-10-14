@@ -171,12 +171,13 @@ M21 + M22 ─► M23 perf/stability ─► M24 packaging/release
 Owner direction ([ADR-0003](docs/adr/0003-incremental-tooling-editor-later.md)): the full editor stays at
 M22, but useful tools are delivered where they first pay off, so the engine is built with the tools it will
 need. Each tool reads data the runtime already exposes (registry, diagnostics, events), is read-only first,
-and contains no editor-specific state in the runtime. None of this is built yet.
+and contains no editor-specific state in the runtime. Logging and runtime diagnostics are committed
+locally (M3a-4, not pushed). The later rows are not built.
 
 | Tool | First delivered | Content | Depends on |
 |---|---|---|---|
-| Logging and error reporting | M3a | One facade; asset failures, skipped renderables, lost surfaces named once with the cause | D-21 |
-| Runtime diagnostics | M3a | A `Diagnostics` resource: per-stage and frame timings, entity count, `RenderStats` and cache counts, printed by the examples | M3a stages |
+| Logging and error reporting | M3a | **Done (M3a-4, committed locally, not pushed).** `log` crate; asset failures, skipped renderables, lost surfaces and render errors named once with the cause | D-21 |
+| Runtime diagnostics | M3a | **Done (M3a-4, committed locally, not pushed).** `Diagnostics`: per-stage CPU timings, frame delta, fixed-step count, entity count, `RenderStats` and cache counts, printed by the examples | M3a stages |
 | Scene and entity inspection | M4 | Read-only text dump of a world, hierarchy and a named entity's registered components and fields | M4 registry (D-18) |
 | Asset validation | M5 (textures, atlases), M17 (importers, dependency graph), M21 (bundle-time) | Reports with the asset name: limits, missing or unused references, malformed data | D-16, D-17 |
 | Render debugging | M6 (debug draw, depth view, camera frusta), M14 (light and shadow views) | Minimal primitives drawn through the real renderer | M6 |
@@ -268,9 +269,10 @@ input and platform layer sufficient for a real game. Delivered in **two slices**
 and verified: M3a (the frame model; the immediate milestone) and M3b (input and platform). M3b may start
 once M3a's stage and event API is merged; it does not need M3a's interpolation.
 
-**Status.** In progress. M3a-1 (design), M3a-2 (named stages) and M3a-3 (commands and events) are done.
-M3a-3 is committed locally and is not pushed. M3a-4 through M3a-6 and all of M3b are not started.
-Logging and interpolation are not in the code. The rendering regression baseline is commit `6dbabb8`.
+**Status.** In progress. M3a-1 through M3a-4 are done. M3a-3 is committed locally (`cd802f0`) and is not
+pushed. M3a-4 (logging and diagnostics) is committed locally and is not pushed. M3a-5, M3a-6, and
+all of M3b are not started. Interpolation is not in the code. Profiling is not in the code. The
+rendering regression baseline is commit `6dbabb8`.
 
 **Prerequisites.** M2 (closed for planning). Decisions recorded before implementation code, 2026-10-14:
 D-44 ([ADR-0006](docs/adr/0006-simulation-stays-single-threaded.md)), D-01
@@ -295,10 +297,10 @@ D-44 ([ADR-0006](docs/adr/0006-simulation-stays-single-threaded.md)), D-01
    the end of each stage run and between fixed iterations. Typed events become visible at the next
    stage boundary and clear after `input_clear` (ADR-0008). Later consumers: collision (M7), animation
    events (M8, M11), UI (M10), scripts (M18). Those consumers are not built.
-4. Logging facade used by the engine crates (D-21): a failed asset load, a skipped renderable and a lost
-   surface each log once with the asset or cause named.
-   Also a `Diagnostics` resource with per-stage and frame timings and the existing render and cache counts,
-   readable by any system, printed by the examples (first of the incremental tools above).
+4. Logging and diagnostics — **done (M3a-4, committed locally, not pushed).** The `log` crate (ADR-0012). A failed asset
+   load, a skipped renderable, and a lost surface or render error each log once with the asset or cause
+   named. `Diagnostics` holds per-stage CPU timings, the frame delta, the fixed-step count, and the
+   existing render and cache counts. Examples print a few of those numbers. Profiling stays in M20.
 5. Expose the fixed-step alpha and add opt-in transform interpolation for entities moved in the fixed
    stage, without changing what simulation reads (R-3).
 6. Stop adding public `hecs` types. The three-tier rule is already in ARCHITECTURE.md (ADR-0010). This

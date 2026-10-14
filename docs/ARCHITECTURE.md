@@ -2,8 +2,9 @@
 
 Status: describes the working tree. The M6 spatial scene is commit `6dbabb8` (2026-10-14); that commit is
 the screenshot baseline for M3a. M3a-2 adds named stages on that code (ADR-0007). M3a-3 adds deferred
-commands and typed events (ADR-0008). Interpolation (ADR-0007) and logging (ADR-0012) are not in the
-code. The M2 audit date was 2026-10-13 at `4857158`.
+commands and typed events (ADR-0008). M3a-4 adds the `log` crate and a `Diagnostics` resource
+(ADR-0012). Interpolation (ADR-0007) is not in the code. Profiling is not in the code. The M2 audit
+date was 2026-10-13 at `4857158`.
 Everything outside the sections "Proposed future architecture" and "Proposed boundaries" exists in the
 repository today, except that "Cross-system requirements and risks" mixes requirements (what must hold) with
 verified current state; each item says which is which. Those two sections are not implemented. A decision
@@ -128,7 +129,20 @@ stage, so its events stay invisible across the remaining iterations and become v
 The queues are cleared after `input_clear`. A send in that stage is not delivered later in the step
 or on the next step. `discarded_events` counts those pending events until the next step. Extract and
 render do not read events. `command_failures` is the only command-failure record. Each entry names
-the stage that flushed it. The list stays readable after `step` returns.
+the stage that flushed it. The list stays readable after `step` returns. `step` logs each failure
+once at the end; the next step clears the list before systems run.
+
+`Diagnostics` is overwritten at the end of `step`. `frame` is the `dt` argument (simulation time).
+`stages` is CPU time around each world stage, measured with `Instant`. `stages.fixed_update` is the
+CPU time of every fixed iteration in the step, not the fixed timestep. `fixed_steps` is the
+iteration count. `render` is not written by `step`; it stays the most recent successful render
+until the runner or `render_to_rgba` copies new `RenderStats`. Extract and render stay outside
+`step`.
+
+Logging uses the `log` crate (ADR-0012). A failed load logs once when it becomes failed. A pending
+load does not. Extraction logs a missing, failed, or invalid renderable asset once per id, remembering
+at most 64 ids. A lost surface logs once and the renderer reconfigures. A window-init or render error
+logs once and the runner exits. Discarded events are counted and not logged.
 
 ```text
 time (advance Time, accumulate the fixed step)
@@ -359,7 +373,7 @@ systems they touch. Each cites evidence from this audit.
 | R-10 | **Animation write path and bone cost.** `animate_system` writes straight onto bone entities; entity-per-bone makes propagation scale with bone count | `clip.rs`; D-33, D-34 | Moderate; contained inside `engine-animation` if the evaluator stays world-free | D-34 first in M11; D-33 by measurement |
 | R-11 | **Material and texture format baked in.** `Material` is a component field, textures are always sRGB, no mipmaps, no sub-rect updates, batching keyed by texture only | `components.rs`, `scene_renderer.rs`; KI-6, KI-25 | Moderate: normal maps, glyph atlases and shadows depend on it | M5, before M8/M10/M14 |
 | R-12 | **Logical versus physical pixels.** The code uses physical pixels everywhere; no scale factor | KI-24 | Moderate, spread across viewport, pointer, UI and screenshots | Forward scale factor and logical size in M3's platform slice, not at M10 |
-| R-13 | **No diagnostics.** No logging; failures are silent or polled | zero logging calls in the workspace | Low now, rising with every call site | Facade chosen in ADR-0012 (`log` crate) and not added. M3a-4 adds it |
+| R-13 | **Diagnostics are counters, not a profile.** Logging is the `log` crate. `Diagnostics` holds one step of CPU stage times, the frame delta, and the latest render stats. There is no history, no per-system timing, and no GPU timestamp | `logging.rs`, `diagnostics.rs`, `missing.rs`; ADR-0012 | Low for the current call sites. A profiler bolted on later would duplicate them | M3a-4 implemented the records and the resource. M20 may add `tracing` or another profiler. The on-screen overlay stays in M10 |
 | R-14 | **Verification is narrower than it looks.** CI now runs on Windows, macOS and Linux (first run green), but only on software or paravirtual adapters, offscreen; GPU tests skip unless `DIMORA_REQUIRE_GPU=1` (CI sets it); windowed and DPI paths, real hardware and performance are unverified; pixel tests use tolerances that held on three rasterisers | TASKS.md "CI results"; KI-3, KI-24, KI-27 | Rises slowly; regressions on real GPUs or windowed paths found by users | Keep CI green and required; add a windowed smoke test when M3b lands the scale factor; real-GPU timing needs a different runner (ADR-0005 option B) |
 | R-15 | **Foundations not yet shaped for the editor.** The editor is a core product goal, but nothing yet carries what it needs: components have no field names, types, ranges or defaults; there are no undoable commands; entities and assets lack stable identities (R-4); no scene format; the renderer draws one view (R-2) so an editor viewport has nowhere to render; `RenderScene` is a one-way snapshot, so picking needs world queries | `components.rs`, `world.rs`, `extract.rs`; CAPABILITIES rows 2, 8, 32, 33, 36 | High: retrofitting field metadata, commands and identities onto many components and systems is the same cost as R-4 and R-5 | Treat editor needs as acceptance criteria of M3 (commands), M4 (registry with field metadata), M6 (camera-to-texture) and M19 (serialization); write no component or system that hides state the editor must edit |
 | R-16 | **Single-view assumptions hide in details.** Evidence: `Upright` sprites are edge-on under a straight-down camera and foreshortened in a steep view (observed, not settled, D-26); cutout content at equal depth follows draw order or depth-test rounding, and `RenderOrder` orders only blended sprites (three conflicts verified by `spatial_scene`, D-48); the world is +Y up with an XZ ground (a provisional convention, ADR-0004) while gameplay orientation and movement planes have no design yet; directional animation (D-31) will read the camera; shadow and light code is not yet written and could assume a perspective view. Isometric, top-down and side are now rendered by example-local constructors | `components.rs` (`SpriteOrientation`), `extract.rs`, `scene_renderer.rs`; `examples/spatial_scene/tests/configurations.rs`; ADR-0004 | High if found late: ordering, orientation and light direction are baked into M7, M8, M13 and M14 | D-48 mechanisms still to choose before M7 and M8, from the recorded conflicts, not before (principles decided by the owner, ADR-0004); M14 tests under three camera configurations |
@@ -380,6 +394,7 @@ These are settled; revisit only with a concrete problem.
 | Change detection (D-02) | None until a recorded profile | ADR-0009, Provisional. The full propagation pass stays. The interpolation previous-local is not a dirty bit |
 | Scheduling (D-01) | Named stages on the existing `Schedule`, `before` / `after` by system name, fixed-step delta restored after `fixed_update` | ADR-0007, implemented in M3a-2. One thread (ADR-0006). Interpolation is not built |
 | Commands and events (D-10) | One FIFO command queue flushed per stage run, including each fixed iteration. Typed events become visible at the next stage boundary and clear after `input_clear` | ADR-0008, implemented in M3a-3. No observers. A fixed iteration does not see events from the same stage |
+| Logging (D-21) | The `log` crate, a stderr logger only when none is installed, and a `Diagnostics` resource | ADR-0012, implemented in M3a-4. Not a profiler. Profiling stays in M20 |
 | Graphics | `wgpu` | One API over Vulkan/Metal/DX12 |
 | Windowing | `winit` 0.30 (`ApplicationHandler`) | Standard; surfaces work with wgpu |
 | Math | Own `f32` crate | Small, deterministic, shaped for `Transform`/`Quat` |

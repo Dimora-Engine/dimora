@@ -1,13 +1,15 @@
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use engine_animation::animate_system;
 use engine_assets::AssetManager;
 use engine_core::{FixedTimestep, Input, InputEvent, Time};
 use engine_math::Vec2;
 use engine_platform::WindowConfig;
-use engine_renderer::{extract_scene, AmbientLight, ExtractStats, RenderScene};
+use engine_renderer::{extract_scene, AmbientLight, ExtractStats, MissingAssetWarnings, RenderScene};
 use engine_renderer_wgpu::{CacheStats, FrameStats, GpuContext, RenderError, SceneRenderer};
 use engine_world::{propagate_transforms, Schedule, ScheduleError, World};
+
+use crate::diagnostics::{Diagnostics, StageDurations};
 
 /// Startup options.
 #[derive(Clone, Debug)]
@@ -52,7 +54,7 @@ pub struct WindowControl {
 }
 
 /// Statistics from the most recent rendered frame.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct RenderStats {
     pub extract: ExtractStats,
     pub frame: FrameStats,
@@ -174,6 +176,8 @@ impl Game {
         world.insert_resource(AmbientLight::default());
         world.insert_resource(WindowControl::default());
         world.insert_resource(RenderStats::default());
+        world.insert_resource(Diagnostics::default());
+        world.insert_resource(MissingAssetWarnings::default());
         world.insert_resource(Viewport(Vec2::new(config.window.width as f32, config.window.height as f32)));
         world.insert_resource(FixedTimestep::new(config.fixed_hz));
         world.insert_resource(StepClock::default());
@@ -295,15 +299,28 @@ impl Game {
     /// is one stage: its events stay invisible through the remaining iterations and become visible
     /// to `update`. Events still pending after `input_clear` are dropped. [`World::discarded_events`]
     /// counts them until the next call. Command failures stay readable until the next call, each
-    /// tagged with the stage that flushed it.
+    /// tagged with the stage that flushed it. Each of those failures is logged once, at the end of
+    /// this call. The next call clears the list before any system runs, so an old failure is not
+    /// logged again.
+    ///
+    /// [`Diagnostics`] records `dt` as [`Diagnostics::frame`] and the CPU time of each stage
+    /// separately. `dt` is simulation time. It is not how long the call took. The fixed-update
+    /// measurement is the CPU time of the whole fixed loop. [`Diagnostics::render`] is left as the
+    /// most recent successful render; this call does not extract or render.
     pub fn step(&mut self, dt: Duration) {
         self.world.clear_command_failures();
         self.world.clear_discarded_events();
         self.world.resource_mut::<StepClock>().dt = dt;
+
+        let started = Instant::now();
         self.time.run(&mut self.world);
         self.after_stage(Stage::Time);
+        let time = started.elapsed();
+
+        let started = Instant::now();
         self.loads.run(&mut self.world);
         self.after_stage(Stage::Loads);
+        let loads = started.elapsed();
 
         let (steps, fixed_dt, frame_delta) = {
             let steps = self.world.resource::<StepClock>().fixed_steps;
@@ -311,23 +328,51 @@ impl Game {
             let frame_delta = self.world.resource::<Time>().delta();
             (steps, fixed_dt, frame_delta)
         };
+        let started = Instant::now();
         for _ in 0..steps {
             self.world.resource_mut::<Time>().set_delta(fixed_dt);
             self.fixed_update.run(&mut self.world);
             self.world.flush_commands_in(Stage::FixedUpdate.name());
         }
         self.world.promote_events();
+        let fixed_update = started.elapsed();
         self.world.resource_mut::<Time>().set_delta(frame_delta);
 
+        let started = Instant::now();
         self.update.run(&mut self.world);
         self.after_stage(Stage::Update);
+        let update = started.elapsed();
+
+        let started = Instant::now();
         self.animate.run(&mut self.world);
         self.after_stage(Stage::Animate);
+        let animate = started.elapsed();
+
+        let started = Instant::now();
         self.post_update.run(&mut self.world);
         self.after_stage(Stage::PostUpdate);
+        let post_update = started.elapsed();
+
+        let started = Instant::now();
         self.input_clear.run(&mut self.world);
         self.world.flush_commands_in(Stage::InputClear.name());
+        let input_clear = started.elapsed();
         self.world.clear_events();
+
+        let failures = self.world.command_failures();
+        for failure in &failures {
+            log::error!("command failed: {failure}");
+        }
+        let entities = self.world.entities.len();
+        let discarded_events = self.world.discarded_events();
+        let fixed_steps = self.world.resource::<StepClock>().fixed_steps;
+        let mut diagnostics = self.world.resource_mut::<Diagnostics>();
+        diagnostics.frame = dt;
+        diagnostics.fixed_steps = fixed_steps;
+        diagnostics.stages = StageDurations { time, loads, fixed_update, update, animate, post_update, input_clear };
+        diagnostics.entities = entities;
+        diagnostics.command_failures = failures.len() as u32;
+        diagnostics.discarded_events = discarded_events;
     }
 
     fn after_stage(&mut self, stage: Stage) {
@@ -406,13 +451,17 @@ impl Game {
         let (gpu, renderer) = self.headless.as_mut().expect("created above");
         let assets = self.world.resource::<AssetManager>();
         let pixels = renderer.render_to_rgba(gpu, &scene, &assets, width, height)?;
-        *self.world.resource_mut::<RenderStats>() =
-            RenderStats { extract: scene.stats, frame: renderer.stats(), cache: renderer.cache_stats() };
+        let stats = RenderStats { extract: scene.stats, frame: renderer.stats(), cache: renderer.cache_stats() };
+        *self.world.resource_mut::<RenderStats>() = stats;
+        self.world.resource_mut::<Diagnostics>().render = stats;
         Ok(pixels)
     }
 
     /// Opens a window and runs until it is closed or [`WindowControl::exit`] is set.
+    ///
+    /// Installs the default stderr logger when the application has not installed one.
     pub fn run(self) -> Result<(), Box<dyn std::error::Error>> {
+        crate::logging::install_stderr_logger();
         crate::runner::run(self)
     }
 }

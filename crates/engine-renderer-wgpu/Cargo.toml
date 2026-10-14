@@ -14,6 +14,7 @@ engine-renderer.workspace = true
 bytemuck = { version = "1", features = ["derive"] }
 pollster = "0.4"
 wgpu = "30"
+log.workspace = true
 
 [dev-dependencies]
 engine-core.workspace = true

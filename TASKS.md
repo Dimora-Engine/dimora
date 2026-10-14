@@ -16,10 +16,11 @@ because they wait on the owner, not on code: licence files (KI-17) and CI (D-22,
 **M6 is in progress for one task.** The camera-configuration test scene was requested and is verified (below). The rest of M6 is not started. Milestone order is unchanged.
 
 **M3a, the frame model, is in progress.** Full scope and acceptance criteria:
-[ROADMAP.md](ROADMAP.md#m3-frame-model-input-and-platform-in-progress). M3a-1, M3a-2 and M3a-3 are done
+[ROADMAP.md](ROADMAP.md#m3-frame-model-input-and-platform-in-progress). M3a-1 through M3a-4 are done
 (evidence below). M3a-2 is commit `312a05f`. Lifecycle anchors are sealed on top of that commit
-(`ecf4fa1`, local, not pushed). M3a-3 is committed locally and is not pushed. M3a-4 is next and is not
-started. The rendering regression baseline is commit `6dbabb8`.
+(`ecf4fa1`, local, not pushed). M3a-3 is commit `cd802f0`, local, not pushed. M3a-4 (logging and
+diagnostics) is committed locally and is not pushed. M3a-5 is next and is not started. The
+rendering regression baseline is commit `6dbabb8`.
 
 ## Completed work
 
@@ -376,7 +377,7 @@ Done on macOS arm64 (2026-10-13); see "Task T3 results" for the evidence and its
 
 Ordered by dependency. Each task is small enough to verify on its own. The milestone-level acceptance
 criteria (ordering test, command and event tests, interpolation test, logging test, byte-identical example
-screenshots against `6dbabb8`, ADRs) are in ROADMAP.md under M3a and are not repeated here. M3a-4 is the
+screenshots against `6dbabb8`, ADRs) are in ROADMAP.md under M3a and are not repeated here. M3a-5 is the
 next task.
 
 | Task | Content | Prerequisite | Done when |
@@ -384,7 +385,7 @@ next task.
 | M3a-1 | **Design note, prototype and ADRs** for D-44, D-01, D-10, D-45, D-47, D-21, and D-02 ("deferred to profiling" is acceptable). A throwaway prototype of stages plus a command buffer is run against the `RefCell` resources (KI-9). No engine code is merged | Owner approval | **Done 2026-10-14.** Evidence under "M3a-1 results". The prototype is not in the tree |
 | M3a-2 | Named stages and `before`/`after` ordering; `Game::step` stops hard-wiring engine stages (KI-10) | M3a-1 | **Done.** Commit `312a05f`, plus the lifecycle-anchor seal. Evidence under "M3a-2 results" |
 | M3a-3 | `Commands` flushed at stage boundaries; typed event channels cleared per frame (KI-9) | M3a-2 | **Done.** Committed locally, not pushed. Evidence under "M3a-3 results" |
-| M3a-4 | Logging facade; asset failure, skipped renderable and surface loss each log once with the cause named (R-13) | M3a-1 | Capturing-logger test: one record naming the asset |
+| M3a-4 | Logging facade; asset failure, skipped renderable and surface loss each log once with the cause named (R-13). `Diagnostics` resource | M3a-1 | **Done.** Committed locally, not pushed. Evidence under "M3a-4 results" |
 | M3a-5 | Fixed-step alpha exposed and opt-in transform interpolation (R-3) | M3a-2 | 60 Hz fixed versus 144 Hz render test; simulation still reads the un-interpolated `Transform` |
 | M3a-6 | No new public `hecs` types. The three-tier rule is already in ARCHITECTURE.md (ADR-0010, from M3a-1). This task reviews the `engine` re-exports. **Not started** | M3a-1 | `engine/src/lib.rs` re-exports reviewed; no new public `hecs` type added by M3a |
 
@@ -475,6 +476,32 @@ systems can join. Extract and render do not read events.
 **Screenshots.** Re-rendered after the review edits and compared with `cmp -s` against `/tmp/m3a-baseline` (the images rendered from the engine at `6dbabb8`, SHA-256 recorded under M3a-2). Debug, 1280×720: `basic_2_5d`, `basic_2_5d --ortho`, `spatial_scene --camera perspective`, `spatial_scene --camera orthographic`. All four identical. SHA-256 unchanged: basic `c3c5874adeea119c98255c6c1d08208c0244224d930d86e8736c280ef88b38fe`, ortho `f2aedc0c4a65e13a33187f391d2a778d073b3befbf1ce207bc6484d961ac980f`, perspective `ec5f6252a88f642b454ae768f9eec8cdd5fba88a5aeb7a424fcefe5fda12275e`, orthographic `3551d84fe2ec1c14fc0729c7a86e2031c068285a6551597ee32d100f76805cde`.
 
 **Repository check.** `scripts/check.sh` on 2026-10-14, after the review edits, exit 0. All 4 steps: fmt, clippy `-D warnings`, `cargo test --workspace` with `DIMORA_REQUIRE_GPU=1` (**191 passed, 0 failed**; 18 in `headless.rs` and 16 in `configurations.rs` ran, none skipped), rustdoc `-D warnings`. `cargo test --workspace -- --list` reports 191 tests. New tests against M3a-2: 10 command tests and 1 event test in `engine-world`, and 6 in `crates/engine/tests/deferred.rs`. The review added the two-writer, query-plus-writer, `try_commands`, panic, discarded-event and end-of-step failure tests. Examples `basic_2_5d` and `spatial_scene` compiled and their existing tests passed.
+
+## M3a-4 results (2026-10-14)
+
+Logging and a `Diagnostics` resource. No profiler, no sample history, no per-system timings, no GPU
+timestamps, no overlay, no interpolation. Committed locally, not pushed.
+
+**Logging.** Workspace dependency `log` 0.4. `Game::run` installs a stderr logger at Info only when
+`log::set_logger` succeeds, and does not change an existing logger's filter. A failed asset load logs
+one warning naming the asset at the transition to `Failed`. A later `process_loads` does not repeat it.
+A new failing load does. A load that is still `Loading` does not log. Extraction logs a skipped sprite,
+mesh, or tilemap once per asset id when the asset is missing, failed, or invalid, and remembers at most
+64 ids without rotating. A later successful extract forgets the id. A lost or outdated surface logs one
+warning and the renderer reconfigures; timeout and occlusion are not logged. Window initialization and
+render errors log the cause and the runner still exits. Each `CommandFailure` is logged once at the end
+of `step`. The list stays readable. The next step clears it before systems run, so an old failure is not
+logged again. Discarded events are counted and not logged.
+
+**Diagnostics.** `Diagnostics` and `StageDurations` live in the `engine` crate. `frame` is the simulation
+`dt`. `stages` is CPU time from `Instant` around each world stage. `stages.fixed_update` is the whole
+fixed loop, not the fixed timestep. `fixed_steps` is the iteration count. `render` is the latest
+successful `RenderStats` and is not written by `step`. Examples print entity count, fixed steps, and
+CPU step time in the window title they already update.
+
+**Screenshots.** Re-rendered after this change and compared with `cmp -s` against `/tmp/m3a-baseline` (the images rendered from the engine at `6dbabb8`). Debug, 1280×720: `basic_2_5d`, `basic_2_5d --ortho`, `spatial_scene --camera perspective`, `spatial_scene --camera orthographic`. All four identical. SHA-256 unchanged: basic `c3c5874adeea119c98255c6c1d08208c0244224d930d86e8736c280ef88b38fe`, ortho `f2aedc0c4a65e13a33187f391d2a778d073b3befbf1ce207bc6484d961ac980f`, perspective `ec5f6252a88f642b454ae768f9eec8cdd5fba88a5aeb7a424fcefe5fda12275e`, orthographic `3551d84fe2ec1c14fc0729c7a86e2031c068285a6551597ee32d100f76805cde`.
+
+**Repository check.** `scripts/check.sh` on 2026-10-14, exit 0. All 4 steps: fmt, clippy `-D warnings`, `cargo test --workspace` with `DIMORA_REQUIRE_GPU=1` (**204 passed, 0 failed**; 18 in `headless.rs` and 16 in `configurations.rs` ran, none skipped), rustdoc `-D warnings`. `cargo test --workspace -- --list` reports 204 tests. New tests against M3a-3: failed-load warning, bounded missing-asset memory, three extract warning tests, surface-loss warning, window and render error logs, application-logger retention, default stderr install, command-failure log, discarded-event silence, stage timings, and render statistics after `render_to_rgba`.
 
 ## Planned systems and their state
 

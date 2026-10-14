@@ -16,3 +16,7 @@ engine-animation.workspace = true
 engine-renderer.workspace = true
 engine-renderer-wgpu.workspace = true
 engine-platform.workspace = true
+log.workspace = true
+
+[dev-dependencies]
+log.workspace = true

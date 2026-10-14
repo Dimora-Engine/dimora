@@ -20,7 +20,9 @@
 //! game.run().unwrap();
 //! ```
 
+mod diagnostics;
 mod game;
+mod logging;
 mod runner;
 
 pub use engine_animation as animation;
@@ -32,11 +34,13 @@ pub use engine_renderer as renderer;
 pub use engine_renderer_wgpu as renderer_wgpu;
 pub use engine_world as world;
 
+pub use diagnostics::{Diagnostics, StageDurations};
 pub use game::{Game, GameConfig, RenderStats, Stage, Viewport, WindowControl};
+pub use logging::install_stderr_logger;
 
 /// Everything a typical game needs in scope.
 pub mod prelude {
-    pub use crate::{Game, GameConfig, RenderStats, Stage, Viewport, WindowControl};
+    pub use crate::{Diagnostics, Game, GameConfig, RenderStats, Stage, StageDurations, Viewport, WindowControl};
     pub use engine_animation::{
         animate_system, spawn_skeleton, AnimationClip, AnimationPlayer, Bone, BoneTrack, Keyframe, Pose, Skeleton,
         SkeletonInstance,

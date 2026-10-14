@@ -286,9 +286,10 @@ fn hud_system(world: &mut World) {
     }
     demo.title_timer = 0.25;
     let stats = *world.resource::<RenderStats>();
+    let diagnostics = *world.resource::<Diagnostics>();
     let player = world.component::<Transform>(demo.player).unwrap().position;
     let title = format!(
-        "2.5D | {} | player ({:.1}, {:.1}, {:.1}) | {} sprites, {} meshes, {} lights | {} draws | gpu cache {} tex {} mesh | {:.0} fps",
+        "2.5D | {} | player ({:.1}, {:.1}, {:.1}) | {} sprites, {} meshes, {} lights | {} draws | gpu cache {} tex {} mesh | {:.0} fps | {} ents, {} fixed, {:.2} ms cpu",
         if demo.perspective { "perspective" } else { "orthographic" },
         player.x,
         player.y,
@@ -300,6 +301,9 @@ fn hud_system(world: &mut World) {
         stats.cache.textures,
         stats.cache.meshes,
         if dt > 0.0 { 1.0 / dt } else { 0.0 },
+        diagnostics.entities,
+        diagnostics.fixed_steps,
+        diagnostics.stages.total().as_secs_f64() * 1000.0,
     );
     world.resource_mut::<WindowControl>().title = Some(title);
 }

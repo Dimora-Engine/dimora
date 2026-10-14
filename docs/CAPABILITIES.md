@@ -50,7 +50,7 @@ without it.
 | 4 | Events and deferred commands | Working | FIFO commands flush per stage run and per fixed iteration. Typed events are visible to later stages and cleared after `input_clear` (ADR-0008). Reading copies the buffer (`T: Clone`). No observers | M3 |
 | 5 | Platform, window, timing | Working, narrow | winit loop, resize, exit; no DPI, fullscreen, vsync, multi-window | M3, M10 |
 | 6 | Input and action mapping | Partial | Keys/mouse state with edges, `axis()`; no actions, gamepad, text | M3 |
-| 7 | Errors, logging, diagnostics, config | Absent / Minimal | Typed errors in crates; no logging. The `log` crate is decided (ADR-0012) and not added. No runtime config; window-title stats | M3 (logging), M20 |
+| 7 | Errors, logging, diagnostics, config | Partial | `log` 0.4 and `Diagnostics` (ADR-0012, M3a-4). No runtime config. No profiler, no history | M20, M24 |
 | **Rendering** | | | | |
 | 8 | Cameras and projection | Working; six views demonstrated by the example | Ortho + perspective, viewport, picking rays; 27 camera tests. `spatial_scene` also renders isometric, top-down, steep and side through example-local constructors (not an engine preset API). One camera/frame; closed projection enum; custom projection still absent | M6 |
 | 9 | Spatial sprites | Working | Orientation modes, region, tint, cutout/alpha; batching test; no atlas packer | M5 |
@@ -85,7 +85,7 @@ without it.
 | 32 | Scenes and lifecycle | Absent | World is flat; `Name`, `Visibility` only | M4 |
 | 33 | Serialization (scenes) | Absent | No `serde`; no component registry | M19 |
 | 34 | Save games and persistent state | Absent, unscheduled | Distinct from scene files | add (M19+) |
-| 35 | Debugging and developer tooling | Minimal | `RenderStats` in the window title; incremental tools planned from M3a (ADR-0003) | M3a, M4, M6, M10, M20 |
+| 35 | Debugging and developer tooling | Partial | `Diagnostics` and `log` (M3a-4). Examples print entity count, fixed steps, and CPU step time in the window title. No inspector, debug draw, or overlay | M4, M6, M10, M20 |
 | 36 | Editor and inspection (core goal) | Absent | Foundations (registry, commands, ids) not yet shaped for it, R-15 | M22 |
 | 37 | Build, CI, packaging | Partial | Pinned toolchain, `check.sh`; no CI, no licence files, no release | M2, M24 |
 | 38 | Docs, examples, tests, onboarding | Partial | Accurate README and docs, 2 examples, 138 tests; no rustdoc guide, no tutorial | M24 |
@@ -168,8 +168,9 @@ Missing from the original category list and now tracked: **save games** (34), **
   `discarded_events` counts it until the next step. Fixed iterations do not see events sent in
   `fixed_update`. `events` returns a copy, so two systems can read the same events. `commands()`
   does not hold the queue borrow, so a second writer in the same system is safe. `try_commands()`
-  returns `None` when the queue is already borrowed. `command_failures()` keeps each `CommandError`
-  with the stage that flushed it, until the next step. A double borrow of one resource still
+  returns `None` when the queue is already borrowed.   `command_failures()` keeps each `CommandError`
+  with the stage that flushed it, until the next step. `Game::step` logs that list once at the end
+  of the step. A double borrow of one resource still
   panics (KI-9). There is no observer list.
 * **Required.** Met by ADR-0008 for the command set and the event lifetime. Collision, animation and
   UI events are later consumers, not part of this queue.
@@ -206,17 +207,30 @@ Missing from the original category list and now tracked: **save games** (34), **
 * **Not initially.** Gamepad, touch, IME, rebinding UI, per-device profiles.
 
 ### 7. Errors, logging, diagnostics, configuration
-* **Now.** Crates return typed errors (`AssetError`, `HierarchyError`, `RenderError`, `PlatformError`);
-  missing assets are counted in `ExtractStats` and drawn as a placeholder (renderer) or skipped (sprites).
-  **No logging at all**, so a failed asset load is visible only to code that polls its state. No runtime
-  configuration file or CLI convention beyond example flags. `unwrap`/`expect` on external-data paths has not
-  been audited (M23).
-* **Required.** A logging facade used by every crate, errors that carry asset names and positions, an
-  in-game surface for them (M20), a panic hook that writes a log file (M24), explicit config.
-* **Planned.** The facade is the `log` crate (ADR-0012), added in M3a-4, not before. Profiling stays in M20. **Depends on.** D-21, which is decided for logging and still open for profiling.
-* **Integration.** Asset failures, script errors, GPU device loss, replays and CI all report here.
-* **Tests/examples.** A test that a failed load emits one error with the asset name.
-* **Not initially.** Remote telemetry, metrics backends, crash upload.
+* **Now.** Crates return typed errors (`AssetError`, `HierarchyError`, `RenderError`, `CommandError`,
+  `PlatformError`). The `log` crate (0.4, ADR-0012) is the logger. `Game::run` installs a stderr logger
+  at Info only when no logger is installed, and does not change an existing filter. A failed asset load
+  logs one warning naming the asset when the load becomes failed; a later `process_loads` does not repeat
+  it; a new failing load does. A load that is still pending does not log. Extraction skips a sprite, mesh,
+  or tilemap whose asset is missing, failed, or invalid, counts it on `ExtractStats.missing_assets`, and
+  logs one warning per asset id. It remembers at most 64 ids and does not rotate that memory. A loaded
+  asset is forgotten, so a later miss logs again. A lost or outdated surface logs one warning and the
+  renderer reconfigures. Window initialization and render errors log the cause and the runner still exits.
+  Timeout and occlusion are not logged. Each new `CommandFailure` is logged once at the end of `step` and
+  stays readable until the next step. `Diagnostics` holds the simulation frame delta, CPU time for each
+  stage (the fixed-update field is the whole loop), the fixed-step count, the entity count, the command
+  failure count, the discarded-event count, and the latest `RenderStats`. `step` does not replace the
+  render statistics. There is no sample history and no per-system timing. No runtime configuration file.
+* **Required.** Errors that carry positions, an in-game surface (M20), a panic hook that writes a log
+  file (M24), explicit config. Profiling stays in M20.
+* **Planned.** M20 may add `tracing` or another profiler without replacing these records. **Depends on.**
+  D-21, decided for logging and still open for profiling.
+* **Integration.** Script errors (M18) use the same crate. Replays and CI are later.
+* **Tests/examples.** Failed-load warning, pending-load silence, missing-renderable dedup, surface-loss
+  warning, render and window errors, command-failure log, stage timings, fixed-step count, render stats
+  after `render_to_rgba`, discarded events with no log line, and an application logger left in place.
+  Both examples include entity count, fixed steps, and CPU step time in the window title.
+* **Not initially.** Remote telemetry, metrics backends, crash upload, per-system profiles, GPU timestamps.
 
 ---
 
@@ -509,8 +523,9 @@ Missing from the original category list and now tracked: **save games** (34), **
   and a save API in M19 or M24. Needs a decision before M18 fixes the store's shape.
 
 ### 35. Debugging and profiling
-* **Now.** Window-title stats only. **Planned (incremental, ADR-0003; ROADMAP "Incremental developer
-  tooling").** Logging and runtime diagnostics (M3a), read-only scene and entity inspection (M4), asset
+* **Now.** `log` records and a `Diagnostics` resource (M3a-4). Examples print a few of those numbers in
+  the window title. No on-screen log, no inspector. **Planned (incremental, ADR-0003; ROADMAP
+  "Incremental developer tooling").** Read-only scene and entity inspection (M4), asset
   validation (M5, M17, M21), render debugging with debug draw and a depth view (M6), an on-screen overlay
   (M10), then M20 consolidates with an edit-capable inspector, profiling scopes (D-21) and collider, skeleton,
   UI and script overlays. **Depends on.** M3a stages, the M4 registry, M6, M10, M19.
@@ -555,7 +570,7 @@ before the related foundation freezes".
 
 | Category | Why it matters | Where it should enter |
 |---|---|---|
-| Diagnostics and logging facade | Every silent failure today is invisible | M3a-4 (`log` crate, ADR-0012). Not added yet |
+| Diagnostics and logging facade | Failures need a record a game can capture | Implemented in M3a-4 (`log` crate, `Diagnostics`, ADR-0012). Profiling remains M20 |
 | DPI and logical versus physical pixels | `Viewport`, pointer, UI scaling and screenshots all change | M3 platform slice |
 | Threading model (`Send`/`Sync`, main thread rules) | Async asset loading, parallel extraction and scripting all depend on it; resources are `RefCell` | Decided (ADR-0006): calling thread owns `World`. Already how the code works |
 | Public API tiers | The facade re-exports every crate including `hecs`, `winit` and `wgpu` | Rule decided (ADR-0010). The list is still M9 |

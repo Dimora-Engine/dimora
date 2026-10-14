@@ -9,6 +9,8 @@ pub struct WindowRenderer {
     pub scene: SceneRenderer,
     surface: wgpu::Surface<'static>,
     config: wgpu::SurfaceConfiguration,
+    /// Set after a lost or outdated surface is logged, cleared after a frame is acquired.
+    surface_loss_noted: bool,
 }
 
 impl WindowRenderer {
@@ -39,7 +41,7 @@ impl WindowRenderer {
         }
         surface.configure(&gpu.device, &config);
         let scene = SceneRenderer::new(&gpu, config.format);
-        Ok(Self { gpu, scene, surface, config })
+        Ok(Self { gpu, scene, surface, config, surface_loss_noted: false })
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
@@ -60,11 +62,16 @@ impl WindowRenderer {
     pub fn render(&mut self, scene: &RenderScene, assets: &AssetManager) -> Result<(), RenderError> {
         use wgpu::CurrentSurfaceTexture as Cst;
         let frame = match self.surface.get_current_texture() {
-            Cst::Success(f) | Cst::Suboptimal(f) => f,
+            Cst::Success(f) | Cst::Suboptimal(f) => {
+                self.surface_loss_noted = false;
+                f
+            }
             Cst::Outdated | Cst::Lost => {
+                note_surface_loss(&mut self.surface_loss_noted);
                 self.surface.configure(&self.gpu.device, &self.config);
                 return Ok(());
             }
+            // Timeout and occlusion can repeat every frame. They skip the present and are not logged.
             Cst::Timeout | Cst::Occluded => return Ok(()),
             Cst::Validation => return Err(RenderError::Surface("validation error acquiring frame".into())),
         };
@@ -72,5 +79,40 @@ impl WindowRenderer {
         self.scene.render(&self.gpu, scene, assets, &view, (self.config.width, self.config.height));
         self.gpu.queue.present(frame);
         Ok(())
+    }
+}
+
+/// Logs the first loss in a run of lost or outdated acquires. A later successful acquire clears
+/// `noted`, so the next loss logs again.
+fn note_surface_loss(noted: &mut bool) {
+    if *noted {
+        return;
+    }
+    *noted = true;
+    log::warn!("window surface lost; reconfiguring");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    mod capture {
+        include!("../../log_capture.rs");
+    }
+
+    #[test]
+    fn a_surface_loss_warns_once_until_the_next_acquire() {
+        capture::begin();
+        let mut noted = false;
+        note_surface_loss(&mut noted);
+        note_surface_loss(&mut noted);
+        assert!(noted);
+        assert_eq!(capture::messages().len(), 1);
+        assert!(capture::messages()[0].contains("window surface lost"));
+        assert_eq!(capture::records()[0].level, log::Level::Warn);
+
+        noted = false;
+        note_surface_loss(&mut noted);
+        assert_eq!(capture::messages().len(), 2, "a later loss is a new occurrence");
     }
 }

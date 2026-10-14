@@ -34,6 +34,7 @@ engine-renderer = { path = "crates/engine-renderer" }
 engine-renderer-wgpu = { path = "crates/engine-renderer-wgpu" }
 engine-platform = { path = "crates/engine-platform" }
 engine = { path = "crates/engine" }
+log = "0.4"
 
 [profile.dev]
 opt-level = 1

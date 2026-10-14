@@ -62,7 +62,7 @@ the risk register). **Prototype where the answer depends on a measurement; do no
 
 | Tier | Decisions | Why now | How to resolve |
 |---|---|---|---|
-| **1. Before M3 code** | D-44 threading, D-01 scheduling, D-10 events and commands, D-02 change detection, D-45 public API tiers, D-47 format versioning, D-21 (logging half) | Every later system is written against the frame, mutation and threading model; R-5, R-7, R-8 get more expensive with every system added | **Decided 2026-10-14** (ADR-0006 through ADR-0012). D-02 is Provisional ("none until profiled"). Stages (D-01), commands and events (D-10) are implemented. Logging, interpolation and change detection are not |
+| **1. Before M3 code** | D-44 threading, D-01 scheduling, D-10 events and commands, D-02 change detection, D-45 public API tiers, D-47 format versioning, D-21 (logging half) | Every later system is written against the frame, mutation and threading model; R-5, R-7, R-8 get more expensive with every system added | **Decided 2026-10-14** (ADR-0006 through ADR-0012). D-02 is Provisional ("none until profiled"). Stages (D-01), commands and events (D-10), and logging (D-21) are implemented. Interpolation and change detection are not. Profiling is not |
 | **2. Before M4/M5** | D-18 (registry shape), D-16 (asset identity), D-05 (alpha classes and materials), D-27 (units) | Persisted data, render model and sprite sizing hang on them; R-1, R-4 | D-16 by a small prototype of a name table plus id; D-05 with a GPU test of a blended mesh against a blended sprite |
 | **3. Before M6** | D-25 projection and D-08 multi-camera and targets first, D-48 camera configurations, D-07 depth, then D-06 pixel policy (opt-in, lowest of these) | Shape of `RenderScene` and the pass list; R-2 | Prototype two cameras into one target |
 | **4. Before M9** | D-28, D-29 (vocabulary), D-30, D-31, D-11 (record) | Define the character and scene API that M10 to M18 depend on | Built against M8's sprite-sheet implementation and the second consumer |
@@ -116,7 +116,7 @@ the risk register). **Prototype where the answer depends on a measurement; do no
 | D-43 | Script hot reload, state, debugging | M18 | M18, M19 | Open |
 | D-19 | Bundle format | M21 | M21, M24 | Open |
 | D-20 | Editor technology | M22 | M22 | Open |
-| D-21 | Logging and profiling crates | **Logging: M3**; profiling: M20 | M3 and every error path; M20, M23 | Logging decided, [ADR-0012](adr/0012-logging-uses-the-log-crate.md) (2026-10-14), not implemented. Profiling still Open (M20) |
+| D-21 | Logging and profiling crates | **Logging: M3**; profiling: M20 | M3 and every error path; M20, M23 | Logging decided, [ADR-0012](adr/0012-logging-uses-the-log-crate.md) (2026-10-14). Implemented in M3a-4 (committed locally, not pushed). Profiling still Open (M20) |
 | D-44 | Threading and `Send`/`Sync` model | M3 (design note) | M3, M17, M18, M23 | Decided, [ADR-0006](adr/0006-simulation-stays-single-threaded.md) (2026-10-14). Matches the code |
 | D-45 | Public API tiers; how much of `hecs`, `winit`, `wgpu` is public | M3 (rule), M9 (list) | M9, M18, M22 | Decided (the rule), [ADR-0010](adr/0010-three-tier-public-api.md) (2026-10-14). The list is still M9 |
 | D-46 | Save games and persisted game state | M18 (shape), M19 | M18, M19, M24 | Open |
@@ -581,7 +581,9 @@ D-46 are still open.
 **Logging decided 2026-10-14: [ADR-0012](adr/0012-logging-uses-the-log-crate.md).** Use the `log` crate,
 added in M3a-4, with a tiny stderr backend when no logger is installed. Not `tracing`, and not an
 engine-owned facade crate. "Once" means once per occurrence, not once per frame while a failure remains.
-Nothing logs yet. Profiling scopes and tooling stay in M20 and are still open.
+Implemented in M3a-4 (committed locally, not pushed): failed loads, skipped renderables (at most 64 remembered ids), surface
+loss, render and window errors, and `CommandFailure` records. `Diagnostics` is the counter resource.
+Profiling scopes and tooling stay in M20 and are still open.
 
 ### D-44 Threading and `Send`/`Sync` model
 

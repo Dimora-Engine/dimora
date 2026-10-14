@@ -45,10 +45,16 @@ Three call sites, each one record per occurrence:
 
 * A load that **becomes** failed logs once, and the record names the asset. A later frame that still sees it failed does not log again. A new failure of that asset logs again.
 * Extraction that skips a renderable because its asset is missing logs once per missing asset. When that asset is available again, a later miss logs again.
-* The runner logs once when a surface is lost or a frame render returns an error, and the record contains the error's cause. It still exits, as it does now.
+* The runner logs an error when window initialization fails or a frame render returns an error, and the record contains the error's cause. It still exits, as it does now.
+* A lost or outdated window surface logs one warning and the renderer reconfigures. The frame loop continues, which is what that path already did. A later successful acquire clears the mark, so the next loss logs again. Timeout and occlusion skip the frame and are not logged.
 
-`Diagnostics` (stage durations, frame `dt`, and the existing render and cache counts) is a resource
-M3a-4 adds so a system can read those numbers. It is not a profiler and it is not the log.
+A load that is still in flight is not a failure and is not logged. Extraction logs a skipped sprite, mesh, or tilemap once per asset id until that asset is loaded again. It remembers at most 64 ids and does not rotate the memory, so a full buffer does not warn again every frame. Further distinct misses stay on `ExtractStats.missing_assets` until a remembered asset loads and frees a slot.
+
+Command failures stay on `command_failures`. `Game::step` logs each new `CommandFailure` once at the end of the step. The next step clears the list before systems run.
+
+`Game::run` installs a stderr logger at Info only when `log::set_logger` succeeds. An application logger, and the filter it set, are left in place.
+
+`Diagnostics` (stage durations, frame `dt`, fixed-step count, entity count, and the existing render and cache counts) is a resource M3a-4 adds so a system can read those numbers. `frame` is the simulation delta, not CPU time. Stage durations are CPU time measured with `Instant`. The fixed-update duration is the whole fixed loop. `render` is the previous successful render until the runner or `render_to_rgba` writes a new one. It is not a profiler and it is not the log.
 
 ## Consequences and follow-up
 

@@ -211,8 +211,9 @@ fn hud_system(world: &mut World) {
         })
         .collect();
     let stats = *world.resource::<RenderStats>();
+    let diagnostics = *world.resource::<Diagnostics>();
     let title = format!(
-        "spatial_scene | {name} ({}) | cam ({:.0}, {:.0}, {:.0}) | {:?} | {} | {} draws | gpu cache {} tex {} mesh",
+        "spatial_scene | {name} ({}) | cam ({:.0}, {:.0}, {:.0}) | {:?} | {} | {} draws | gpu cache {} tex {} mesh | {} ents, {} fixed, {:.2} ms cpu",
         if perspective { "perspective" } else { "orthographic" },
         rig.position.x,
         rig.position.y,
@@ -222,6 +223,9 @@ fn hud_system(world: &mut World) {
         stats.frame.draw_calls,
         stats.cache.textures,
         stats.cache.meshes,
+        diagnostics.entities,
+        diagnostics.fixed_steps,
+        diagnostics.stages.total().as_secs_f64() * 1000.0,
     );
     world.resource_mut::<WindowControl>().title = Some(title);
 }

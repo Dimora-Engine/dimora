@@ -1,4 +1,4 @@
-use engine_assets::AssetManager;
+use engine_assets::{AssetManager, Texture};
 use engine_math::{Mat3, Mat4, Quat, Rect, Vec2, Vec3};
 use engine_world::{Entity, GlobalTransform, Visibility, World};
 
@@ -7,6 +7,7 @@ use crate::components::{
     AmbientLight, Fog, Light, LightKind, Mesh, RenderOrder, Sprite, SpriteBlend, SpriteOrientation, TileMap,
 };
 use crate::frustum::Frustum;
+use crate::missing::{resolve, MissingAssetWarnings};
 use crate::scene::*;
 
 /// Snapshots the world into a [`RenderScene`] for the active camera. `target_size` is the render
@@ -30,6 +31,7 @@ pub fn extract_scene(world: &World, assets: &AssetManager, target_size: Vec2) ->
 
     let mut cutout: Vec<SpriteInstance> = Vec::new();
     let mut blended: Vec<(SortKey, SpriteInstance)> = Vec::new();
+    let mut watch = world.try_resource::<MissingAssetWarnings>().is_some_and(|warnings| !warnings.is_empty());
 
     for (_, (sprite, global, vis, order)) in
         world.query::<(&Sprite, &GlobalTransform, Option<&Visibility>, Option<&RenderOrder>)>().iter()
@@ -37,8 +39,7 @@ pub fn extract_scene(world: &World, assets: &AssetManager, target_size: Vec2) ->
         if matches!(vis, Some(Visibility::Hidden)) {
             continue;
         }
-        let Some(asset) = assets.get(sprite.asset) else {
-            stats.missing_assets += 1;
+        let Some(asset) = resolve(world, assets, sprite.asset, "sprite", &mut watch, &mut stats) else {
             continue;
         };
         let size = sprite.size.unwrap_or_else(|| asset.world_size());
@@ -71,7 +72,10 @@ pub fn extract_scene(world: &World, assets: &AssetManager, target_size: Vec2) ->
         if matches!(vis, Some(Visibility::Hidden)) {
             continue;
         }
-        extract_tilemap(map, &global.matrix, assets, &frustum, &mut cutout, &mut stats);
+        let Some(texture) = resolve(world, assets, map.texture, "tilemap", &mut watch, &mut stats) else {
+            continue;
+        };
+        extract_tilemap(map, &global.matrix, texture, &frustum, &mut cutout, &mut stats);
     }
 
     let mut meshes = Vec::new();
@@ -79,8 +83,7 @@ pub fn extract_scene(world: &World, assets: &AssetManager, target_size: Vec2) ->
         if matches!(vis, Some(Visibility::Hidden)) {
             continue;
         }
-        let Some(data) = assets.get(mesh.asset) else {
-            stats.missing_assets += 1;
+        let Some(data) = resolve(world, assets, mesh.asset, "mesh", &mut watch, &mut stats) else {
             continue;
         };
         let (center, radius) = data.bounding_sphere();
@@ -256,15 +259,11 @@ fn flipped_uv(uv: Rect, flip_x: bool, flip_y: bool) -> [f32; 4] {
 fn extract_tilemap(
     map: &TileMap,
     global: &Mat4,
-    assets: &AssetManager,
+    texture: &Texture,
     frustum: &Frustum,
     out: &mut Vec<SpriteInstance>,
     stats: &mut ExtractStats,
 ) {
-    let Some(texture) = assets.get(map.texture) else {
-        stats.missing_assets += 1;
-        return;
-    };
     // Pull UVs in by a sliver of a texel so perspective minification never samples a neighbour.
     let inset = Vec2::new(0.02 / texture.width as f32, 0.02 / texture.height as f32);
     let cell = Vec2::new(1.0 / map.atlas_columns as f32, 1.0 / map.atlas_rows as f32);

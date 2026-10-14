@@ -15,6 +15,7 @@ pub mod camera;
 pub mod components;
 mod extract;
 pub mod frustum;
+mod missing;
 pub mod projection;
 pub mod scene;
 
@@ -24,6 +25,7 @@ pub use components::{
 };
 pub use extract::extract_scene;
 pub use frustum::Frustum;
+pub use missing::{MissingAssetWarnings, MISSING_ASSET_WARNING_CAPACITY};
 pub use projection::{CameraProjection, Orthographic, Perspective, Projection, ScreenPosition};
 pub use scene::{
     ExtractStats, LightData, MeshInstance, RenderScene, SpriteBatch, SpriteInstance, SpriteLayer, MAX_LIGHTS,

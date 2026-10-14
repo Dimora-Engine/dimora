@@ -12,3 +12,7 @@ engine-math.workspace = true
 engine-core.workspace = true
 engine-world.workspace = true
 engine-assets.workspace = true
+log.workspace = true
+
+[dev-dependencies]
+log.workspace = true

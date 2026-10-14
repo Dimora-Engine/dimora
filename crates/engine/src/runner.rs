@@ -9,7 +9,9 @@ use engine_platform::winit::window::Window;
 use engine_platform::{App, Flow};
 use engine_renderer_wgpu::WindowRenderer;
 
+use crate::diagnostics::Diagnostics;
 use crate::game::{Game, RenderStats, Viewport, WindowControl};
+use crate::logging::{log_render_failure, log_window_init_failure};
 
 pub fn run(game: Game) -> Result<(), Box<dyn std::error::Error>> {
     let window_config = game.config.window.clone();
@@ -30,7 +32,10 @@ impl App for WindowedGame {
         let size = window.inner_size();
         match WindowRenderer::new(window.clone(), Some(Box::new(display)), (size.width, size.height)) {
             Ok(r) => self.renderer = Some(r),
-            Err(e) => self.error = Some(Box::new(e)),
+            Err(e) => {
+                log_window_init_failure(&e);
+                self.error = Some(Box::new(e));
+            }
         }
         self.window = Some(window);
     }
@@ -65,15 +70,18 @@ impl App for WindowedGame {
         if let (Some(renderer), Some(scene)) = (&mut self.renderer, self.game.extract()) {
             let assets = self.game.world.resource::<AssetManager>();
             if let Err(e) = renderer.render(&scene, &assets) {
+                log_render_failure(&e);
                 self.error = Some(Box::new(e));
                 return Flow::Exit;
             }
             drop(assets);
-            *self.game.world.resource_mut::<RenderStats>() = RenderStats {
+            let stats = RenderStats {
                 extract: scene.stats,
                 frame: renderer.scene.stats(),
                 cache: renderer.scene.cache_stats(),
             };
+            *self.game.world.resource_mut::<RenderStats>() = stats;
+            self.game.world.resource_mut::<Diagnostics>().render = stats;
         }
         if exit {
             Flow::Exit

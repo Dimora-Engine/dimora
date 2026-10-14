@@ -412,6 +412,7 @@ dependencies = [
  "engine-renderer",
  "engine-renderer-wgpu",
  "engine-world",
+ "log",
 ]
 
 [[package]]
@@ -431,6 +432,7 @@ dependencies = [
  "bytemuck",
  "engine-math",
  "image",
+ "log",
 ]
 
 [[package]]
@@ -461,6 +463,7 @@ dependencies = [
  "engine-core",
  "engine-math",
  "engine-world",
+ "log",
 ]
 
 [[package]]
@@ -473,6 +476,7 @@ dependencies = [
  "engine-math",
  "engine-renderer",
  "engine-world",
+ "log",
  "pollster",
  "wgpu",
 ]

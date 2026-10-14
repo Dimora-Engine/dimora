@@ -269,9 +269,11 @@ impl AssetManager {
                     let _ = mgr.insert_with_id(id, &name, value);
                 }
                 Err(err) => {
+                    let message = err.to_string();
+                    log::warn!("asset '{name}' failed to load: {message}");
                     let e = mgr.store_mut::<T>().entries.get_mut(&id).expect("entry created by mark_loading");
                     e.state = LoadState::Failed;
-                    e.error = Some(err.to_string());
+                    e.error = Some(message);
                 }
             }
         });
@@ -317,6 +319,10 @@ impl AssetManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    mod capture {
+        include!("../../log_capture.rs");
+    }
 
     fn png_bytes() -> Vec<u8> {
         let mut out = Vec::new();
@@ -368,6 +374,32 @@ mod tests {
         // Loading again is a no-op for loaded assets.
         m.load::<Texture>("tex/a.png").unwrap();
         assert!(!m.has_pending_loads());
+    }
+
+    #[test]
+    fn a_failed_load_warns_once_per_occurrence_and_names_the_asset() {
+        capture::begin();
+        let mut m = AssetManager::in_memory();
+        let bad = m.load::<Texture>("nope.png").unwrap();
+        assert_eq!(m.state(bad), LoadState::Loading);
+        assert!(capture::messages().is_empty(), "a load that has not been processed is not a failure");
+
+        assert_eq!(m.process_loads(), 1);
+        assert_eq!(m.state(bad), LoadState::Failed);
+        let first = capture::messages();
+        assert_eq!(first.len(), 1, "{first:?}");
+        assert!(first[0].contains("asset 'nope.png' failed to load"), "{first:?}");
+        assert_eq!(capture::records()[0].level, log::Level::Warn);
+        assert!(m.error_of(bad).is_some());
+
+        assert_eq!(m.process_loads(), 0);
+        assert_eq!(capture::messages().len(), 1, "processing again does not repeat the warning");
+
+        m.load::<Texture>("nope.png").unwrap();
+        m.process_loads();
+        let again = capture::messages();
+        assert_eq!(again.len(), 2, "{again:?}");
+        assert!(again[1].contains("asset 'nope.png' failed to load"));
     }
 
     #[test]
