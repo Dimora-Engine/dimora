@@ -57,9 +57,10 @@ first" tiers in [docs/DECISIONS.md](docs/DECISIONS.md#what-to-resolve-first).
 * **Now: close M2.** All numbered tasks are done (T1 to T3). Two items remain, both blocked on the owner
   rather than on code: licence files (KI-17, waiting for the owner to confirm a licence) and owner confirmation of GitHub as host (CI itself is done on the PR branch, see TASKS.md). Neither blocks
   M3, so M2 is closed for planning purposes once they are listed as carried items in TASKS.md.
-* **Next: M3a, the frame model** (see M3 below). It is deliberately the first feature milestone because
-  collision, animation, scenes, UI and scripting all hang off its stages, commands and events, and because
-  three high-cost risks (R-5, R-7, R-8) are cheapest to settle before more systems exist.
+* **Now: M3a, the frame model** (see M3 below). Design decisions are recorded (2026-10-14). Implementation
+  has not started. It is first because collision, animation, scenes, UI and scripting all hang off its
+  stages, commands and events, and because three high-cost risks (R-5, R-7, R-8) are cheapest to settle
+  before more systems exist.
 * **Then, in order:** M3b input and platform; M4 scenes and the registry shape; M5 materials and textures;
   M6 renderer stabilisation. M7 (collision) and M8 (sprite sheets) can proceed in parallel after M3a, M4,
   M5 and M6 as stated below; M9 is the first point where APIs freeze.
@@ -195,7 +196,7 @@ Each row is a capability nobody builds yet whose *shape* constrains work in the 
 | Scripting | M18 | Commands, events and a component registry must exist first; scripts get a small versioned surface, not `hecs` or renderer types | Requirements 7 and 9; D-40 to D-45 |
 | Multiple cameras, render targets and a custom projection | M6 | Six views are demonstrated by example-local constructors in `spatial_scene` (2026-10-14). `RenderScene` still holds one view and `Camera` a closed projection enum; do not add features that assume one view, one projection or one ground plane | R-2, R-16; D-08, D-25, D-48; ADR-0004 |
 | Blended meshes, particles, skinned characters | M5, M12, M15 | They need a transparency class in the render model before they exist | R-1; D-05 |
-| Fixed-step interpolation | M3a | No previous-transform data exists; gameplay must keep reading un-interpolated `Transform` | R-3 |
+| Fixed-step interpolation | M3a | No previous-transform data exists. The approach is decided (ADR-0007): opt-in, extraction-only, never writes `Transform` or `GlobalTransform`. Not built | R-3 |
 | UI in screen and world space | M10 | Window scale factor, sub-rectangle texture update and an overlay pass; M3b and M5 carry the prerequisites | R-12, KI-24, KI-25; D-24, D-37 to D-39 |
 | Three character representations | M8, M11, M12 | One gameplay entity with a replaceable visual subtree; gameplay must not name rendering types | D-28 to D-34 |
 | Save games | M18 to M24 | Not a scene file; needs its own versioned format and a state store shaped alongside the script API | D-46, D-47 |
@@ -260,24 +261,32 @@ more on top.
 
 ---
 
-## M3. Frame model, input and platform: Not started
+## M3. Frame model, input and platform: In progress
 
 **Objective.** A deterministic, documented frame with ordered stages, safe mutation and events, and an
 input and platform layer sufficient for a real game. Delivered in **two slices** so each can be completed
 and verified: M3a (the frame model; the immediate milestone) and M3b (input and platform). M3b may start
 once M3a's stage and event API is merged; it does not need M3a's interpolation.
 
-**Prerequisites.** M2 (closed for planning). Decisions made *before code*, as ADRs from M3a's first task:
-D-44 (threading rule), D-01 (scheduling), D-10 (events and commands), D-02 (change detection; "none until
-profiled" is a valid answer), D-45 (public API tiers, rule only), D-47 (format versioning rule), D-21
-(logging crate).
+**Status.** In progress at the design task only. M3a-1 is done (2026-10-14). M3a-2 through M3a-6 and all
+of M3b are not started. No engine code has changed for M3a. The rendering regression baseline is commit
+`6dbabb8`.
+
+**Prerequisites.** M2 (closed for planning). Decisions recorded before implementation code, 2026-10-14:
+D-44 ([ADR-0006](docs/adr/0006-simulation-stays-single-threaded.md)), D-01
+([ADR-0007](docs/adr/0007-named-stages-on-the-existing-schedule.md)), D-10
+([ADR-0008](docs/adr/0008-commands-and-per-frame-events.md)), D-02
+([ADR-0009](docs/adr/0009-no-change-detection-until-measured.md), Provisional: none until profiled), D-45
+([ADR-0010](docs/adr/0010-three-tier-public-api.md), rule only), D-47
+([ADR-0011](docs/adr/0011-persisted-formats-carry-a-version.md)), D-21 logging
+([ADR-0012](docs/adr/0012-logging-uses-the-log-crate.md)). Profiling stays open for M20.
 
 ### M3a. Frame model
 
 **Tasks.**
-1. **Design note and ADRs**, with a throwaway prototype of stages plus a command buffer to check the
-   leaning in D-01/D-10 against the `RefCell` resources (KI-9). Records the threading rule (D-44) so the
-   scheduler is built for it. No engine code merged in this task except ADRs and docs.
+1. **Design note and ADRs** — **done (2026-10-14).** ADR-0006 through ADR-0012. A throwaway command-buffer
+   program was run against the `RefCell` resources and then deleted; findings are in ADR-0008 and
+   TASKS.md. No engine code was merged.
 2. Named stages: input -> fixed update (N steps) -> update -> animate -> post-update (transform
    propagation) -> extract -> render. User systems attach to a stage, with explicit ordering
    (`before`/`after` by name). Engine stages stop being hard-wired inside `Game::step` (D-01).
@@ -289,8 +298,8 @@ profiled" is a valid answer), D-45 (public API tiers, rule only), D-47 (format v
    readable by any system, printed by the examples (first of the incremental tools above).
 5. Expose the fixed-step alpha and add opt-in transform interpolation for entities moved in the fixed
    stage, without changing what simulation reads (R-3).
-6. Stop adding public `hecs` types; write the three-tier rule from D-45 into ARCHITECTURE.md (the full list
-   waits for M9).
+6. Stop adding public `hecs` types. The three-tier rule is already in ARCHITECTURE.md (ADR-0010). This
+   task reviews the `engine` re-exports against that rule. The full list waits for M9.
 
 **Dependencies.** D-44, D-01, D-10, D-02, D-45, D-47, D-21.
 

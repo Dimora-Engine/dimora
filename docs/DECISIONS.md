@@ -62,7 +62,7 @@ the risk register). **Prototype where the answer depends on a measurement; do no
 
 | Tier | Decisions | Why now | How to resolve |
 |---|---|---|---|
-| **1. Before M3 code** | D-44 threading, D-01 scheduling, D-10 events and commands, D-02 change detection, D-45 public API tiers, D-47 format versioning, D-21 (logging half) | Every later system is written against the frame, mutation and threading model; R-5, R-7, R-8 get more expensive with every system added | One design note and a throwaway stage-and-commands prototype in `M3`'s first task. D-02 is allowed to stay "none until profiled" |
+| **1. Before M3 code** | D-44 threading, D-01 scheduling, D-10 events and commands, D-02 change detection, D-45 public API tiers, D-47 format versioning, D-21 (logging half) | Every later system is written against the frame, mutation and threading model; R-5, R-7, R-8 get more expensive with every system added | **Decided 2026-10-14** (ADR-0006 through ADR-0012). D-02 is Provisional ("none until profiled"). The throwaway prototype's findings are in ADR-0008. None of this is implemented |
 | **2. Before M4/M5** | D-18 (registry shape), D-16 (asset identity), D-05 (alpha classes and materials), D-27 (units) | Persisted data, render model and sprite sizing hang on them; R-1, R-4 | D-16 by a small prototype of a name table plus id; D-05 with a GPU test of a blended mesh against a blended sprite |
 | **3. Before M6** | D-25 projection and D-08 multi-camera and targets first, D-48 camera configurations, D-07 depth, then D-06 pixel policy (opt-in, lowest of these) | Shape of `RenderScene` and the pass list; R-2 | Prototype two cameras into one target |
 | **4. Before M9** | D-28, D-29 (vocabulary), D-30, D-31, D-11 (record) | Define the character and scene API that M10 to M18 depend on | Built against M8's sprite-sheet implementation and the second consumer |
@@ -77,9 +77,9 @@ the risk register). **Prototype where the answer depends on a measurement; do no
 | D-04 | GPU cache lifetime | M2 (T2) | M2 eviction, M17 unload | Decided, [ADR-0002](adr/0002-gpu-cache-lifetime.md) (2026-10-13) |
 | D-22 | Code host and CI provider | M2 | CI config, release | Provisional, [ADR-0005](adr/0005-ci-on-github-actions.md) (GitHub Actions; first-run results in TASKS.md) |
 | D-23 | Platform targets, MSRV policy, crates.io | M2 (MSRV), M24 | M24 | MSRV part decided in T1 (1.90); platforms and crates.io still Open |
-| D-01 | Scheduling model | M3 | M3, M7, M8, M10, M15 | Open |
-| D-02 | Change detection | M3 | M3, M4 (dirty transforms), M23 | Open |
-| D-10 | Events and deferred commands | M3 | M3, M4, M7, M8, M18 | Open |
+| D-01 | Scheduling model | M3 | M3, M7, M8, M10, M15 | Decided, [ADR-0007](adr/0007-named-stages-on-the-existing-schedule.md) (2026-10-14). Not implemented |
+| D-02 | Change detection | M3 | M3, M4 (dirty transforms), M23 | Provisional, [ADR-0009](adr/0009-no-change-detection-until-measured.md) (2026-10-14): none until a profile |
+| D-10 | Events and deferred commands | M3 | M3, M4, M7, M8, M18 | Decided, [ADR-0008](adr/0008-commands-and-per-frame-events.md) (2026-10-14). Not implemented |
 | D-18 | Scene format, serde, component registry | M4 (registry shape), M19 | M4, M18, M19, M22 | Open |
 | D-27 | Units and pixels per unit | M5 | M5, M8, M9, M13 | Open |
 | D-05 | Materials, alpha modes, blended meshes | M5 | M5, M14 | Open |
@@ -116,11 +116,11 @@ the risk register). **Prototype where the answer depends on a measurement; do no
 | D-43 | Script hot reload, state, debugging | M18 | M18, M19 | Open |
 | D-19 | Bundle format | M21 | M21, M24 | Open |
 | D-20 | Editor technology | M22 | M22 | Open |
-| D-21 | Logging and profiling crates | **Logging: M3**; profiling: M20 | M3 and every error path; M20, M23 | Open (split by the 2026-10-13 audit) |
-| D-44 | Threading and `Send`/`Sync` model | M3 (design note) | M3, M17, M18, M23 | Open |
-| D-45 | Public API tiers; how much of `hecs`, `winit`, `wgpu` is public | M3 (rule), M9 (list) | M9, M18, M22 | Open |
+| D-21 | Logging and profiling crates | **Logging: M3**; profiling: M20 | M3 and every error path; M20, M23 | Logging decided, [ADR-0012](adr/0012-logging-uses-the-log-crate.md) (2026-10-14), not implemented. Profiling still Open (M20) |
+| D-44 | Threading and `Send`/`Sync` model | M3 (design note) | M3, M17, M18, M23 | Decided, [ADR-0006](adr/0006-simulation-stays-single-threaded.md) (2026-10-14). Matches the code |
+| D-45 | Public API tiers; how much of `hecs`, `winit`, `wgpu` is public | M3 (rule), M9 (list) | M9, M18, M22 | Decided (the rule), [ADR-0010](adr/0010-three-tier-public-api.md) (2026-10-14). The list is still M9 |
 | D-46 | Save games and persisted game state | M18 (shape), M19 | M18, M19, M24 | Open |
-| D-47 | Versioning policy for every persisted format | Before M17 | M17, M19, M21, D-46 | Proposed |
+| D-47 | Versioning policy for every persisted format | Before M17 | M17, M19, M21, D-46 | Decided, [ADR-0011](adr/0011-persisted-formats-carry-a-version.md) (2026-10-14). No format exists yet |
 
 ## Needed during M2 (hardening)
 
@@ -164,32 +164,26 @@ frames. Implemented in T2.
 
 ### D-01 Scheduling model
 
-* **Problem.** The `Schedule` is a sequential list of `FnMut(&mut World)` and the engine stage order is
-  hard-wired in `Game::step` (KI-10).
-* **Options.** (a) Named stages with user systems attached per stage and `before`/`after` by name.
-  (b) A dependency-graph scheduler with automatic ordering from declared access. (c) Keep sequential
-  and only expose stage hooks.
-* **Leaning.** (a). (b) needs access declarations that the `RefCell` resources cannot provide yet, and
-  there is no parallelism requirement.
-* **Needed by.** M3. **Blocks.** M3, and M7, M8, M10, M15 which add stages.
+**Decided 2026-10-14: [ADR-0007](adr/0007-named-stages-on-the-existing-schedule.md).** Named stages and
+`before`/`after` on the existing `Schedule`. During each fixed iteration, `Time::delta` is the fixed
+step and is restored to the frame delta afterward. Interpolation is opt-in and extraction-only, and it
+never writes `Transform` or `GlobalTransform`. `Game::step` is still the hard-wired order; M3a-2
+implements the stages. Rendering regression baseline: commit `6dbabb8`.
 
 ### D-02 Change detection
 
-* **Problem.** `propagate_transforms` visits every entity every frame; nothing can ask "what changed".
-* **Options.** (a) None; keep full passes until profiling (M23) shows a cost. (b) A dirty flag on
-  `Transform` set through a mutation API. (c) Switch ECS or add a tick-based layer.
-* **Leaning.** (a) unless M3 or M4 needs change data for a feature. Profile first (KI-19).
-* **Needed by.** M3. **Blocks.** Dirty-transform propagation in M4, any M23 optimisation.
+**Provisional 2026-10-14: [ADR-0009](adr/0009-no-change-detection-until-measured.md).** No change
+detection until a recorded profile shows the full propagation pass is the cost. The previous-local
+store used for interpolation is not change detection. Revisit only with that profile (KI-19, M23).
 
 ### D-10 Events and deferred commands
 
-* **Problem.** Systems mutate the world directly, resources are `RefCell` so a double borrow panics at
-  run time (KI-9), and there is no way to queue a spawn or despawn during iteration or to publish an
-  event (collision, scene loaded, asset failed).
-* **Options.** (a) Command buffer applied at stage boundaries plus typed event queues cleared per
-  frame. (b) Immediate observers/callbacks. (c) Defer until a feature forces it.
-* **Leaning.** (a); collision (M7) and scene loading (M4) both need it, so (c) only delays the need.
-* **Needed by.** M3. **Blocks.** M3, M4, M7.
+**Decided 2026-10-14: [ADR-0008](adr/0008-commands-and-per-frame-events.md).** One FIFO command queue,
+flushed at the end of each stage run, including each fixed iteration, through the existing `World`
+methods. A failed command changes nothing and does not stop the queue. Typed events become visible at
+the next stage boundary, not to other systems in the emitting stage, and not across fixed iterations.
+Queues clear at the end of `step`. No observers. Not implemented (M3a-3). The throwaway check is in
+the ADR.
 
 ### D-18 Scene format, serde, component registry
 
@@ -575,44 +569,28 @@ this text with results.
 ## Added by the 2026-10-13 audit
 
 These are cross-system decisions the earlier backlog did not list (and D-21, which the audit re-timed).
-Each is open; none has a chosen answer. Leanings are starting points.
+Logging (D-21), D-44, D-45 and D-47 were decided on 2026-10-14. Profiling (the other half of D-21) and
+D-46 are still open.
 
 ### D-21 Logging and profiling crates
 
-* **Problem.** The workspace has no logging at all (verified: no `log`, `tracing` or `println!` in library
-  code). A failed asset load is visible only to code that polls the asset's state. Every error path added
-  before a facade exists will have to be revisited (R-13).
-* **Split by the 2026-10-13 audit.** *Logging* (a facade and where errors go) is needed by **M3**.
-  *Profiling scopes and tooling* stay in M20.
-* **Options.** `log` plus a backend, or `tracing` (spans help profiling later but are a heavier
-  dependency). A facade crate of our own is not worth it. Decide against D-17's dependency rule.
-* **Needed by.** Logging M3; profiling M20. **Blocks.** Asset-failure reporting, script errors (M18),
-  the M20 overlay, M23 measurement.
+**Logging decided 2026-10-14: [ADR-0012](adr/0012-logging-uses-the-log-crate.md).** Use the `log` crate,
+added in M3a-4, with a tiny stderr backend when no logger is installed. Not `tracing`, and not an
+engine-owned facade crate. "Once" means once per occurrence, not once per frame while a failure remains.
+Nothing logs yet. Profiling scopes and tooling stay in M20 and are still open.
 
 ### D-44 Threading and `Send`/`Sync` model
 
-* **Problem.** `World` holds `RefCell` resources and systems are non-`Send` closures, so the simulation is
-  single-threaded by construction, while assets are `Send + Sync` and M17 plans worker-pool loading, M23
-  parallel extraction, and M18 a script runtime that may not be thread-safe. The rule is implicit
-  (R-8). A scheduler designed in M3 without it may need redoing.
-* **Options.** (a) Declare simulation single-threaded on the main thread; parallelism only for asset
-  decode and (later) extraction over `Send` snapshots. (b) Design the scheduler now for parallel systems
-  with declared access. (c) Leave implicit.
-* **Leaning.** (a), stated in an ADR with the rule "anything crossing threads is plain `Send` data".
-  (b) would need access declarations the `RefCell` resources cannot give (see D-01).
-* **Needed by.** The M3 design note. **Blocks.** M3, M17, M18, M23.
+**Decided 2026-10-14: [ADR-0006](adr/0006-simulation-stays-single-threaded.md).** The calling thread owns
+the `World` for the whole step. Systems are not `Send`. `World` stays `!Sync`. Other threads see only
+`Send` snapshots. This is already how the code works. M3a does not add parallel systems. Revisit only
+if a measured gameplay workload cannot meet its budget on one thread.
 
 ### D-45 Public API tiers
 
-* **Problem.** The facade re-exports every crate, including `winit` and `wgpu`; `World.entities` is a
-  public `hecs::World` and `Entity` is hecs's (R-7). Nothing says which items a game, a script facade, UI
-  bindings or the editor may depend on.
-* **Options.** (a) Three tiers (contract, backend seam, internal) written down now and enforced at M9's
-  `docs/API_SURFACE.md`; stop adding public hecs types immediately. (b) Wrap `hecs` fully (own `Entity`,
-  query types). (c) Accept that the engine exposes `hecs` and document it.
-* **Leaning.** (a) now, (c) as a possible honest outcome for the ECS if wrapping proves costly. The
-  decision to make is whether storage swappability is a goal at all; the code does not provide it today.
-* **Needed by.** The rule by M3; the list by M9. **Blocks.** M9, M18, M22.
+**Decided 2026-10-14: [ADR-0010](adr/0010-three-tier-public-api.md).** Three tiers: contract, backend
+seam, and internal. M3a adds no public `hecs` type and does not wrap `hecs`. Existing `winit` and
+`wgpu` re-exports stay until M9 writes `docs/API_SURFACE.md`. The leak is still in the code.
 
 ### D-46 Save games and persisted game state
 
@@ -626,13 +604,11 @@ Each is open; none has a chosen answer. Leanings are starting points.
 
 ### D-47 Versioning policy for persisted formats
 
-* **Problem.** No format exists yet (no `serde`), so a policy is free now and expensive later (R-6).
-* **Proposed.** Every persisted format (asset descriptors, compiled assets, scenes, bundles, saves,
-  settings) carries a magic number or a `version` field from its first line. Loaders reject unknown
-  versions with an error, never a panic. Each version bump ships a migration or a documented break, plus a
-  test that loads a stored older fixture. Ids stored in files are the stable ids of D-16, never entity
-  indices. Pre-1.0 engine versions may break formats, but only with a bump.
-* **Needed by.** Before M17. **Blocks.** M17, M19, M21, D-46.
+**Decided 2026-10-14: [ADR-0011](adr/0011-persisted-formats-carry-a-version.md).** Every persisted format
+(asset descriptors, compiled assets, scenes, bundles, saves, settings) carries a version from its first
+line. Loaders return an error for an unknown version. A bump ships a migration or a documented break,
+plus a test that loads an older fixture. Ids in files are the stable ids of D-16, which is still open,
+never `hecs` indices. No format and no `serde` dependency in M3a.
 
 ### D-48 Camera configurations: gameplay plane, coplanar ordering, orientation per view
 

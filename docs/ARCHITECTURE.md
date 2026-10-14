@@ -1,9 +1,12 @@
 # Architecture
 
-Status: describes the code as of commit `4857158` (re-audited 2026-10-13, after M2 tasks T1 to T3).
+Status: describes the code as of commit `6dbabb8` (M6 spatial scene, 2026-10-14). The M2 audit date was
+2026-10-13 at `4857158`. M3a decisions recorded on 2026-10-14 (ADR-0006 through ADR-0012) are not in the
+code. They are named in the risk responses and under "Proposed future architecture".
 Everything outside the sections "Proposed future architecture" and "Proposed boundaries" exists in the
 repository today, except that "Cross-system requirements and risks" mixes requirements (what must hold) with
-verified current state; each item says which is which. Those two sections are proposals: nothing in them is implemented. Sections that describe
+verified current state; each item says which is which. Those two sections are not implemented. A decision
+recorded there is still not code. Sections that describe
 weaknesses are as important as sections that describe strengths; the roadmap
 ([ROADMAP.md](../ROADMAP.md)) is ordered around them.
 
@@ -165,12 +168,13 @@ Each is verified by reading the code or by a test run; identifiers refer to the 
    identity and its children are still placed, and `despawn` removes the whole subtree (D-03;
    `detach_children` keeps children as roots at the same world transform). Remaining limit: there is no
    dirty tracking, so the pass is O(entities) every frame.
-3. **Scheduling (KI-9, KI-10).** The frame order is hard-coded inside `Game::step`; user systems cannot be
-   placed before/after engine stages, and nothing orders systems relative to each other except
-   insertion. `FixedTimestep::alpha()` exists but is not exposed, so there is no render
-   interpolation for fixed-step motion. Resource access is `RefCell`-based: a double borrow panics
-   at runtime. No deferred commands, so spawning while iterating needs manual care. `hecs` has no
-   change detection or events.
+3. **Scheduling (KI-9, KI-10).** The frame order is still hard-coded inside `Game::step`; user systems
+   cannot be placed before or after engine stages, and nothing orders systems relative to each other
+   except insertion. The replacement is decided and not built: named stages and `before`/`after` on the
+   existing `Schedule` (ADR-0007), FIFO commands and stage-boundary events (ADR-0008), and no change
+   detection until a profile (ADR-0009). `FixedTimestep::alpha()` exists and is not exposed. Resource
+   access is still `RefCell`. A throwaway program (ADR-0008, not in the tree) appended a queue resource
+   during a query, and `spawn` in that same loop did not compile.
 4. **One camera per frame (KI-5).** `Camera.viewport` is honoured, but only one camera renders, so
    split-screen, minimaps and render-to-texture are not possible, and the editor cannot get a second
    viewport.
@@ -248,7 +252,8 @@ transform (D-28).
 `Transform`; tiles, colliders and queries are in world space and 3D, so objects at different Z do not
 collide. Colliders belong to the gameplay entity, not to a visual child. Simulation reads `Transform`
 (fixed step), never the interpolated render transform. Debug draw is the way to see all of it.
-*Gap:* nothing stores a previous or render transform for interpolation (R-3).
+*Gap:* nothing stores a previous or render transform (R-3). The approach is decided in ADR-0007
+(opt-in, extraction-only, never writes `Transform` or `GlobalTransform`) and is not built.
 
 **5. Screen-space and world-space UI.** Two subsystems with a thin join: the UI runtime owns layout,
 interaction and a plain-data draw list; the backend draws it in an overlay pass. They share the device,
@@ -269,7 +274,8 @@ derived asset data in a component), unloads are driven by scene unload (M4) and 
 use the same surface: the component registry (names, visibility, field access), commands applied at
 stage boundaries, events, and the action layer. An editor viewport needs camera-to-texture (D-08) and
 picking through the collision/ray queries, not through GPU readback. The surface is listed in
-`docs/API_SURFACE.md` at M9 (not yet written). *Gap:* none of registry, commands, events exists.
+`docs/API_SURFACE.md` at M9 (not yet written). *Gap:* none of registry, commands or events exists. Command and event
+semantics are settled in ADR-0008 and are not built.
 
 **8. Serialization and hot reload shape foundational data.** To be serializable and reloadable,
 components must be plain data with no GPU objects, borrowed references or cached derived values; every
@@ -280,8 +286,10 @@ at a stage boundary. *Today:* components built so far satisfy the plain-data rul
 `Mesh` carry asset handles that hold only a hash, so a serializer cannot recover the name from a handle.
 That is R-4.
 
-**9. Which public APIs must stay stable, which stay internal.** See R-7 and D-45. Proposed tiers,
-to be fixed in M9's `docs/API_SURFACE.md`:
+**9. Which public APIs must stay stable, which stay internal.** The three tiers are the rule
+([ADR-0010](adr/0010-three-tier-public-api.md), D-45). The inventory of which items sit in which tier
+is still M9's `docs/API_SURFACE.md`, which is not written. M3a adds no public `hecs` type and does not
+wrap `hecs`. Existing `winit` and `wgpu` re-exports stay until that list:
 
 | Tier | Contents | Change rule |
 |---|---|---|
@@ -321,17 +329,17 @@ systems they touch. Each cites evidence from this audit.
 |---|---|---|---|---|
 | R-1 | **`RenderScene` is partitioned by primitive type** (meshes, cutout sprites, blended sprites), not by transparency class. A blended mesh, particle or skinned character has no place to sort against blended sprites | `scene.rs`; the pass order in `scene_renderer.rs`; meshes have no blend mode | Moderate to high: extraction, backend passes and tests for all renderables | Decide transparency classes in D-05 at the start of M5, before particles or blended meshes exist |
 | R-2 | **One camera, one target per frame**; `RenderScene` holds a single view | `extract.rs::active_camera`; KI-5 | High: shadows, editor viewports, render-to-texture and minimaps need a list of views | D-08 in M6 turns the scene into a list of camera passes; do not add features that assume one view |
-| R-3 | **No transform timeline.** `Transform` is current state only: no previous state for interpolation, no dirty tracking, a full propagation pass, and a one-frame latency rule for camera-dependent animation | `hierarchy.rs`; KI-9, KI-10, D-02 | Moderate; additive if done early (a `PreviousTransform` or render-transform stage), invasive once gameplay code depends on a single transform | Settle in M3's design note |
+| R-3 | **No transform timeline.** `Transform` is current state only: no previous state for interpolation, no dirty tracking, a full propagation pass, and a one-frame latency rule for camera-dependent animation | `hierarchy.rs`; KI-9, KI-10, D-02 | Moderate; additive if done early (a `PreviousTransform` or render-transform stage), invasive once gameplay code depends on a single transform | Approach settled in ADR-0007 (opt-in previous local, blend only at extract). Not built. Dirty tracking stays out (ADR-0009) until a profile |
 | R-4 | **Asset identity and retention.** Handles are name hashes with no recoverable name, no reference counting, ids change on rename, and the collision guard is per type | `handle.rs`, `manager.rs`; D-16 | High once scene files, sheets or bundles exist | Decide D-16 before any persisted format (sheet descriptors in M8 are the first); keep names in the manager so handles can be serialized by name or id |
-| R-5 | **Mutation model.** Systems mutate the world directly; resources are `RefCell` (double borrow panics); no commands or events | `resources.rs`; KI-9 | Grows with every system written; scripting and scenes cannot be built safely without it | M3 first; write no new systems before it lands |
-| R-6 | **No format versioning policy.** Nothing persisted exists yet, which is the cheap moment to set one | no `serde`, no formats | Very high after the first release | Proposed rule: every persisted format (asset, scene, bundle, save) carries magic or a `version` field from its first line; each version bump ships a migration test; loaders return errors for unknown versions. Record as an ADR before M17 |
-| R-7 | **Public API leakage.** The facade re-exports every crate, including `engine_platform::winit` and `engine_renderer_wgpu::wgpu`; `World.entities` is a public `hecs::World`; `Entity` is hecs's | `engine/src/lib.rs`, `world.rs`, `platform/src/lib.rs` | High after M9 and M18 promise stability | D-45: tiers (above) fixed by M9; no new public hecs types |
-| R-8 | **Threading model undecided.** `World` is `!Sync` (`RefCell` resources), systems are non-`Send` closures, asset data is `Send + Sync`. Fine for single-threaded simulation, but async loading, parallel extraction and scripts all cross this line | `schedule.rs`, `resources.rs`, `Asset` bound | High if parallel systems are wanted later | D-44: state the rule explicitly (single-threaded simulation, parallel loading and later parallel extraction on `Send` data) so M3's scheduler is designed for it |
+| R-5 | **Mutation model.** Systems mutate the world directly; resources are `RefCell` (double borrow panics); no commands or events | `resources.rs`; KI-9 | Grows with every system written; scripting and scenes cannot be built safely without it | Semantics settled in ADR-0008. Not built (M3a-3). Write no second mutation path before that |
+| R-6 | **No format versioning policy.** Nothing persisted exists yet, which is the cheap moment to set one | no `serde`, no formats | Very high after the first release | Settled in ADR-0011. The first encoder writes a version; loaders return errors for unknown versions. No format in M3a |
+| R-7 | **Public API leakage.** The facade re-exports every crate, including `engine_platform::winit` and `engine_renderer_wgpu::wgpu`; `World.entities` is a public `hecs::World`; `Entity` is hecs's | `engine/src/lib.rs`, `world.rs`, `platform/src/lib.rs` | High after M9 and M18 promise stability | Rule settled in ADR-0010. The leak stays until M9's list. M3a adds no public `hecs` type and does not wrap `hecs` |
+| R-8 | **Threading model.** `World` is `!Sync` (`RefCell` resources), systems are non-`Send` closures, asset data is `Send + Sync`. The simulation is single-threaded; async loading, parallel extraction and scripts cross this line only as `Send` data | `schedule.rs`, `resources.rs`, `Asset` bound | High if parallel systems are wanted later | Settled in ADR-0006. The calling thread owns `World`. M3a's scheduler must not assume parallel systems |
 | R-9 | **Numeric determinism.** `f32` throughout; trigonometry comes from the platform libm and can differ between operating systems, so state hashes for replay may differ across OSes. World size is small enough for `f32` positions today | `engine-math`; M9 replay criterion | Moderate; surfaces as a flaky cross-OS replay test | Policy at M3: replay equality is required on one platform; cross-platform equality is not promised unless simulation avoids platform trig |
 | R-10 | **Animation write path and bone cost.** `animate_system` writes straight onto bone entities; entity-per-bone makes propagation scale with bone count | `clip.rs`; D-33, D-34 | Moderate; contained inside `engine-animation` if the evaluator stays world-free | D-34 first in M11; D-33 by measurement |
 | R-11 | **Material and texture format baked in.** `Material` is a component field, textures are always sRGB, no mipmaps, no sub-rect updates, batching keyed by texture only | `components.rs`, `scene_renderer.rs`; KI-6, KI-25 | Moderate: normal maps, glyph atlases and shadows depend on it | M5, before M8/M10/M14 |
 | R-12 | **Logical versus physical pixels.** The code uses physical pixels everywhere; no scale factor | KI-24 | Moderate, spread across viewport, pointer, UI and screenshots | Forward scale factor and logical size in M3's platform slice, not at M10 |
-| R-13 | **No diagnostics.** No logging; failures are silent or polled | zero logging calls in the workspace | Low now, rising with every call site | Add the facade in M3 (D-21 split) |
+| R-13 | **No diagnostics.** No logging; failures are silent or polled | zero logging calls in the workspace | Low now, rising with every call site | Facade chosen in ADR-0012 (`log` crate) and not added. M3a-4 adds it |
 | R-14 | **Verification is narrower than it looks.** CI now runs on Windows, macOS and Linux (first run green), but only on software or paravirtual adapters, offscreen; GPU tests skip unless `DIMORA_REQUIRE_GPU=1` (CI sets it); windowed and DPI paths, real hardware and performance are unverified; pixel tests use tolerances that held on three rasterisers | TASKS.md "CI results"; KI-3, KI-24, KI-27 | Rises slowly; regressions on real GPUs or windowed paths found by users | Keep CI green and required; add a windowed smoke test when M3b lands the scale factor; real-GPU timing needs a different runner (ADR-0005 option B) |
 | R-15 | **Foundations not yet shaped for the editor.** The editor is a core product goal, but nothing yet carries what it needs: components have no field names, types, ranges or defaults; there are no undoable commands; entities and assets lack stable identities (R-4); no scene format; the renderer draws one view (R-2) so an editor viewport has nowhere to render; `RenderScene` is a one-way snapshot, so picking needs world queries | `components.rs`, `world.rs`, `extract.rs`; CAPABILITIES rows 2, 8, 32, 33, 36 | High: retrofitting field metadata, commands and identities onto many components and systems is the same cost as R-4 and R-5 | Treat editor needs as acceptance criteria of M3 (commands), M4 (registry with field metadata), M6 (camera-to-texture) and M19 (serialization); write no component or system that hides state the editor must edit |
 | R-16 | **Single-view assumptions hide in details.** Evidence: `Upright` sprites are edge-on under a straight-down camera and foreshortened in a steep view (observed, not settled, D-26); cutout content at equal depth follows draw order or depth-test rounding, and `RenderOrder` orders only blended sprites (three conflicts verified by `spatial_scene`, D-48); the world is +Y up with an XZ ground (a provisional convention, ADR-0004) while gameplay orientation and movement planes have no design yet; directional animation (D-31) will read the camera; shadow and light code is not yet written and could assume a perspective view. Isometric, top-down and side are now rendered by example-local constructors | `components.rs` (`SpriteOrientation`), `extract.rs`, `scene_renderer.rs`; `examples/spatial_scene/tests/configurations.rs`; ADR-0004 | High if found late: ordering, orientation and light direction are baked into M7, M8, M13 and M14 | D-48 mechanisms still to choose before M7 and M8, from the recorded conflicts, not before (principles decided by the owner, ADR-0004); M14 tests under three camera configurations |
@@ -347,7 +355,9 @@ These are settled; revisit only with a concrete problem.
 
 | Decision | Choice | Why / trade-off |
 |---|---|---|
-| ECS | `hecs` wrapped by `engine_world::World` | Small archetype ECS with no app framework; gameplay goes through our `World`. **Caveat (R-7): the wrapper does not hide `hecs` today** (`World.entities` is public, `query`/`get` return hecs types, `Entity` is hecs's), so swapping storage would be a breaking change unless D-45 closes that. `bevy_ecs` is more capable (scheduling, change detection) but would shape the engine around its conventions. Cost: we must build scheduling, events and change tracking ourselves |
+| ECS | `hecs` wrapped by `engine_world::World` | Small archetype ECS with no app framework; gameplay goes through our `World`. **Caveat (R-7): the wrapper does not hide `hecs` today** (`World.entities` is public, `query`/`get` return hecs types, `Entity` is hecs's). ADR-0010 does not wrap `hecs` in M3a; it stops new public `hecs` types and leaves the existing leak until M9. `bevy_ecs` is more capable (scheduling, change detection) but would shape the engine around its conventions. Cost: we build scheduling and events ourselves; change tracking waits on a profile (ADR-0009) |
+| Simulation threading (D-44) | The calling thread owns `World` for the whole step; other threads see `Send` snapshots only | ADR-0006. Already how the code works. Parallel gameplay systems are a later decision |
+| Change detection (D-02) | None until a recorded profile | ADR-0009, Provisional. The full propagation pass stays. The interpolation previous-local is not a dirty bit |
 | Graphics | `wgpu` | One API over Vulkan/Metal/DX12 |
 | Windowing | `winit` 0.30 (`ApplicationHandler`) | Standard; surfaces work with wgpu |
 | Math | Own `f32` crate | Small, deterministic, shaped for `Transform`/`Quat` |
@@ -363,11 +373,25 @@ These are settled; revisit only with a concrete problem.
 
 ## Proposed future architecture (NOT implemented)
 
-Direction only; none of this exists. Each item is a roadmap milestone with its own acceptance
-criteria, and several have open decisions in [DECISIONS.md](DECISIONS.md).
+Direction only; none of this exists in the code. Where an ADR is cited, the decision is settled and the
+implementation is still a later task. Each item is a roadmap milestone with its own acceptance
+criteria. Open decisions stay in [DECISIONS.md](DECISIONS.md).
 
-* **Stage-based scheduler** (M3): named engine stages with user systems attachable per stage, fixed-step
-  interpolation, deferred commands, typed event channels.
+* **Frame model** (M3a, decided, not built). [ADR-0007](adr/0007-named-stages-on-the-existing-schedule.md)
+  and [ADR-0008](adr/0008-commands-and-per-frame-events.md). `Game::step` will run named world stages:
+  `time`, `loads`, `fixed_update` (0 to 8 times), `update`, `animate`, `post_update`, `input_clear`.
+  Extract and render stay frame phases in the `engine` crate, after `step`. Inside a stage, `before` /
+  `after` order named systems; a cycle is an error at schedule build. During each fixed iteration,
+  `Time::delta` is the fixed step and is then restored to the frame delta. `elapsed` and `frame` stay
+  frame clocks. Commands are one FIFO queue flushed at the end of each stage run, including each fixed
+  iteration, through the existing `World` methods. A failed command changes nothing and does not stop
+  the queue. Events are invisible inside the emitting stage, including across fixed iterations, and
+  become visible to later stages of the same `step`. Queues clear after `input_clear`. There is no
+  observer framework. Interpolation is opt-in and extraction-only: it never writes `Transform` or
+  `GlobalTransform`. Unsupported cases (no history yet, teleport by copying previous to current, despawn,
+  variable-step writes on a marked entity, 180° rotation, scale sign changes) are listed in ADR-0007.
+  Rendering regression baseline for the later implementation is commit `6dbabb8`. M3a-2 implements
+  stages. M3a-3 implements commands and events. M3a-5 implements interpolation.
 * **Scenes as units** (M4): scene membership, load/unload, a component registry as the base for
   serialization and script exposure.
 * **Material assets and sampler/colour-space-aware textures, sub-rectangle texture updates** (M5).

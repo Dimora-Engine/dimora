@@ -15,11 +15,10 @@ because they wait on the owner, not on code: licence files (KI-17) and CI (D-22,
 
 **M6 is in progress for one task.** The camera-configuration test scene was requested and is verified (below). The rest of M6 is not started. Milestone order is unchanged.
 
-**Next: M3a, the frame model** (full scope and acceptance criteria in [ROADMAP.md](ROADMAP.md#m3-frame-model-input-and-platform-not-started)).
-It is first because collision, animation, scenes, UI and scripting all need defined stages, commands and
-events, and because the threading, mutation and public-API risks (R-5, R-7, R-8) are cheapest to settle
-before more systems exist. **Not started. Begin only when the owner approves the milestone;** the
-design-note task below comes first and merges no engine code.
+**M3a, the frame model, is in progress at the design task.** Full scope and acceptance criteria:
+[ROADMAP.md](ROADMAP.md#m3-frame-model-input-and-platform-in-progress). M3a-1 is done (evidence below).
+M3a-2 has not started, and no frame-model engine code has been merged. The rendering regression baseline
+is commit `6dbabb8`.
 
 ## Completed work
 
@@ -30,7 +29,7 @@ design-note task below comes first and merges no engine code.
 | M2 / T2 GPU resource lifetime and `AssetManager::remove` | Commits `884b0ff`, `1d92ce7`, `5d6a199`, `c3c98f8`; evidence under "Task T2 results" below. Verified on macOS only |
 | M2 / T1 Reproducible toolchain and one verification command | Commits `e08033e`, `3a7a95c`, `7fb2c4d`, `3d467b6`, `89b1fa5`; evidence under "Task T1 results" below. Verified on macOS only |
 | M1 Core spatial renderer | Commits `83d9883`..`6ad872f`: sprite orientation, `RenderOrder`, sprite `region`, camera `ViewportRect`, `spatial_scene`, `docs/SPATIAL_RENDERING.md`. `engine-renderer/tests/camera.rs` (27 tests), GPU tests `camera_viewport_confines_the_image_to_its_rectangle` and `billboards_face_the_camera_but_fixed_quads_go_edge_on` pass with a Vulkan adapter. `spatial_scene` run windowed under Xvfb: figure heights shrink with depth in perspective and stay equal in orthographic |
-| M6 camera-configuration test scene (one task; M6 itself is not done) | Working tree, not committed. Evidence under "M6 test scene" below. Verified on macOS (Apple M5, Metal) only |
+| M6 camera-configuration test scene (one task; M6 itself is not done) | Commit `6dbabb8` (`feat(examples): add M6 spatial scene and camera validation`), same as `origin/main` when M3a-1 started. Evidence under "M6 test scene" below. Verified on macOS (Apple M5, Metal) only. This commit is the rendering regression baseline for M3a |
 
 ## Verification record (2026-10-12)
 
@@ -194,7 +193,9 @@ yet reproduced.
 
 ## M6 test scene (2026-10-14)
 
-One task of M6, done in the working tree and not committed. No engine crate changed. Constructors stay in
+One task of M6, committed as `6dbabb8` and pushed to `origin/main` before M3a-1. That revision is the
+rendering regression baseline: later M3a screenshot checks compare `basic_2_5d` and `spatial_scene`
+(perspective and orthographic) to it. No engine crate changed for the scene. Constructors stay in
 `examples/spatial_scene` (`cameras.rs`): `perspective`, `orthographic`, `isometric`, `top-down`, `steep`,
 `side`. Each returns a `Camera` and a `Transform`. There is no engine preset API.
 
@@ -370,24 +371,50 @@ Done on macOS arm64 (2026-10-13); see "Task T3 results" for the evidence and its
 - The capability audit table now lives in [docs/CAPABILITIES.md](docs/CAPABILITIES.md); update its rows in
   the same commit as any change that moves a system's status.
 
-## Next tasks: M3a, the frame model (not started)
+## Next tasks: M3a, the frame model (design done; implementation not started)
 
 Ordered by dependency. Each task is small enough to verify on its own. The milestone-level acceptance
 criteria (ordering test, command and event tests, interpolation test, logging test, byte-identical example
-screenshots, ADRs) are in ROADMAP.md under M3a and are not repeated here.
+screenshots against `6dbabb8`, ADRs) are in ROADMAP.md under M3a and are not repeated here. M3a-2 is the
+next task. It does not start until the owner says so.
 
 | Task | Content | Prerequisite | Done when |
 |---|---|---|---|
-| M3a-1 | **Design note, prototype and ADRs** for D-44, D-01, D-10, D-45, D-47, D-21, and D-02 ("deferred to profiling" is acceptable). A throwaway prototype of stages plus a command buffer is run against the `RefCell` resources (KI-9). No engine code is merged | Owner approval | The ADRs exist and name their revisit conditions; the prototype's findings are written down; the deleted prototype is not in the tree |
-| M3a-2 | Named stages and `before`/`after` ordering; `Game::step` stops hard-wiring engine stages (KI-10) | M3a-1 | Out-of-order registration test, cycle-is-an-error test, examples ported with byte-identical screenshots |
+| M3a-1 | **Design note, prototype and ADRs** for D-44, D-01, D-10, D-45, D-47, D-21, and D-02 ("deferred to profiling" is acceptable). A throwaway prototype of stages plus a command buffer is run against the `RefCell` resources (KI-9). No engine code is merged | Owner approval | **Done 2026-10-14.** Evidence under "M3a-1 results". The prototype is not in the tree |
+| M3a-2 | Named stages and `before`/`after` ordering; `Game::step` stops hard-wiring engine stages (KI-10). **Not started** | M3a-1 | Out-of-order registration test, cycle-is-an-error test, examples ported with byte-identical screenshots |
 | M3a-3 | `Commands` flushed at stage boundaries; typed event channels cleared per frame (KI-9) | M3a-2 | Command-while-iterating test; event visible later the same frame and gone the next |
 | M3a-4 | Logging facade; asset failure, skipped renderable and surface loss each log once with the cause named (R-13) | M3a-1 | Capturing-logger test: one record naming the asset |
 | M3a-5 | Fixed-step alpha exposed and opt-in transform interpolation (R-3) | M3a-2 | 60 Hz fixed versus 144 Hz render test; simulation still reads the un-interpolated `Transform` |
-| M3a-6 | No new public `hecs` types; write the three-tier rule (D-45) into ARCHITECTURE.md | M3a-1 | `engine/src/lib.rs` re-exports reviewed; the rule is in the docs |
+| M3a-6 | No new public `hecs` types. The three-tier rule is already in ARCHITECTURE.md (ADR-0010, from M3a-1). This task reviews the `engine` re-exports. **Not started** | M3a-1 | `engine/src/lib.rs` re-exports reviewed; no new public `hecs` type added by M3a |
 
 M3b (input actions, scale factor, vsync, fullscreen) starts after M3a-3. M4, M5 and M6 are the next
 milestones; M7 (collision) and M8 (sprite sheets) follow M3a, M4, M5 and M6, then M9 (stable character and
 scene API with a playable slice).
+
+## M3a-1 results (2026-10-14)
+
+Owner approval of the seven decisions and of the two implementation directions (fixed-step delta, opt-in
+extract-only interpolation). Docs and ADRs only. No engine crate changed. Not committed.
+
+**Baseline.** `6dbabb88f10779301115d04720ac1f52000ed03a` (`6dbabb8`, "feat(examples): add M6 spatial scene
+and camera validation") is `HEAD` and `origin/main`. Later screenshot checks compare against that commit.
+
+**ADRs.** ADR-0006 (D-44, Settled), ADR-0007 (D-01, Settled), ADR-0008 (D-10, Settled), ADR-0009 (D-02,
+Provisional), ADR-0010 (D-45, Settled), ADR-0011 (D-47, Settled), ADR-0012 (D-21 logging, Settled).
+Command order, event lifetime and the unsupported interpolation cases are in ADR-0007 and ADR-0008.
+
+**Throwaway experiment.** A program outside the repository, linked against `engine-world` and
+`engine-math`, then deleted. Findings, also in ADR-0008:
+
+* A `query` borrow and `resource_mut` on a queue resource succeed together. One command was appended during iteration.
+* `world.spawn` in that same loop does not compile (`E0502`). The flush has to run after the query is dropped.
+* A FIFO flush through the real `despawn`, `insert` and `set_parent` kept `Parent` / `Children` consistent: last write wins; a command after despawn fails; a command queued before despawn applies, then the entity is gone; a child command after the parent's despawn fails; a `set_parent` cycle fails and the old parent remains.
+* Two overlapping `resource_mut` borrows of the same queue still panic. The implementation must not let that `RefMut` escape.
+
+**Not a blocker for M3a-2.** Stages can be built on the existing `Schedule`. Commands wait for M3a-3.
+The `log` dependency waits for M3a-4. Interpolation waits for M3a-5.
+
+**Repository check.** `scripts/check.sh` on 2026-10-14, exit 0. All 4 steps: fmt, clippy `-D warnings`, `cargo test --workspace` with `DIMORA_REQUIRE_GPU=1` (**158 passed, 0 failed**; the 18 tests in `headless.rs` and the 16 in `configurations.rs` ran, none skipped), rustdoc `-D warnings`. Docs only; this does not re-verify a frame-model change, because none was made.
 
 ## Planned systems and their state
 

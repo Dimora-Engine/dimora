@@ -45,12 +45,12 @@ without it.
 |---|---|---|---|---|
 | **Core runtime** | | | | |
 | 1 | Math, conventions, transforms | Working | 22 tests; `f32`; shear not representable | done |
-| 2 | ECS, world, hierarchy | Working, thin | `hecs` wrapper; 19 tests; no events, change detection, commands | M3, M4 |
-| 3 | Frame loop and scheduling | Minimal | Sequential `Schedule`; stages hard-wired in `Game::step` | M3 |
-| 4 | Events and deferred commands | Absent | Resources are `RefCell`; nothing queues spawns or events | M3 |
+| 2 | ECS, world, hierarchy | Working, thin | `hecs` wrapper; 19 tests; no events, change detection or commands in the code (D-10 decided, D-02 provisional, neither built) | M3, M4 |
+| 3 | Frame loop and scheduling | Minimal | Sequential `Schedule`; stages hard-wired in `Game::step`. Named stages, fixed-step delta and extract-only interpolation are decided (ADR-0007) and not implemented | M3 |
+| 4 | Events and deferred commands | Absent | No command queue or event buffer. FIFO commands and stage-boundary events are decided (ADR-0008) and not implemented | M3 |
 | 5 | Platform, window, timing | Working, narrow | winit loop, resize, exit; no DPI, fullscreen, vsync, multi-window | M3, M10 |
 | 6 | Input and action mapping | Partial | Keys/mouse state with edges, `axis()`; no actions, gamepad, text | M3 |
-| 7 | Errors, logging, diagnostics, config | Absent / Minimal | Typed errors in crates; no logging; no runtime config; window-title stats | M3 (logging), M20 |
+| 7 | Errors, logging, diagnostics, config | Absent / Minimal | Typed errors in crates; no logging. The `log` crate is decided (ADR-0012) and not added. No runtime config; window-title stats | M3 (logging), M20 |
 | **Rendering** | | | | |
 | 8 | Cameras and projection | Working; six views demonstrated by the example | Ortho + perspective, viewport, picking rays; 27 camera tests. `spatial_scene` also renders isometric, top-down, steep and side through example-local constructors (not an engine preset API). One camera/frame; closed projection enum; custom projection still absent | M6 |
 | 9 | Spatial sprites | Working | Orientation modes, region, tint, cutout/alpha; batching test; no atlas packer | M5 |
@@ -132,7 +132,7 @@ Missing from the original category list and now tracked: **save games** (34), **
 * **Performance.** `propagate_transforms` is O(entities) every frame; extraction walks all renderables.
   Unmeasured (KI-19).
 * **Tests/examples.** Hierarchy invariants test (every `Parent` valid), 10k-entity propagation timing (M6).
-* **Unresolved.** D-02 (change detection), D-18 (registry), D-45 (what of `hecs` is public).
+* **Unresolved.** D-18 (registry). D-02 is provisional (ADR-0009: none until a profile). D-45 is decided (ADR-0010): three tiers, no `hecs` wrap in M3a, the public list is still M9.
 * **Not initially.** Parallel systems, reactive change detection, archetype-level APIs.
 
 ### 3. Frame loop and scheduling
@@ -145,14 +145,14 @@ Missing from the original category list and now tracked: **save games** (34), **
 * **Planned.** M3. **Depends on.** D-01, D-02, D-10, D-44. **Integration.** Collision (fixed stage),
   animation (animate stage, camera read from previous propagation, D-31), UI (input stage first), scripts
   (one stage), scenes (apply at a boundary).
-* **Performance.** Sequential is fine until measured; do not add parallelism before D-44.
-* **Tests/examples.** Ordering test, interpolation test, 144 Hz versus 60 Hz determinism test.
-* **Unresolved.** D-01, D-44. **Not initially.** Parallel execution, a dependency-graph scheduler.
+* **Performance.** Sequential is the rule (ADR-0006) until a measured gameplay workload cannot meet its budget on one thread.
+* **Tests/examples.** Ordering test, interpolation test, 144 Hz versus 60 Hz determinism test. None of these exist yet.
+* **Decided, not built.** D-01 (ADR-0007), D-44 (ADR-0006), D-02 (ADR-0009, provisional). **Not initially.** Parallel execution, a dependency-graph scheduler.
 
 ### 4. Events and deferred commands
 * **Purpose.** Communicate between systems without borrowing each other's state; mutate safely mid-stage.
-* **Now.** Nothing. Double borrow of a `RefCell` resource panics at run time (KI-9).
-* **Required.** A command buffer flushed at stage boundaries and typed per-frame event channels (D-10).
+* **Now.** Nothing in the code. Double borrow of a `RefCell` resource panics at run time (KI-9). Semantics are decided (ADR-0008): FIFO commands flushed per stage run, events visible only after the emitting stage, cleared at the end of `step`. A throwaway program confirmed a queue resource can be appended during a query and that `spawn` during that query does not compile.
+* **Required.** The command buffer and typed event channels from ADR-0008. M3a-3 builds them.
 * **Depends on.** D-01. **Integration.** Collision events, animation events, scene load/unload, asset
   failure, UI callbacks, script mutations. The scripting boundary requires it.
 * **Tests/examples.** Commands queued while iterating; event visible later in the same frame and gone the
@@ -192,7 +192,7 @@ Missing from the original category list and now tracked: **save games** (34), **
   been audited (M23).
 * **Required.** A logging facade used by every crate, errors that carry asset names and positions, an
   in-game surface for them (M20), a panic hook that writes a log file (M24), explicit config.
-* **Planned.** The facade moves from M20 to M3 (D-21 split). **Depends on.** D-21.
+* **Planned.** The facade is the `log` crate (ADR-0012), added in M3a-4, not before. Profiling stays in M20. **Depends on.** D-21, which is decided for logging and still open for profiling.
 * **Integration.** Asset failures, script errors, GPU device loss, replays and CI all report here.
 * **Tests/examples.** A test that a failed load emits one error with the asset name.
 * **Not initially.** Remote telemetry, metrics backends, crash upload.
@@ -441,8 +441,7 @@ Missing from the original category list and now tracked: **save games** (34), **
 ### 29. Compiler, bundles, format versioning
 * **Now.** Absent. **Planned.** M21: `dimora-assets` CLI, deterministic bundle with index and content
   hashes read through `AssetSource`, incremental builds, validation. **Depends on.** M17, M19, D-19.
-* **Unresolved.** Versioning and compatibility policy for every on-disk format (assets, scenes, bundles,
-  saves): none exists. Proposed rule in R-6.
+* **Decided, not built.** Every persisted format carries a version from its first line (ADR-0011). No format exists yet.
 
 ---
 
@@ -535,10 +534,10 @@ before the related foundation freezes".
 
 | Category | Why it matters | Where it should enter |
 |---|---|---|
-| Diagnostics and logging facade | Every silent failure today is invisible | M3 (D-21 split) |
+| Diagnostics and logging facade | Every silent failure today is invisible | M3a-4 (`log` crate, ADR-0012). Not added yet |
 | DPI and logical versus physical pixels | `Viewport`, pointer, UI scaling and screenshots all change | M3 platform slice |
-| Threading model (`Send`/`Sync`, main thread rules) | Async asset loading, parallel extraction and scripting all depend on it; resources are `RefCell` | D-44, before M3 ships |
-| Public API tiers | The facade re-exports every crate including `hecs`, `winit` and `wgpu` | D-45, by M9 |
+| Threading model (`Send`/`Sync`, main thread rules) | Async asset loading, parallel extraction and scripting all depend on it; resources are `RefCell` | Decided (ADR-0006): calling thread owns `World`. Already how the code works |
+| Public API tiers | The facade re-exports every crate including `hecs`, `winit` and `wgpu` | Rule decided (ADR-0010). The list is still M9 |
 | Save games and settings | Shipped games need them; format promises start at first release | Decision by M18 |
 | Determinism across platforms | Replay hashes must not depend on libm differences | Policy at M3, enforced at M9 |
 | Gamepad input | Desktop players expect it; action maps must allow it | After M9 (device layer), actions in M3 |
