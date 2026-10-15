@@ -6,11 +6,16 @@
 //!
 //! Spatial components shared by everything that exists in the scene live here: [`Transform`],
 //! [`GlobalTransform`], [`Parent`]/[`Children`], [`Visibility`], [`Name`], [`Interpolate`].
+//!
+//! [`ComponentRegistry`] names those components for debug dumps. It does not serialize them.
 
+mod builtin;
 mod commands;
+mod dump;
 mod events;
 mod hierarchy;
 mod interpolate;
+mod registry;
 mod resources;
 mod schedule;
 mod world;
@@ -21,10 +26,13 @@ mod world;
 /// M3a adds no further `hecs` re-export.
 pub use hecs::{Entity, EntityRef, Query, QueryBorrow};
 
+pub use builtin::register_world_components;
 pub use commands::{CommandError, CommandFailure, CommandWriter};
+pub use dump::DumpError;
 pub use engine_math::Transform;
 pub use hierarchy::{propagate_transforms, Children, GlobalTransform, HierarchyError, Parent};
 pub use interpolate::{snapshot_interpolation, Interpolate};
+pub use registry::{ComponentDesc, ComponentInfo, ComponentRegistry, FieldDesc, Persistence, RegistryError};
 pub use resources::Resources;
 pub use schedule::{Schedule, ScheduleError};
 pub use world::{Name, Visibility, World};

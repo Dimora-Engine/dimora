@@ -23,6 +23,7 @@
 mod diagnostics;
 mod game;
 mod logging;
+mod registry;
 mod runner;
 mod viewport;
 mod window;
@@ -40,6 +41,7 @@ pub use diagnostics::{Diagnostics, StageDurations};
 pub use engine_renderer_wgpu::SurfacePresent as PresentMode;
 pub use game::{Game, GameConfig, RenderStats, Stage, WindowControl};
 pub use logging::install_stderr_logger;
+pub use registry::register_builtin_components;
 pub use viewport::{Viewport, ViewportError};
 pub use window::{CursorGrab, WindowState};
 
@@ -51,8 +53,8 @@ pub use window::{CursorGrab, WindowState};
 /// this module.
 pub mod prelude {
     pub use crate::{
-        CursorGrab, Diagnostics, Game, GameConfig, PresentMode, RenderStats, Stage, StageDurations, Viewport,
-        ViewportError, WindowControl, WindowState,
+        register_builtin_components, CursorGrab, Diagnostics, Game, GameConfig, PresentMode, RenderStats, Stage,
+        StageDurations, Viewport, ViewportError, WindowControl, WindowState,
     };
     pub use engine_animation::{
         animate_system, spawn_skeleton, AnimationClip, AnimationPlayer, Bone, BoneTrack, Keyframe, Pose, Skeleton,
@@ -69,7 +71,8 @@ pub mod prelude {
         Perspective, Projection, RenderOrder, Sprite, SpriteBlend, SpriteOrientation, TileMap, ViewportRect,
     };
     pub use engine_world::{
-        Children, CommandError, CommandFailure, CommandWriter, Entity, GlobalTransform, Interpolate, Name, Parent,
-        Schedule, ScheduleError, Visibility, World,
+        Children, CommandError, CommandFailure, CommandWriter, ComponentDesc, ComponentInfo, ComponentRegistry,
+        DumpError, Entity, FieldDesc, GlobalTransform, Interpolate, Name, Parent, Persistence, RegistryError, Schedule,
+        ScheduleError, Visibility, World,
     };
 }

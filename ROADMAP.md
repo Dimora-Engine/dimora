@@ -59,8 +59,9 @@ first" tiers in [docs/DECISIONS.md](docs/DECISIONS.md#what-to-resolve-first).
   M3, so M2 is closed for planning purposes once they are listed as carried items in TASKS.md.
 * **Now: M3a and M3b are complete locally and are not pushed** (see M3 below). Named stages, commands
   and events, logging, opt-in interpolation, and the public-API review are done. M3b's four phases
-  (keys, actions, viewport scale, window controls) are checkpointed locally. M4 is next and is not
-  started.
+  (keys, actions, viewport scale, window controls) are checkpointed locally. M4 Phase 1 (component
+  registry and text dumps, ADR-0014) is implemented locally and is not pushed. The rest of M4 is not
+  started. M4 is not complete.
   M3a was first because
   collision, animation, scenes, UI and scripting all hang off its stages, commands and events, and because
   three high-cost risks (R-5, R-7, R-8) are cheapest to settle before more systems exist.
@@ -181,7 +182,7 @@ locally (M3a-4, not pushed). The later rows are not built.
 |---|---|---|---|
 | Logging and error reporting | M3a | **Done (M3a-4, committed locally, not pushed).** `log` crate; asset failures, skipped renderables, lost surfaces and render errors named once with the cause | D-21 |
 | Runtime diagnostics | M3a | **Done (M3a-4, committed locally, not pushed).** `Diagnostics`: per-stage CPU timings, frame delta, fixed-step count, entity count, `RenderStats` and cache counts, printed by the examples | M3a stages |
-| Scene and entity inspection | M4 | Read-only text dump of a world, hierarchy and a named entity's registered components and fields | M4 registry (D-18) |
+| Scene and entity inspection | M4 | **Text dump done (M4 Phase 1, local, not pushed).** `dump_hierarchy` and `dump_entity` list runtime ids, names, parent links, registered component names and fields, and unregistered `TypeId`s. No visual inspector | ADR-0014 |
 | Asset validation | M5 (textures, atlases), M17 (importers, dependency graph), M21 (bundle-time) | Reports with the asset name: limits, missing or unused references, malformed data | D-16, D-17 |
 | Render debugging | M6 (debug draw, depth view, camera frusta), M14 (light and shadow views) | Minimal primitives drawn through the real renderer | M6 |
 | On-screen overlay | M10 | Frame time, draw calls and log lines through the UI runtime | M10 |
@@ -377,7 +378,7 @@ multi-window.
 
 ---
 
-## M4. World and scene management: Not started
+## M4. World and scene management: In progress (Phase 1 local, not pushed; not complete)
 
 **Objective.** A scene is a unit that can be built, switched and unloaded without leaking or
 orphaning entities, and the world knows its component types by name.
@@ -396,7 +397,12 @@ orphaning entities, and the world knows its component types by name.
 - Read-only scene and entity inspection: a text dump of the hierarchy and of one entity's registered
   components and fields, built on the registry (first of the inspection tools; no editor code).
 
-**Dependencies.** D-03, D-10, D-18 (registry shape).
+**Dependencies.** D-03, D-10, D-18 (registry shape, [ADR-0014](docs/adr/0014-scene-model-and-component-registry.md)).
+
+**Phase status.** Phase 1 (registry, built-in registration, text dumps) is implemented locally and is not
+pushed. Phases 2–5 are not started: hierarchical visibility, name/tag lookup, scene instances and
+code-defined prefabs (after a spawn-rollback feasibility spike), then the `spatial_scene` switch.
+Asset ownership and persistent entity ids stay open in ADR-0014. Scene files stay in M19.
 
 **Acceptance criteria.**
 - Loading then unloading a scene returns entity count and GPU resource counts to baseline (test).
@@ -404,7 +410,8 @@ orphaning entities, and the world knows its component types by name.
 - Despawning any entity cannot leave a dangling `Parent` (test).
 - `spatial_scene` switches between two scenes at runtime.
 - The dump of a known world lists each entity's registered components and fields, and a component that is
-  not registered is reported as such, not omitted silently (test).
+  not registered is reported as such, not omitted silently (test). **Met by Phase 1.** The other criteria
+  in this list are not met yet.
 
 **Tests/examples.** Scene lifecycle tests; `spatial_scene` scene-switch demo.
 
@@ -1038,8 +1045,7 @@ commands (M3), the component registry (M4), animation (M8, M11), UI (M10), audio
 **Prerequisites.** M3, M4, M9, M10, M16, M17, and the decisions D-40 to D-43. At least one of M8 and M11
 must exist for the animation API to be real.
 
-**What exists today.** Commands and events exist (M3a-3). There is no scripting, no component registry
-and no `serde`. Those gaps are why scripting is scheduled late; building it now would force an API onto code
+**What exists today.** Commands and events exist (M3a-3). The component registry and its inert script flags exist (M4 Phase 1, ADR-0014). There is no scripting and no `serde`. Those gaps are why scripting is scheduled late; building it now would force an API onto code
 that is about to change.
 
 **Tasks.**

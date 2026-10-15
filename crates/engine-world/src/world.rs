@@ -31,7 +31,9 @@ pub struct World {
     /// The underlying component storage, exposed for queries:
     /// `world.entities.query::<(&Transform, &mut Velocity)>()`.
     pub entities: hecs::World,
-    resources: Resources,
+    /// Crate-visible so a dump can borrow storage and the component registry together.
+    /// Other crates use [`World::resource`].
+    pub(crate) resources: Resources,
 }
 
 impl Default for World {
@@ -45,6 +47,7 @@ impl World {
         let mut world = Self { entities: hecs::World::new(), resources: crate::resources::Resources::default() };
         world.insert_resource(crate::commands::Commands::default());
         world.insert_resource(crate::events::EventQueues::default());
+        world.insert_resource(crate::registry::ComponentRegistry::default());
         world
     }
 

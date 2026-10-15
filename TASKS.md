@@ -21,6 +21,10 @@ Lifecycle anchors are `ecf4fa1`. M3a-3 is `cd802f0`. M3a-4 is `5c4fd97`. M3a-5 i
 is the public-API review recorded below. M3b Phases 1–3 are checkpointed locally (`57dbc4a`,
 `83286a9`, `9c99edf`). Phase 4 is checkpointed locally as `cfdf358`. None of M3b is pushed. The rendering regression baseline is commit `6dbabb8`.
 
+**M4 is in progress for Phase 1 only.** The component registry and text dumps are implemented locally
+and are not pushed (ADR-0014). Phases 2–5 are not started. M4 is not complete. Evidence is under
+"M4 Phase 1 results".
+
 ## Completed work
 
 | Milestone | Evidence |
@@ -190,7 +194,7 @@ yet reproduced.
 | KI-26 | macOS dev machine (Apple M5, macOS 27.0): rustc **older than 1.99** cannot link anything, not even `fn main(){}`, with `ld: tapi error: malformed file ... libSystem.B.tbd ... unknown architecture arm64e.x1-macos`. Cause seen: `xcode-select -p` points at Xcode 26.4.1 (`ld-1266.8`) but `xcrun --show-sdk-path` returns the macOS 27.0 SDK from the Command Line Tools, which that linker cannot read; rustc 1.99.0 links fine (not investigated why). Host setup, not engine code; nothing was changed system-wide. Workaround used for the 1.89.0 and 1.90.0 runs: `SDKROOT=/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk`. Proper fix (user's decision): select a matching Xcode or CLT with `xcode-select`, or update Xcode | Verified (hello-world reproduction with 1.89.0 and 1.90.0 fails, with the `SDKROOT` above succeeds, 1.99.0 succeeds without it) | Environment |
 | KI-27 | ~~The MSRV (1.90) was only built on macOS arm64~~ **Verified on all three systems** by the CI `msrv` job: `cargo +1.90.0 test --workspace --locked`, 138 passed, 0 failed on x86_64 Linux, aarch64 macOS and x86_64 Windows (MSVC). The MSRV holds only with the committed `Cargo.lock` | Verified (run 38475229601) | Done |
 | KI-28 | Six views are now rendered by example-local constructors in `spatial_scene` (evidence below). Still true: no engine preset API, no 2D-style game, no custom projection (KI-11). `Upright` is edge-on from straight above and foreshortened in a steep view; that is observed, not accepted as the design (D-26). Coplanar cutout content is ordered by draw order or by depth-test rounding, and `RenderOrder` still orders only blended sprites (D-48, three verified conflicts). The ground plane stays `XZ` (provisional, ADR-0004) | Verified for the demonstration and the conflicts (Apple M5, 2026-10-14). The remaining gaps are unread as designs | M6 |
-| KI-29 | There is no runtime diagnostics resource, no entity or scene dump, no asset validation and no depth or overdraw view; logging is absent (KI-9 family, R-13). The incremental tooling plan in ROADMAP.md delivers these from M3a | Read | M3a, M4, M5, M6 |
+| KI-29 | Logging and `Diagnostics` exist (M3a-4). M4 Phase 1 adds a text hierarchy dump and an entity dump. Still absent: asset validation, a depth or overdraw view, and a visual inspector | Partial (text dump implemented locally, not pushed) | M5, M6, M20 |
 
 ## M6 test scene (2026-10-14)
 
@@ -678,6 +682,20 @@ Deferred, and not acceptance blockers: gamepad, touch, text and IME, UI capture,
 
 Release screenshots at 1280×720 were rendered again and compared with `cmp -s` to the renders of commit `6dbabb8` (`6dbabb88f10779301115d04720ac1f52000ed03a`). All four were byte-identical: `basic_2_5d` 746071 bytes, `basic_2_5d --ortho` 462130, `spatial_scene --camera perspective` 136991, `spatial_scene --camera orthographic` 34046.
 
+## M4 Phase 1 results (2026-10-15)
+
+Implemented locally. Not pushed. M4 is not complete.
+
+**What this change is.** `ComponentRegistry` is a resource inserted empty by `World::new`. Registration is explicit: stable name, `TypeId`, hand-written `FieldDesc` list, optional value formatter, `Persistence`, and inert script flags. `register` rejects duplicate names, a second registration of the same type, conflicting metadata, and an empty or repeated field name. `register_builtin_components` is idempotent when the existing built-in metadata matches, and it still returns those conflicts. `Game::new` calls it once. Text dumps are `World::dump_hierarchy` and `World::dump_entity`. Unregistered components are counted and their `TypeId` debug text is listed. A formatter whose length disagrees with the field list is reported and is not paired onto the wrong fields. ADR-0014 records the settled scene model and the open follow-ups.
+
+**Built-ins.** World: `Name`, `Transform`, `Visibility` (`Persist`); `Parent`, `Children`, `GlobalTransform`, `Interpolate` (`Runtime`). Renderer: `Sprite`, `RenderOrder`, `Mesh`, `TileMap`, `Camera`, `Light` (`Persist`). Animation: `Bone`, `AnimationPlayer`, `SkeletonInstance` (`Runtime`). `Fog` and `AmbientLight` are resources and are not registered. `Material` is a field of `Mesh`.
+
+**Not in this change.** Scene membership, `SceneManager`, hierarchical visibility, name/tag lookup, code-defined prefabs, the spawn-rollback spike, asset removal on unload, and any scene file. No `serde`, RON, or JSON dependency. `extract_scene` is unchanged. Rendering behavior is unchanged.
+
+**Still open (ADR-0014).** Asset ownership: scene membership does not own assets, and `SceneManager` will not delete from a retain count. Spawn rollback: a constrained builder and a feasibility spike come before Phase 4 code; full atomicity is not claimed. Persistent ids: spawn-order `u32`s are a future runtime map only. M19 is not required to store them. Direct despawn outside `SceneManager` is specified for Phase 4 (alive entity plus matching `SceneMember`) and is not implemented. `dump_entity` already returns `DumpError::NoSuchEntity` for a despawned id. D-16 and D-41 stay open.
+
+**Repository check.** `scripts/check.sh` on 2026-10-15, macOS arm64, `rustc 1.99.0`, exit 0, after the registration review. All 4 steps: `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings` (includes `basic_2_5d` and `spatial_scene`), `cargo test --workspace` with `DIMORA_REQUIRE_GPU=1` (**294 passed, 0 failed, 0 ignored**), `cargo doc --workspace --no-deps` with `-D warnings`. The 18 tests in `engine-renderer-wgpu` `tests/headless.rs` and the 16 in `spatial_scene` `tests/configurations.rs` ran. New tests: 14 in `engine-world` `dump::tests`, 2 in `engine` `tests/registry.rs`. Existing hierarchy and world tests still pass. No screenshot compare was run; extraction was not modified.
+
 ## Planned systems and their state
 
 None of these exists. They are in the roadmap so that earlier work does not block them; they are not
@@ -690,14 +708,13 @@ in the current scope.
 | 3D skinned characters (C) | M12 | Not started (KI-23) |
 | Character gameplay layer and API surface | M9 | Not started |
 | UI runtime | M10 | Not started (KI-24, KI-25) |
-| Gameplay scripting | M18 | Not started. Commands and events exist (M3a-3); the component registry does not |
+| Gameplay scripting | M18 | Not started. Commands and events exist (M3a-3). The component registry and inert script flags exist (M4 Phase 1). No script runtime |
 | Audio | M16 | Not started |
 
 ## Not in scope now
 
-M4 and everything after it. In particular: no scene format, no new rendering features, no collision, no
-editor work, and no work on UI, scripting or any of the three character representations until that
-milestone is the current one. M3b is complete locally and is not pushed. These systems are deliberately
+M4 phases 2–5, and everything after M4. In particular: no scene format, no scene manager, no new rendering features, no collision, no
+editor work, and no work on UI, scripting or any of the three character representations. M4 Phase 1 (registry and text dumps) is implemented locally and is not pushed. M4 is not complete. M3b is complete locally and is not pushed. These systems are deliberately
 not being started together: each has its own milestone, prerequisites and decisions. Decisions that data
 formats or public APIs will bake in are made before their first consumer (see
 [docs/DECISIONS.md](docs/DECISIONS.md#what-to-resolve-first)).

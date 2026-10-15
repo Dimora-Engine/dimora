@@ -63,7 +63,7 @@ the risk register). **Prototype where the answer depends on a measurement; do no
 | Tier | Decisions | Why now | How to resolve |
 |---|---|---|---|
 | **1. Before M3 code** | D-44 threading, D-01 scheduling, D-10 events and commands, D-02 change detection, D-45 public API tiers, D-47 format versioning, D-21 (logging half) | Every later system is written against the frame, mutation and threading model; R-5, R-7, R-8 get more expensive with every system added | **Decided 2026-10-14** (ADR-0006 through ADR-0012). D-02 is Provisional ("none until profiled"). Stages (D-01), commands and events (D-10), logging (D-21), and interpolation (D-01, M3a-5, committed locally, not pushed) are implemented. Change detection is not. Profiling is not |
-| **2. Before M4/M5** | D-18 (registry shape), D-16 (asset identity), D-05 (alpha classes and materials), D-27 (units) | Persisted data, render model and sprite sizing hang on them; R-1, R-4 | D-16 by a small prototype of a name table plus id; D-05 with a GPU test of a blended mesh against a blended sprite |
+| **2. Before M4/M5** | D-18 (registry shape, decided in part), D-16 (asset identity), D-05 (alpha classes and materials), D-27 (units) | Persisted data, render model and sprite sizing hang on them; R-1, R-4 | D-18's scene model and registry shape are ADR-0014. D-16 stays open. D-05 with a GPU test of a blended mesh against a blended sprite |
 | **3. Before M6** | D-25 projection and D-08 multi-camera and targets first, D-48 camera configurations, D-07 depth, then D-06 pixel policy (opt-in, lowest of these) | Shape of `RenderScene` and the pass list; R-2 | Prototype two cameras into one target |
 | **4. Before M9** | D-28, D-29 (vocabulary), D-30, D-31, D-11 (record) | Define the character and scene API that M10 to M18 depend on | Built against M8's sprite-sheet implementation and the second consumer |
 | **5. Only at their milestone, after a spike** | D-40 scripting runtime, D-09 physics library, D-24 UI model, D-12, D-14, D-15, D-33, D-35, D-36 | They need measurements or a working neighbour; deciding early would be invention | Each milestone's first task is the spike |
@@ -81,7 +81,7 @@ the risk register). **Prototype where the answer depends on a measurement; do no
 | D-02 | Change detection | M3 | M3, M4 (dirty transforms), M23 | Provisional, [ADR-0009](adr/0009-no-change-detection-until-measured.md) (2026-10-14): none until a profile |
 | D-10 | Events and deferred commands | M3 | M3, M4, M7, M8, M18 | Decided, [ADR-0008](adr/0008-commands-and-per-frame-events.md) (2026-10-14). Implemented in M3a-3 |
 | D-49 | Input actions, fixed-step one-shots, viewport scale, window controls | M3b | M3b, M10 | Decided, [ADR-0013](adr/0013-input-actions-and-window-controls.md) (2026-10-15). Phases 1–4 are checkpointed locally (`57dbc4a`, `83286a9`, `9c99edf`, `cfdf358`) and are not pushed. M3b's acceptance criteria are met |
-| D-18 | Scene format, serde, component registry | M4 (registry shape), M19 | M4, M18, M19, M22 | Open |
+| D-18 | Scene format, serde, component registry | M4 (registry shape), M19 | M4, M18, M19, M22 | Decided in part, [ADR-0014](adr/0014-scene-model-and-component-registry.md) (2026-10-15). Registry shape and scene model are settled. Phase 1 is implemented locally and is not pushed. Asset ownership, spawn rollback, and persistent entity ids stay open. No scene file in M4. D-16 stays open |
 | D-27 | Units and pixels per unit | M5 | M5, M8, M9, M13 | Open |
 | D-05 | Materials, alpha modes, blended meshes | M5 | M5, M14 | Open |
 | D-06 | Pixel-art filtering, texel snapping, MSAA: policies at the level of each technique, **not a default or a foundation** | M6 (after D-25 and D-08) | M6, M8, M9, M13 | Principles accepted (ADR-0004); API ownership and defaults **deferred pending a rendering prototype** |
@@ -211,13 +211,16 @@ is not implemented. None of M3b is pushed.
 
 ### D-18 Scene format, serde, component registry
 
-* **Problem.** There is no way to enumerate or name components, so nothing can be serialized.
-* **Options.** Format: RON, JSON, or a custom text format. Registry: explicit registration of each
-  component type with a stable name and (de)serialize functions, versus derive-based reflection. The
-  registry also needs a per-component and per-field **script visibility** attribute (D-41).
-  Whether to take a `serde` dependency (a deliberate one, not incidental).
-* **Needed by.** The registry's *shape* by M4 (so scene membership and script exposure do not need
-  rework); the format and `serde` choice by M19. **Blocks.** M4, M18, M19, M22.
+**Decided in part 2026-10-15: [ADR-0014](adr/0014-scene-model-and-component-registry.md).** One world,
+code-defined scenes, `SceneMember` for scene-owned entities, and an explicit registry with stable names
+and hand-written field metadata. Hierarchical visibility is an extract-time walk. Registry types live in
+`engine-world`; `engine` registers built-ins. Code-defined prefabs are functions that spawn into that
+world. M4 has no scene file and no `serde`, RON, or JSON dependency. Phase 1 (registry and text dumps)
+is implemented locally and is not pushed.
+
+Still open, inside the same ADR: asset ownership (no retain-count deletion), how a failed spawn rolls
+back, and which id M19 will persist. Spawn-order `u32`s are an M4 runtime map only. D-16 stays open.
+The file encoding, including whether to take `serde`, is M19's decision. Script flags are stored and unused (D-41).
 
 ## Needed during M5-M6 (materials, renderer)
 
@@ -529,9 +532,9 @@ this text with results.
 * **Options.** (a) A hand-written, versioned facade with opaque entity handles; components reachable
   only by registry name and only if marked script-visible, with read/write flags. (b) Derive-based
   reflection exposing every registered component. (c) Per-script capability declarations on top of (a).
-* **Leaning.** (a), with (c) considered once there is more than one kind of script. The component
-  registry (D-18) must allow a visibility attribute, which M4 leaves room for.
-* **Needed by.** The registry's shape by M4; the API surface by M18. **Blocks.** M18.
+* **Leaning.** (a), with (c) considered once there is more than one kind of script. ADR-0014 stores
+  per-component and per-field script flags as inert metadata. No script reads them. D-41 stays open.
+* **Needed by.** The API surface by M18. The registry shape is settled (ADR-0014). **Blocks.** M18.
 
 ### D-42 Script execution model, errors and determinism
 

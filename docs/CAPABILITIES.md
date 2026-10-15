@@ -120,19 +120,20 @@ Missing from the original category list and now tracked: **save games** (34), **
 * **Purpose.** Entities, components, resources, parent/child transforms.
 * **Now.** `World` wraps `hecs` plus typed resources; `Parent`/`Children`; `GlobalTransform` via a full
   `propagate_transforms` pass; `despawn` removes the subtree and `detach_children` keeps children (D-03);
-  transform-less entities are identity (T3). 19 tests. **Weak point:** `World.entities` is a public
+  transform-less entities are identity (T3). M4 Phase 1 adds `ComponentRegistry` and text dumps of the
+  hierarchy and of one entity (ADR-0014). **Weak point:** `World.entities` is a public
   `hecs::World`, and `get`/`query` return hecs types, so storage is *not* swappable despite the earlier
   claim (R-7).
 * **Required.** Safe hierarchy, deterministic iteration, entity references that survive serialization
   and scripting (generation-checked).
-* **Planned.** Hierarchical visibility (KI-18), name/tag lookup, scene membership (M4), dirty
-  transforms only if profiling asks (D-02), component registry (D-18).
+* **Planned.** Hierarchical visibility (KI-18), name/tag lookup, scene membership (M4 phases 2–4). Dirty
+  transforms only if profiling asks (D-02).
 * **Depends on.** Math. **Integration.** Everything is an entity; extraction, animation, UI anchors,
   colliders, scripts and the editor all read it.
 * **Performance.** `propagate_transforms` is O(entities) every frame; extraction walks all renderables.
   Unmeasured (KI-19).
 * **Tests/examples.** Hierarchy invariants test (every `Parent` valid), 10k-entity propagation timing (M6).
-* **Unresolved.** D-18 (registry). D-02 is provisional (ADR-0009: none until a profile). D-45 is decided (ADR-0010): three tiers, no `hecs` wrap in M3a, the public list is still M9.
+* **Unresolved.** D-18's scene-file half, asset ownership, and spawn rollback stay open (ADR-0014). D-02 is provisional (ADR-0009: none until a profile). D-45 is decided (ADR-0010): three tiers, no `hecs` wrap in M3a, the public list is still M9.
 * **Not initially.** Parallel systems, reactive change detection, archetype-level APIs.
 
 ### 3. Frame loop and scheduling
@@ -553,15 +554,14 @@ Missing from the original category list and now tracked: **save games** (34), **
 ## Scenes, tools, production
 
 ### 32. Scenes and lifecycle
-* **Now.** Absent. The world is flat. Entities are created in code; there is no scene unit, no
-  load/unload, no prefab convention; `Visibility::Hidden` does not hide children (KI-18).
-* **Planned.** M4: scene membership and manager (applied at a stage boundary), hierarchical
-  visibility, name/tag lookup, a component registry **shape**, code-defined prefabs. **Depends on.** M2, M3, D-18.
-* **Tests/examples.** Load/unload returns entity and GPU counts to baseline; `spatial_scene` switches scenes.
-* **Not initially.** Async/streamed scenes, multiple worlds, nested prefab variants.
+* **Now.** No scene unit. Entities are still created in code. `Visibility::Hidden` does not hide children (KI-18). The component registry and text dumps exist (M4 Phase 1, ADR-0014). There is no load/unload and no code-defined prefab function yet.
+* **Planned.** The rest of M4: scene membership and manager (applied at a stage boundary), hierarchical
+  visibility, name/tag lookup, and one code-defined prefab function. **Depends on.** M2, M3, ADR-0014. Asset ownership and spawn rollback are still open in that ADR.
+* **Tests/examples.** Phase 1: registry and dump tests. Still to come: load/unload returns entity count to baseline, with GPU counts returned by an explicit `AssetManager::remove` in the test; `spatial_scene` switches scenes.
+* **Not initially.** Async/streamed scenes, multiple worlds, nested prefab variants, scene files.
 
 ### 33. Scene serialization and versioning
-* **Now.** Absent (no `serde`). **Planned.** M19: a text format, serialization through the registry,
+* **Now.** Absent (no `serde`). M4 does not add one (ADR-0014). **Planned.** M19: a text format, serialization through the registry,
   entity-reference remapping, asset references by id, versions and migrations. **Depends on.** M4, M17,
   M18; D-18. **Tests.** Save-load-save byte identity; migration test.
 
@@ -574,8 +574,9 @@ Missing from the original category list and now tracked: **save games** (34), **
 
 ### 35. Debugging and profiling
 * **Now.** `log` records and a `Diagnostics` resource (M3a-4). Examples print a few of those numbers in
-  the window title. No on-screen log, no inspector. **Planned (incremental, ADR-0003; ROADMAP
-  "Incremental developer tooling").** Read-only scene and entity inspection (M4), asset
+  the window title. M4 Phase 1 adds a read-only text dump of the hierarchy and of one entity's registered
+  fields. No on-screen log and no visual inspector. **Planned (incremental, ADR-0003; ROADMAP
+  "Incremental developer tooling").** Asset
   validation (M5, M17, M21), render debugging with debug draw and a depth view (M6), an on-screen overlay
   (M10), then M20 consolidates with an edit-capable inspector, profiling scopes (D-21) and collider, skeleton,
   UI and script overlays. **Depends on.** M3a stages, the M4 registry, M6, M10, M19.

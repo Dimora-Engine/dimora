@@ -10,12 +10,15 @@ modifiers (ADR-0013, `57dbc4a`). Phase 2 adds the fixed-step input latch and `Ac
 checkpointed locally as `83286a9`. Phase 3, physical and logical `Viewport` plus the display scale, is
 checkpointed locally as `9c99edf`. Phase 4, borderless fullscreen, vsync, an optional frame cap,
 cursor grab, and focus-loss cleanup, is checkpointed locally as `cfdf358`. M3b is complete
-locally and is not pushed.
+locally and is not pushed. M4 Phase 1, the component registry and text dumps, is implemented
+locally and is not pushed (ADR-0014). Scene instances, hierarchical visibility, and name/tag lookup
+are accepted and not built. M4 is not complete.
 Profiling is not in the code. The M2 audit
 date was 2026-10-13 at `4857158`.
 Everything outside the sections "Proposed future architecture" and "Proposed boundaries" exists in the
 repository today, except that "Cross-system requirements and risks" mixes requirements (what must hold) with
-verified current state; each item says which is which. Those two sections are not implemented. A decision
+verified current state; each item says which is which. Those two sections are not implemented, except the
+M4 Phase 1 registry and text dumps named in the scene bullet. A decision
 recorded there is still not code. Sections that describe
 weaknesses are as important as sections that describe strengths; the roadmap
 ([ROADMAP.md](../ROADMAP.md)) is ordered around them.
@@ -241,7 +244,7 @@ Each is verified by reading the code or by a test run; identifiers refer to the 
 
 1. **Resource lifetime (KI-4).** Fixed by T2: `AssetManager::remove` exists and the GPU caches evict removed
    and idle entries. Remaining limit: only textures and meshes are cached per asset, instance buffers only
-   grow, and nothing yet calls `remove` for you (scene unload is M4).
+   grow, and nothing calls `remove` for you. Scene unload will not either (ADR-0014): membership does not own assets.
 2. **Hierarchy robustness (KI-7, KI-8).** Fixed by T3: an entity without a `Transform` counts as
    identity and its children are still placed, and `despawn` removes the whole subtree (D-03;
    `detach_children` keeps children as roots at the same world transform). Remaining limit: there is no
@@ -343,15 +346,17 @@ sub-rectangle texture update (KI-25), no overlay pass. Reference-resolution mode
 64-bit hash of a name; the manager owns the data; the renderer keeps GPU copies keyed by id and revision;
 nothing is reference counted; removal is explicit (`remove`) and the renderer follows it (T2).
 *Requirement:* every system that holds an asset resolves it through the manager per use (never caches
-derived asset data in a component), unloads are driven by scene unload (M4) and dependency tracking
-(M17), and failures are reported with the asset name (D-21). *Gap:* see R-4.
+derived asset data in a component), and failures are reported with the asset name (D-21). Scene
+membership does not own assets (ADR-0014): unloading a scene must not remove an asset another entity
+or the application still needs. Exclusive release is unresolved. Dependency tracking stays M17. *Gap:* see R-4. D-16 stays open.
 
 **7. Scripts and editor tools versus the renderer.** (The runtime holds no editor state, see requirement 11.) Neither may reach renderer or wgpu internals. Both
 use the same surface: the component registry (names, visibility, field access), commands applied at
 stage boundaries, events, and the action layer. An editor viewport needs camera-to-texture (D-08) and
 picking through the collision/ray queries, not through GPU readback. The surface is listed in
-`docs/API_SURFACE.md` at M9 (not yet written). *Today:* commands and events exist (M3a-3, ADR-0008).
-The component registry and the action layer do not.
+`docs/API_SURFACE.md` at M9 (not yet written). *Today:* commands, events, and actions exist (M3a-3, M3b, ADR-0008, ADR-0013). The component
+registry's names, field metadata, and text dumps exist (M4 Phase 1, ADR-0014). Scene membership,
+script execution, and serialization do not.
 
 **8. Serialization and hot reload shape foundational data.** To be serializable and reloadable,
 components must be plain data with no GPU objects, borrowed references or cached derived values; every
@@ -425,7 +430,7 @@ systems they touch. Each cites evidence from this audit.
 | R-12 | **Logical versus physical pixels.** `Viewport` stores physical pixels, logical pixels, and the device scale. Rendering and extraction use physical pixels. UI reference-resolution modes are still open | KI-24 (DPI part done in M3b Phase 3, `9c99edf`); D-39 | Lower for the coordinate split. UI fit modes can still spread if they invent a third size | Device scale is M3b Phase 3. Fit/expand/integer modes stay with D-39 at M10 |
 | R-13 | **Diagnostics are counters, not a profile.** Logging is the `log` crate. `Diagnostics` holds one step of CPU stage times, the frame delta, and the latest render stats. There is no history, no per-system timing, and no GPU timestamp | `logging.rs`, `diagnostics.rs`, `missing.rs`; ADR-0012 | Low for the current call sites. A profiler bolted on later would duplicate them | M3a-4 implemented the records and the resource. M20 may add `tracing` or another profiler. The on-screen overlay stays in M10 |
 | R-14 | **Verification is narrower than it looks.** CI now runs on Windows, macOS and Linux (first run green), but only on software or paravirtual adapters, offscreen; GPU tests skip unless `DIMORA_REQUIRE_GPU=1` (CI sets it). A macOS window was checked for DPI (Phase 3). Phase 4's macOS window check is the one recorded in TASKS.md; Windows and Linux windowed paths are unverified. Performance is unmeasured. Pixel tests use tolerances that held on three rasterisers | TASKS.md "CI results" and "M3b Phase 4 results"; KI-3, KI-24, KI-27 | Rises slowly; regressions on real GPUs or untested windowed paths found by users | Keep CI green and required. Real-GPU timing needs a different runner (ADR-0005 option B) |
-| R-15 | **Foundations not yet shaped for the editor.** The editor is a core product goal, but nothing yet carries what it needs: components have no field names, types, ranges or defaults; there are no undoable commands; entities and assets lack stable identities (R-4); no scene format; the renderer draws one view (R-2) so an editor viewport has nowhere to render; `RenderScene` is a one-way snapshot, so picking needs world queries | `components.rs`, `world.rs`, `extract.rs`; CAPABILITIES rows 2, 8, 32, 33, 36 | High: retrofitting field metadata, commands and identities onto many components and systems is the same cost as R-4 and R-5 | Treat editor needs as acceptance criteria of M3 (commands), M4 (registry with field metadata), M6 (camera-to-texture) and M19 (serialization); write no component or system that hides state the editor must edit |
+| R-15 | **Foundations not yet shaped for the editor.** Registered components now have hand-written field names and a persistence class (M4 Phase 1, ADR-0014). Those lists are not derived from the structs. Unregistered components still have none. There is no undo stack, entities and assets still lack stable file ids (R-4), there is no scene format, and the renderer draws one view (R-2) | `registry.rs`, `components.rs`, `world.rs`, `extract.rs`; CAPABILITIES rows 2, 8, 32, 33, 36 | High for the parts still missing: commands exist, but editor undo, identities, and a viewport do not | M4 still owes scene membership. M6 owes camera-to-texture. M19 owes serialization. Write no component that hides state the editor must edit |
 | R-16 | **Single-view assumptions hide in details.** Evidence: `Upright` sprites are edge-on under a straight-down camera and foreshortened in a steep view (observed, not settled, D-26); cutout content at equal depth follows draw order or depth-test rounding, and `RenderOrder` orders only blended sprites (three conflicts verified by `spatial_scene`, D-48); the world is +Y up with an XZ ground (a provisional convention, ADR-0004) while gameplay orientation and movement planes have no design yet; directional animation (D-31) will read the camera; shadow and light code is not yet written and could assume a perspective view. Isometric, top-down and side are now rendered by example-local constructors | `components.rs` (`SpriteOrientation`), `extract.rs`, `scene_renderer.rs`; `examples/spatial_scene/tests/configurations.rs`; ADR-0004 | High if found late: ordering, orientation and light direction are baked into M7, M8, M13 and M14 | D-48 mechanisms still to choose before M7 and M8, from the recorded conflicts, not before (principles decided by the owner, ADR-0004); M14 tests under three camera configurations |
 
 Expensive redesigns, ranked by likelihood times cost, if nothing changes: **R-4 (asset identity)**, **R-1
@@ -457,6 +462,7 @@ These are settled; revisit only with a concrete problem.
 | Assets | Typed handles holding a name hash; manager owns data; sources behind a trait | Components can reference assets before they load |
 | Despawn (D-03) | `despawn` removes the whole subtree; `detach_children` keeps children as roots with their world transform | Bones and attachments are owned by their parent, so orphans are never wanted. Cost: a caller who wants children to survive must say so |
 | GPU cache lifetime (D-04) | Evict a cached texture or mesh when its asset is removed, and when unused for N frames (configurable) | Removed assets are freed promptly and off-screen assets are not re-uploaded every frame. Cost: an asset unused for N frames is re-uploaded when it returns |
+| Scene model and registry (D-18) | One world; code-defined scenes; explicit registration; no scene file in M4 | ADR-0014. Phase 1 is the registry and text dumps. Asset ownership, spawn rollback, and persistent entity ids stay open. Scene files stay in M19 |
 
 ## Proposed future architecture (NOT implemented)
 
@@ -464,8 +470,9 @@ Direction only; none of this exists in the code. Where an ADR is cited, the deci
 implementation is still a later task. Each item is a roadmap milestone with its own acceptance
 criteria. Open decisions stay in [DECISIONS.md](DECISIONS.md).
 
-* **Scenes as units** (M4): scene membership, load/unload, a component registry as the base for
-  serialization and script exposure.
+* **Scenes as units** (M4): the registry and text dumps exist (Phase 1, ADR-0014). Scene membership,
+  load/unload, hierarchical visibility, and name/tag lookup are accepted and not built. Serialization
+  stays in M19.
 * **Material assets and sampler/colour-space-aware textures, sub-rectangle texture updates** (M5).
 * **A list of camera passes** instead of one `RenderScene` camera, plus render-to-texture (M6).
 * **A collision world** as a resource rebuilt in the fixed stage, with spatial 3D queries (M7).
@@ -599,8 +606,8 @@ scaling model (D-39).
 
 ### 5. Engine runtime and scripting runtime
 
-**Exists today.** No scripting. There is also no component registry, no command buffer, no event channel
-and no `serde`, which are prerequisites for a safe script boundary.
+**Exists today.** No scripting and no `serde`. Commands, events, and the component registry exist
+(ADR-0008, ADR-0014). The registry stores script-visibility flags and no script reads them.
 
 **Proposed (D-40, D-42).**
 
@@ -621,8 +628,8 @@ and no `serde`, which are prerequisites for a safe script boundary.
 
 ### 6. Script-facing APIs and internal engine APIs
 
-**Exists today.** Only internal APIs: `World`, `AssetManager`, `Schedule`, the renderer and `wgpu`
-are all public Rust items.
+**Exists today.** Internal APIs: `World`, `AssetManager`, `Schedule`, the renderer and `wgpu`
+are public Rust items. The component registry stores inert script-visible and script-writable flags (M4 Phase 1, ADR-0014). No script reads them.
 
 **Proposed (D-41).**
 
@@ -640,6 +647,5 @@ are all public Rust items.
 * The API surface list from M9 (`docs/API_SURFACE.md`) is the set of internal APIs a script facade, UI
   bindings or the editor may depend on; everything else is internal and free to change.
 
-**Unresolved.** Facade versus reflection and the visibility attribute's shape (D-41), which M4 must leave
-room for in the component registry (D-18).
+**Unresolved.** Facade versus reflection (D-41). The registry already stores the flags as inert metadata (ADR-0014). D-41 still decides whether a script facade reads them.
 

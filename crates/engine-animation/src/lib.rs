@@ -10,7 +10,9 @@
 //! constraints. Those will operate on [`Pose`] before it is written to the bone entities.
 
 mod clip;
+mod registry;
 mod skeleton;
 
 pub use clip::{animate_system, AnimationClip, AnimationPlayer, BoneTrack, Keyframe};
+pub use registry::register_animation_components;
 pub use skeleton::{spawn_skeleton, Bone, BoneDef, Pose, Skeleton, SkeletonError, SkeletonInstance};

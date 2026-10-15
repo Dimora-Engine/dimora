@@ -217,6 +217,7 @@ pub struct Game {
 impl Game {
     pub fn new(config: GameConfig) -> Self {
         let mut world = World::new();
+        crate::registry::register_builtin_components(&world).expect("built-in components have distinct names");
         let assets = match &config.asset_root {
             Some(root) => AssetManager::filesystem(root),
             None => AssetManager::in_memory(),
