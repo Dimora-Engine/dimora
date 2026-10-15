@@ -278,7 +278,7 @@ collapsed modifiers) is checkpointed locally as `57dbc4a` and is not pushed. Pha
 latch and `Actions`) is checkpointed locally as `83286a9` and is not pushed. Phase 3 (`Viewport`
 physical size, logical size, and display scale) is checkpointed locally as `9c99edf`. Phase 4
 (borderless fullscreen, vsync, frame cap, cursor grab, and focus-loss cleanup) is checkpointed
-locally and is not pushed. The M3b acceptance criteria below are met. Profiling
+locally as `cfdf358` and is not pushed. The M3b acceptance criteria below are met. Profiling
 is not in the code. The rendering regression baseline is commit `6dbabb8`.
 
 **Prerequisites.** M2 (closed for planning). Decisions recorded before implementation code, 2026-10-14:
@@ -346,7 +346,7 @@ examples ported to the stage API (behaviour unchanged).
 `mouse_released`, and collapsed modifiers, is checkpointed locally as `57dbc4a`. Phase 2, `Actions`
 and the fixed-step latch, is checkpointed locally as `83286a9`. Phase 3, `Viewport` and DPI, is
 checkpointed locally as `9c99edf`. Phase 4, borderless fullscreen, vsync, the frame cap, cursor grab,
-and focus-loss cleanup, is checkpointed locally. None of M3b is pushed.
+and focus-loss cleanup, is checkpointed locally as `cfdf358`. None of M3b is pushed.
 
 **Tasks.**
 - Input: full key set (F-keys, punctuation, numpad) — **Phase 1, checkpointed locally.** Cursor

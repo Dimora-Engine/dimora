@@ -19,8 +19,7 @@ because they wait on the owner, not on code: licence files (KI-17) and CI (D-22,
 [ROADMAP.md](ROADMAP.md#m3-frame-model-input-and-platform-in-progress). M3a-2 is commit `312a05f`.
 Lifecycle anchors are `ecf4fa1`. M3a-3 is `cd802f0`. M3a-4 is `5c4fd97`. M3a-5 is `523f553`. M3a-6
 is the public-API review recorded below. M3b Phases 1–3 are checkpointed locally (`57dbc4a`,
-`83286a9`, `9c99edf`) and are not pushed. Phase 4 and the M3b acceptance audit are checkpointed
-locally and are not pushed. The rendering regression baseline is commit `6dbabb8`.
+`83286a9`, `9c99edf`). Phase 4 is checkpointed locally as `cfdf358`. None of M3b is pushed. The rendering regression baseline is commit `6dbabb8`.
 
 ## Completed work
 
@@ -403,7 +402,7 @@ capture, focus, and text. `basic_2_5d` stays on raw `Input`. `spatial_scene` mov
 | 1 | Wider physical key map and mouse just-released, on the existing frame clock | **Checkpointed locally.** Evidence under "M3b Phase 1 results" below |
 | 2 | `Actions`, aggregate edges, axes, rebinding, and the fixed-step latch | **Checkpointed locally.** Evidence under "M3b Phase 2 results" below |
 | 3 | `Viewport` physical size, logical size, and scale; `ScaleFactorChanged` | **Checkpointed locally as `9c99edf`.** Evidence under "M3b Phase 3 results" below |
-| 4 | Borderless fullscreen, vsync fallback, event-loop frame cap, cursor grab, focus-loss release | **Checkpointed locally.** Evidence under "M3b Phase 4 results" and "M3b Phase 4 review" below |
+| 4 | Borderless fullscreen, vsync fallback, event-loop frame cap, cursor grab, focus-loss release | **Checkpointed locally as `cfdf358`.** Evidence under "M3b Phase 4 results" and "M3b Phase 4 review" below |
 
 ## M3a-1 results (2026-10-14)
 
@@ -607,7 +606,7 @@ A second process used `engine_platform::run` and the same viewport and `WindowRe
 
 ## M3b Phase 4 results (2026-10-15)
 
-Borderless fullscreen, vsync, an optional frame cap, cursor visibility and grab, and focus-loss cleanup. Checkpointed locally. Not pushed.
+Borderless fullscreen, vsync, an optional frame cap, cursor visibility and grab, and focus-loss cleanup. Checkpointed locally as `cfdf358`. Not pushed.
 
 **Fullscreen.** `WindowConfig.fullscreen` creates the window borderless on the current monitor. `WindowControl.fullscreen` switches later. Entering stores the windowed logical size. Leaving requests that size back. A request that already matches does not call `set_fullscreen`. A resize that still has the fullscreen logical size does not replace the saved windowed size. `WindowRenderer::resize` skips a zero size and an unchanged physical size. Exclusive fullscreen and display-mode selection are not implemented.
 

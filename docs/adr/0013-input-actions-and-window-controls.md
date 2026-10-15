@@ -163,7 +163,7 @@ Focus loss clears the platform's collapsed-modifier counts, then releases every 
 
 ## Consequences and follow-up
 
-* Phase 1 is the wider `Key` map, `mouse_released`, and the collapsed-modifier count, checkpointed locally as `57dbc4a`. Phase 2, the latch and `Actions`, is checkpointed locally as `83286a9`. Phase 3, `Viewport` and DPI, is checkpointed locally as `9c99edf`. Phase 4, the window controls above, is checkpointed locally. None of M3b is pushed.
+* Phase 1 is the wider `Key` map, `mouse_released`, and the collapsed-modifier count, checkpointed locally as `57dbc4a`. Phase 2, the latch and `Actions`, is checkpointed locally as `83286a9`. Phase 3, `Viewport` and DPI, is checkpointed locally as `9c99edf`. Phase 4, the window controls above, is checkpointed locally as `cfdf358`. None of M3b is pushed.
 * D-39 stays open for UI capture, focus navigation, text, and any scale policy beyond physical, logical, and the device factor.
 * Gamepad, touch, IME, a rebinding UI, action-map stacks, exclusive fullscreen, and an input log are not part of M3b.
 * The collapsed multi-tap is the bound of the latch. A replay queue would be a new decision.

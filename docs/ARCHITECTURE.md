@@ -9,8 +9,8 @@ and is not pushed. M3b Phase 1 widens `Key`, adds a mouse release edge, and coun
 modifiers (ADR-0013, `57dbc4a`). Phase 2 adds the fixed-step input latch and `Actions` and is
 checkpointed locally as `83286a9`. Phase 3, physical and logical `Viewport` plus the display scale, is
 checkpointed locally as `9c99edf`. Phase 4, borderless fullscreen, vsync, an optional frame cap,
-cursor grab, and focus-loss cleanup, is checkpointed locally. M3b is complete locally and is not
-pushed.
+cursor grab, and focus-loss cleanup, is checkpointed locally as `cfdf358`. M3b is complete
+locally and is not pushed.
 Profiling is not in the code. The M2 audit
 date was 2026-10-13 at `4857158`.
 Everything outside the sections "Proposed future architecture" and "Proposed boundaries" exists in the
