@@ -167,6 +167,249 @@ fn input_edges_survive_fixed_and_update_and_clear_at_the_end() {
     let input = game.world.resource::<Input>();
     assert!(input.key_down(Key::W));
     assert!(!input.key_pressed(Key::W));
+    assert!(!input.fixed_key_pressed(Key::W));
+}
+
+#[test]
+fn fixed_edges_are_visible_once_and_a_zero_step_frame_keeps_them() {
+    let mut game = Game::new(GameConfig::default());
+    game.world.insert_resource(Vec::<&'static str>::new());
+    game.add_fixed_system("first", |world| {
+        let input = world.resource::<Input>();
+        if input.fixed_key_pressed(Key::Space) {
+            world.resource_mut::<Vec<&str>>().push("fixed-press");
+        }
+        if input.fixed_key_released(Key::W) {
+            world.resource_mut::<Vec<&str>>().push("fixed-release");
+        }
+        if input.fixed_key_pressed(Key::Space) {
+            world.resource_mut::<Vec<&str>>().push("fixed-press-again");
+        }
+    });
+    game.add_fixed_system("second", |world| {
+        if world.resource::<Input>().fixed_key_pressed(Key::Space) {
+            world.resource_mut::<Vec<&str>>().push("second-saw-press");
+        }
+    });
+    game.add_system("update", |world| {
+        let input = world.resource::<Input>();
+        if input.fixed_key_pressed(Key::Space) {
+            world.resource_mut::<Vec<&str>>().push("update-fixed");
+        }
+        if input.key_pressed(Key::Space) {
+            world.resource_mut::<Vec<&str>>().push("update-frame");
+        }
+    });
+
+    game.send_input(InputEvent::Key { key: Key::Space, pressed: true });
+    game.send_input(InputEvent::Key { key: Key::Space, pressed: false });
+    game.send_input(InputEvent::Key { key: Key::W, pressed: true });
+    game.send_input(InputEvent::Key { key: Key::W, pressed: false });
+    game.step(Duration::ZERO);
+    assert_eq!(log(&game), ["update-fixed", "update-frame"]);
+    assert!(game.world.resource::<Input>().fixed_key_pressed(Key::Space));
+    assert!(!game.world.resource::<Input>().key_pressed(Key::Space));
+    assert!(!game.world.resource::<Input>().key_down(Key::W));
+
+    game.step(fixed_step() * 2);
+    assert_eq!(
+        log(&game),
+        ["update-fixed", "update-frame", "fixed-press", "fixed-release", "fixed-press-again", "second-saw-press"]
+    );
+    assert!(!game.world.resource::<Input>().fixed_key_pressed(Key::Space));
+    assert!(!game.world.resource::<Input>().fixed_key_released(Key::W));
+}
+
+#[test]
+fn action_edges_follow_the_fixed_latch_and_aggregate_bindings() {
+    let mut game = Game::new(GameConfig::default());
+    {
+        let mut actions = game.world.resource_mut::<Actions>();
+        actions.bind_button("jump", ButtonSource::Key(Key::Space));
+        actions.bind_button("jump", ButtonSource::Key(Key::W));
+        actions.bind_button("jump", ButtonSource::Mouse(MouseButton::Left));
+    }
+    game.world.insert_resource(Vec::<&'static str>::new());
+    game.add_fixed_system("one", |world| {
+        let actions = world.resource::<Actions>();
+        if actions.fixed_pressed("jump") {
+            world.resource_mut::<Vec<&str>>().push("press");
+        }
+        if actions.fixed_released("jump") {
+            world.resource_mut::<Vec<&str>>().push("release");
+        }
+    });
+    game.add_fixed_system("two", |world| {
+        if world.resource::<Actions>().fixed_pressed("jump") {
+            world.resource_mut::<Vec<&str>>().push("two");
+        }
+    });
+    game.add_system("update", |world| {
+        let actions = world.resource::<Actions>();
+        let input = world.resource::<Input>();
+        if actions.fixed_pressed("jump") {
+            world.resource_mut::<Vec<&str>>().push("update-fixed");
+        }
+        if actions.pressed("jump") {
+            world.resource_mut::<Vec<&str>>().push("update-frame");
+        }
+        if actions.down(&input, "jump") {
+            world.resource_mut::<Vec<&str>>().push("down");
+        }
+    });
+
+    game.send_input(InputEvent::Key { key: Key::Space, pressed: true });
+    game.send_input(InputEvent::Key { key: Key::W, pressed: true });
+    game.step(Duration::ZERO);
+    assert_eq!(log(&game), ["update-fixed", "update-frame", "down"]);
+
+    game.send_input(InputEvent::Key { key: Key::Space, pressed: false });
+    game.step(fixed_step() * 2);
+    assert_eq!(log(&game), ["update-fixed", "update-frame", "down", "press", "two", "down"]);
+    assert!(!game.world.resource::<Actions>().fixed_pressed("jump"));
+    assert!(game.world.resource::<Actions>().down(&game.world.resource::<Input>(), "jump"));
+
+    game.send_input(InputEvent::Key { key: Key::W, pressed: false });
+    game.send_input(InputEvent::MouseButton { button: MouseButton::Left, pressed: true });
+    game.send_input(InputEvent::MouseButton { button: MouseButton::Left, pressed: false });
+    game.step(fixed_step());
+    assert!(log(&game).ends_with(&["press", "release", "two", "update-frame"]));
+    let input = game.world.resource::<Input>();
+    assert!(!game.world.resource::<Actions>().down(&input, "jump"));
+}
+
+fn take_log(game: &mut Game) -> Vec<&'static str> {
+    std::mem::take(&mut *game.world.resource_mut::<Vec<&'static str>>())
+}
+
+fn watch_jump(world: &mut World, stage: &'static str) {
+    let actions = world.resource::<Actions>();
+    let fixed_press = actions.fixed_pressed("jump");
+    let fixed_release = actions.fixed_released("jump");
+    let frame_press = actions.pressed("jump");
+    let frame_release = actions.released("jump");
+    drop(actions);
+    let mut log = world.resource_mut::<Vec<&'static str>>();
+    if fixed_press {
+        log.push(stage);
+        log.push("fixed-press");
+    }
+    if fixed_release {
+        log.push(stage);
+        log.push("fixed-release");
+    }
+    if frame_press {
+        log.push(stage);
+        log.push("frame-press");
+    }
+    if frame_release {
+        log.push(stage);
+        log.push("frame-release");
+    }
+}
+
+#[test]
+fn zero_steps_keep_the_latch_and_rebinding_waits_until_publish() {
+    let mut game = Game::new(GameConfig::default());
+    game.world.resource_mut::<Actions>().bind_button("jump", ButtonSource::Key(Key::Space));
+    game.world.insert_resource(Vec::<&'static str>::new());
+    game.add_fixed_system("one", |world| watch_jump(world, "fixed"));
+    game.add_fixed_system("two", |world| watch_jump(world, "fixed-2"));
+    game.add_system("update", |world| watch_jump(world, "update"));
+    game.add_to_stage(Stage::PostUpdate, "post", |world| watch_jump(world, "post")).unwrap();
+    game.add_to_stage(Stage::InputClear, "clear", |world| watch_jump(world, "clear")).unwrap();
+
+    game.send_input(InputEvent::Key { key: Key::Space, pressed: true });
+    game.step(Duration::ZERO);
+    assert_eq!(
+        take_log(&mut game),
+        [
+            "update",
+            "fixed-press",
+            "update",
+            "frame-press",
+            "post",
+            "fixed-press",
+            "post",
+            "frame-press",
+            "clear",
+            "fixed-press",
+            "clear",
+            "frame-press",
+        ]
+    );
+    assert!(game.world.resource::<Actions>().fixed_pressed("jump"));
+    assert!(!game.world.resource::<Actions>().pressed("jump"));
+
+    game.step(Duration::ZERO);
+    assert_eq!(take_log(&mut game), ["update", "fixed-press", "post", "fixed-press", "clear", "fixed-press"]);
+    assert!(game.world.resource::<Actions>().fixed_pressed("jump"));
+    assert!(!game.world.resource::<Actions>().pressed("jump"));
+    assert!(game.world.resource::<Actions>().down(&game.world.resource::<Input>(), "jump"));
+
+    game.step(fixed_step() * 2);
+    assert_eq!(take_log(&mut game), ["fixed", "fixed-press", "fixed-2", "fixed-press"]);
+    assert!(!game.world.resource::<Actions>().fixed_pressed("jump"));
+    assert!(game.world.resource::<Input>().key_down(Key::Space));
+
+    game.send_input(InputEvent::Key { key: Key::J, pressed: true });
+    game.world.resource_mut::<Actions>().set_button("jump", &[ButtonSource::Key(Key::J)]);
+    assert!(!game.world.resource::<Actions>().pressed("jump"));
+    assert!(!game.world.resource::<Actions>().released("jump"));
+    assert!(!game.world.resource::<Actions>().fixed_pressed("jump"));
+    assert!(!game.world.resource::<Actions>().fixed_released("jump"));
+    game.step(fixed_step());
+    assert!(take_log(&mut game).is_empty());
+    assert!(game.world.resource::<Actions>().down(&game.world.resource::<Input>(), "jump"));
+
+    game.send_input(InputEvent::Key { key: Key::J, pressed: false });
+    game.world.resource_mut::<Actions>().set_button("jump", &[ButtonSource::Key(Key::A)]);
+    game.send_input(InputEvent::Key { key: Key::A, pressed: true });
+    assert!(game.world.resource::<Actions>().pressed("jump") && game.world.resource::<Actions>().released("jump"));
+    assert!(!game.world.resource::<Actions>().fixed_pressed("jump"));
+    assert!(!game.world.resource::<Actions>().fixed_released("jump"));
+    game.step(fixed_step() * 2);
+    assert_eq!(
+        take_log(&mut game),
+        [
+            "fixed",
+            "fixed-press",
+            "fixed",
+            "fixed-release",
+            "fixed",
+            "frame-press",
+            "fixed",
+            "frame-release",
+            "fixed-2",
+            "fixed-press",
+            "fixed-2",
+            "fixed-release",
+            "fixed-2",
+            "frame-press",
+            "fixed-2",
+            "frame-release",
+            "fixed",
+            "frame-press",
+            "fixed",
+            "frame-release",
+            "fixed-2",
+            "frame-press",
+            "fixed-2",
+            "frame-release",
+            "update",
+            "frame-press",
+            "update",
+            "frame-release",
+            "post",
+            "frame-press",
+            "post",
+            "frame-release",
+            "clear",
+            "frame-press",
+            "clear",
+            "frame-release",
+        ]
+    );
 }
 
 #[test]

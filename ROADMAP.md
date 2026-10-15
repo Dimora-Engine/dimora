@@ -59,7 +59,8 @@ first" tiers in [docs/DECISIONS.md](docs/DECISIONS.md#what-to-resolve-first).
   M3, so M2 is closed for planning purposes once they are listed as carried items in TASKS.md.
 * **Now: M3a is complete locally and is not pushed** (see M3 below). Named stages, commands and events,
   logging, opt-in interpolation, and the public-API review are done. M3b is in progress: Phase 1 is
-  checkpointed locally and is not pushed.
+  checkpointed locally and is not pushed. Phase 2 (actions and the fixed-step latch) is checkpointed
+  locally and is not pushed.
   M3a was first because
   collision, animation, scenes, UI and scripting all hang off its stages, commands and events, and because
   three high-cost risks (R-5, R-7, R-8) are cheapest to settle before more systems exist.
@@ -273,8 +274,9 @@ once M3a's stage and event API is merged; it does not need M3a's interpolation.
 
 **Status.** M3a is complete locally and is not pushed. M3a-3 is `cd802f0`, M3a-4 is `5c4fd97`, M3a-5 is
 `523f553`. M3a-6 is the public-API review in this documentation. M3b Phase 1 (keys, mouse release, and
-collapsed modifiers) is checkpointed locally and is not pushed. The fixed-step latch, actions, viewport,
-and window controls are specified in ADR-0013 and are not built. Profiling
+collapsed modifiers) is checkpointed locally as `57dbc4a` and is not pushed. Phase 2 (the fixed-step
+latch and `Actions`) is checkpointed locally and is not pushed. Viewport and window controls are
+specified in ADR-0013 and are not built. Profiling
 is not in the code. The rendering regression baseline is commit `6dbabb8`.
 
 **Prerequisites.** M2 (closed for planning). Decisions recorded before implementation code, 2026-10-14:
@@ -339,13 +341,14 @@ examples ported to the stage API (behaviour unchanged).
 ### M3b. Input and platform
 
 **Status.** In progress. The decisions are ADR-0013 (D-49). Phase 1, the wider key map,
-`mouse_released`, and collapsed modifiers, is checkpointed locally and is not pushed. Phases 2–4 are not started.
+`mouse_released`, and collapsed modifiers, is checkpointed locally as `57dbc4a` and is not pushed.
+Phase 2, `Actions` and the fixed-step latch, is checkpointed locally and is not pushed. Phases 3 and 4 are not started.
 
 **Tasks.**
 - Input: full key set (F-keys, punctuation, numpad) — **Phase 1, checkpointed locally.** Cursor
   grab/visibility, relative mouse delta while grabbed, and an
   action map (named actions and axes bound to keys and buttons) that does not assume a keyboard, so a
-  gamepad can bind later. The fixed-step latch in ADR-0013 is part of the action phase.
+  gamepad can bind later. The action map and the fixed-step latch are **Phase 2, checkpointed locally.**
 - Platform: forward the window scale factor and its changes; `Viewport` carries physical size, logical
   size and scale (moved here from M10: R-12); vsync on/off, optional frame cap, fullscreen toggle.
 

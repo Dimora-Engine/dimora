@@ -46,12 +46,19 @@ pub enum InputEvent {
     Scroll(f32),
 }
 
-/// Snapshot of device state for the current frame.
+/// Snapshot of device state for the current frame, plus the fixed-step edge latch.
 ///
 /// The platform layer calls `press`/`release`/`set_mouse_position`/... as events arrive and
-/// [`Input::end_frame`] once the frame has been simulated. "Just pressed/released" sets are valid
-/// for exactly one frame.
-#[derive(Default, Debug, Clone)]
+/// [`Input::end_frame`] once the frame has been simulated. Frame edges (`key_pressed`,
+/// `key_released`, `mouse_pressed`, `mouse_released`) stay set until that call.
+///
+/// Fixed-step edges (`fixed_key_pressed`, `fixed_key_released`, `fixed_mouse_pressed`,
+/// `fixed_mouse_released`) are a second pair of bits. They are published until
+/// [`Input::conceal_fixed_edges`], which `Game::step` calls after the first fixed iteration.
+/// [`Input::publish_fixed_edges`] shows whatever has been stored since then. [`Input::end_frame`]
+/// does not touch them. A read does not clear them. Held state (`key_down`, `mouse_down`) follows
+/// the device the whole time.
+#[derive(Debug, Clone)]
 pub struct Input {
     down: HashSet<Key>,
     just_pressed: HashSet<Key>,
@@ -59,9 +66,29 @@ pub struct Input {
     buttons_down: HashSet<MouseButton>,
     buttons_pressed: HashSet<MouseButton>,
     buttons_released: HashSet<MouseButton>,
+    keys_latch: FixedLatch<Key>,
+    buttons_latch: FixedLatch<MouseButton>,
     mouse_position: Vec2,
     mouse_delta: Vec2,
     scroll: f32,
+}
+
+impl Default for Input {
+    fn default() -> Self {
+        Self {
+            down: HashSet::new(),
+            just_pressed: HashSet::new(),
+            just_released: HashSet::new(),
+            buttons_down: HashSet::new(),
+            buttons_pressed: HashSet::new(),
+            buttons_released: HashSet::new(),
+            keys_latch: FixedLatch::publishing(),
+            buttons_latch: FixedLatch::publishing(),
+            mouse_position: Vec2::ZERO,
+            mouse_delta: Vec2::ZERO,
+            scroll: 0.0,
+        }
+    }
 }
 
 impl Input {
@@ -74,6 +101,20 @@ impl Input {
     pub fn key_released(&self, key: Key) -> bool {
         self.just_released.contains(&key)
     }
+    /// Fixed-step press bit. This is the published latch, not a different answer per stage.
+    ///
+    /// A press stores the bit. It stays readable through [`Input::end_frame`]. After
+    /// [`Input::conceal_fixed_edges`] it reads false until [`Input::publish_fixed_edges`], including
+    /// when a newer press is already stored for that next publish. `Game::step` publishes at the
+    /// start of every step and conceals after the first fixed iteration, so a step with no fixed
+    /// iteration leaves the bit readable. Reading it does not clear it.
+    pub fn fixed_key_pressed(&self, key: Key) -> bool {
+        self.keys_latch.pressed(&key)
+    }
+    /// Fixed-step release bit. Same lifetime as [`Input::fixed_key_pressed`].
+    pub fn fixed_key_released(&self, key: Key) -> bool {
+        self.keys_latch.released(&key)
+    }
     pub fn mouse_down(&self, b: MouseButton) -> bool {
         self.buttons_down.contains(&b)
     }
@@ -85,6 +126,14 @@ impl Input {
     /// A release of a button that was not down does not set the edge. [`Input::end_frame`] clears it.
     pub fn mouse_released(&self, b: MouseButton) -> bool {
         self.buttons_released.contains(&b)
+    }
+    /// Fixed-step mouse press. Same lifetime as [`Input::fixed_key_pressed`].
+    pub fn fixed_mouse_pressed(&self, b: MouseButton) -> bool {
+        self.buttons_latch.pressed(&b)
+    }
+    /// Fixed-step mouse release. Same lifetime as [`Input::fixed_key_pressed`].
+    pub fn fixed_mouse_released(&self, b: MouseButton) -> bool {
+        self.buttons_latch.released(&b)
     }
     /// Cursor position in window pixels, origin top-left.
     pub fn mouse_position(&self) -> Vec2 {
@@ -117,21 +166,25 @@ impl Input {
     pub fn press(&mut self, key: Key) {
         if self.down.insert(key) {
             self.just_pressed.insert(key);
+            self.keys_latch.press(key);
         }
     }
     pub fn release(&mut self, key: Key) {
         if self.down.remove(&key) {
             self.just_released.insert(key);
+            self.keys_latch.release(key);
         }
     }
     pub fn press_mouse(&mut self, b: MouseButton) {
         if self.buttons_down.insert(b) {
             self.buttons_pressed.insert(b);
+            self.buttons_latch.press(b);
         }
     }
     pub fn release_mouse(&mut self, b: MouseButton) {
         if self.buttons_down.remove(&b) {
             self.buttons_released.insert(b);
+            self.buttons_latch.release(b);
         }
     }
     pub fn set_mouse_position(&mut self, p: Vec2) {
@@ -142,7 +195,7 @@ impl Input {
         self.scroll += s;
     }
 
-    /// Clears per-frame edge state. Call after systems have run for the frame.
+    /// Clears per-frame edge state. Does not change held keys or the fixed-step latch.
     pub fn end_frame(&mut self) {
         self.just_pressed.clear();
         self.just_released.clear();
@@ -150,6 +203,101 @@ impl Input {
         self.buttons_released.clear();
         self.mouse_delta = Vec2::ZERO;
         self.scroll = 0.0;
+    }
+
+    /// Shows fixed-step edges stored since the last [`Input::conceal_fixed_edges`].
+    ///
+    /// Does nothing when they are already published. `Game::step` calls this at the start of every
+    /// step. Gameplay code does not.
+    pub fn publish_fixed_edges(&mut self) {
+        self.keys_latch.publish();
+        self.buttons_latch.publish();
+    }
+
+    /// Hides the published fixed-step edges and drops the ones just shown.
+    ///
+    /// A transition after this stays stored until the next [`Input::publish_fixed_edges`]. Held
+    /// state and frame edges stay as they are. `Game::step` calls this after the first fixed
+    /// iteration's systems and command flush. Gameplay code does not.
+    pub fn conceal_fixed_edges(&mut self) {
+        self.keys_latch.conceal();
+        self.buttons_latch.conceal();
+    }
+
+    pub(crate) fn held_keys(&self) -> &HashSet<Key> {
+        &self.down
+    }
+
+    pub(crate) fn held_buttons(&self) -> &HashSet<MouseButton> {
+        &self.buttons_down
+    }
+}
+
+/// Press and release bits that stay stored until a fixed iteration can see them.
+///
+/// While `visible` is set, a new edge is readable immediately. [`FixedLatch::conceal`] clears the
+/// readable set and anything already delivered. Edges recorded after that wait in `pending` until
+/// [`FixedLatch::publish`].
+#[derive(Debug, Clone)]
+pub(crate) struct FixedLatch<T> {
+    pending_pressed: HashSet<T>,
+    pending_released: HashSet<T>,
+    visible_pressed: HashSet<T>,
+    visible_released: HashSet<T>,
+    visible: bool,
+}
+
+impl<T> FixedLatch<T>
+where
+    T: Copy + Eq + std::hash::Hash,
+{
+    pub(crate) fn publishing() -> Self {
+        Self {
+            pending_pressed: HashSet::new(),
+            pending_released: HashSet::new(),
+            visible_pressed: HashSet::new(),
+            visible_released: HashSet::new(),
+            visible: true,
+        }
+    }
+
+    pub(crate) fn press(&mut self, value: T) {
+        self.pending_pressed.insert(value);
+        if self.visible {
+            self.visible_pressed.insert(value);
+        }
+    }
+
+    pub(crate) fn release(&mut self, value: T) {
+        self.pending_released.insert(value);
+        if self.visible {
+            self.visible_released.insert(value);
+        }
+    }
+
+    pub(crate) fn pressed(&self, value: &T) -> bool {
+        self.visible_pressed.contains(value)
+    }
+
+    pub(crate) fn released(&self, value: &T) -> bool {
+        self.visible_released.contains(value)
+    }
+
+    pub(crate) fn publish(&mut self) {
+        if self.visible {
+            return;
+        }
+        self.visible_pressed.clone_from(&self.pending_pressed);
+        self.visible_released.clone_from(&self.pending_released);
+        self.visible = true;
+    }
+
+    pub(crate) fn conceal(&mut self) {
+        self.pending_pressed.clear();
+        self.pending_released.clear();
+        self.visible_pressed.clear();
+        self.visible_released.clear();
+        self.visible = false;
     }
 }
 
@@ -180,6 +328,55 @@ mod tests {
         assert!(i.key_pressed(Key::Space) && i.key_released(Key::Space));
         i.end_frame();
         assert!(!i.key_pressed(Key::Space) && !i.key_released(Key::Space));
+        assert!(i.fixed_key_pressed(Key::Space) && i.fixed_key_released(Key::Space));
+    }
+
+    #[test]
+    fn the_fixed_latch_survives_end_frame_and_a_read_does_not_clear_it() {
+        let mut i = Input::default();
+        i.press(Key::Space);
+        i.release(Key::Space);
+        assert!(i.fixed_key_pressed(Key::Space) && i.fixed_key_released(Key::Space));
+        assert!(i.fixed_key_pressed(Key::Space));
+        i.end_frame();
+        assert!(!i.key_pressed(Key::Space) && !i.key_released(Key::Space));
+        assert!(i.fixed_key_pressed(Key::Space) && i.fixed_key_released(Key::Space));
+        assert!(!i.key_down(Key::Space));
+        i.conceal_fixed_edges();
+        assert!(!i.fixed_key_pressed(Key::Space) && !i.fixed_key_released(Key::Space));
+        i.press(Key::W);
+        assert!(!i.fixed_key_pressed(Key::W));
+        i.publish_fixed_edges();
+        assert!(i.fixed_key_pressed(Key::W) && i.key_down(Key::W));
+    }
+
+    #[test]
+    fn repeated_presses_collapse_to_one_fixed_bit() {
+        let mut i = Input::default();
+        i.press(Key::W);
+        i.press(Key::W);
+        i.release(Key::W);
+        i.press(Key::W);
+        i.release(Key::W);
+        assert!(i.fixed_key_pressed(Key::W) && i.fixed_key_released(Key::W));
+        assert!(!i.key_down(Key::W));
+        i.conceal_fixed_edges();
+        i.press(Key::W);
+        assert!(i.key_pressed(Key::W) && i.key_down(Key::W));
+        assert!(!i.fixed_key_pressed(Key::W));
+    }
+
+    #[test]
+    fn mouse_fixed_edges_follow_the_key_latch() {
+        let mut i = Input::default();
+        i.press_mouse(MouseButton::Right);
+        i.release_mouse(MouseButton::Right);
+        i.release_mouse(MouseButton::Left);
+        assert!(i.fixed_mouse_pressed(MouseButton::Right) && i.fixed_mouse_released(MouseButton::Right));
+        assert!(!i.fixed_mouse_released(MouseButton::Left));
+        i.end_frame();
+        assert!(i.fixed_mouse_pressed(MouseButton::Right));
+        assert!(!i.mouse_pressed(MouseButton::Right));
     }
 
     #[test]

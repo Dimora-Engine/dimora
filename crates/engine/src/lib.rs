@@ -54,7 +54,7 @@ pub mod prelude {
         AssetHandle, AssetManager, AssetSource, FileSystemSource, MemorySource, MeshData, SpriteAsset, Texture,
         TextureFilter,
     };
-    pub use engine_core::{Color, FixedTimestep, Input, Key, MouseButton, Time};
+    pub use engine_core::{Actions, ButtonSource, Color, FixedTimestep, Input, Key, MouseButton, Time};
     pub use engine_math::{Mat4, Quat, Rect, Transform, Vec2, Vec3, Vec4};
     pub use engine_renderer::{
         AmbientLight, Camera, CameraProjection, CameraView, Fog, Light, LightKind, Material, Mesh, Orthographic,

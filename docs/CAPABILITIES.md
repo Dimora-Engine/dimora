@@ -49,7 +49,7 @@ without it.
 | 3 | Frame loop and scheduling | Working | Named stages, deferred commands, typed events, logging, diagnostics, and opt-in extract-only `Interpolate` (M3a, local, not pushed). `FixedTimestep::alpha` is finite in `0..=1`. The blend does not write `Transform`. The public-API review (M3a-6) added no new `hecs` type. Limits: no pause or time scale, no variable-step mix on a marked entity, no parallel systems | M3 |
 | 4 | Events and deferred commands | Working | FIFO commands flush per stage run and per fixed iteration. Typed events are visible to later stages and cleared after `input_clear` (ADR-0008). Reading copies the buffer (`T: Clone`). No observers | M3 |
 | 5 | Platform, window, timing | Working, narrow | winit loop, resize, exit; no DPI, fullscreen, vsync, multi-window | M3, M10 |
-| 6 | Input and action mapping | Partial | Phase 1 checkpointed locally: F1–F12, punctuation, keypad, mouse release edge, collapsed modifiers (ADR-0013). No actions, no fixed latch yet, no gamepad or text | M3 |
+| 6 | Input and action mapping | Partial | Phase 1 and Phase 2 checkpointed locally: fixed-step latch and `Actions` (ADR-0013). No gamepad, text, rebinding UI, or viewport scale yet | M3 |
 | 7 | Errors, logging, diagnostics, config | Partial | `log` 0.4 and `Diagnostics` (ADR-0012, M3a-4). No runtime config. No profiler, no history | M20, M24 |
 | **Rendering** | | | | |
 | 8 | Cameras and projection | Working; six views demonstrated by the example | Ortho + perspective, viewport, picking rays; 27 camera tests. `spatial_scene` also renders isometric, top-down, steep and side through example-local constructors (not an engine preset API). One camera/frame; closed projection enum; custom projection still absent | M6 |
@@ -143,7 +143,8 @@ Missing from the original category list and now tracked: **save games** (34), **
   `end_input_frame` stay last; `animate` accepts an explicit system on either side. During each fixed
   iteration `Time::delta` is the fixed step, then the frame delta is restored by `step` itself.
   At the start of each fixed iteration, before user systems, `Interpolate::previous` is copied from
-  the current local. `elapsed` and `frame` advance once per step. Input edges last until `input_clear`.
+  the current local. `elapsed` and `frame` advance once per step. Frame input edges last until `input_clear`.
+  Fixed-step edges are concealed after the first fixed iteration (ADR-0013).
   Extract and render stay outside `step`. `FixedTimestep::alpha()` is the render blend factor, finite
   and in `0.0..=1.0`. Both examples stay on `add_system` (`update`) and do not opt in.
 * **Interpolation.** Opt-in, extraction only (ADR-0007, M3a-5). `Transform::lerp` blends the stored
@@ -158,7 +159,7 @@ Missing from the original category list and now tracked: **save games** (34), **
   `Transform`), rotation exactly opposite (`Quat::slerp` is unstable there), scale sign changes
   (they pass through zero), shear, and skeletal or physics interpolation.
 * **Required.** A headless `step` exists. M3a-6 reviewed the re-exports (ADR-0010). The frame-model
-  slice is complete locally and is not pushed. M3b Phase 1 is checkpointed locally; the latch and actions are not built.
+  slice is complete locally and is not pushed. M3b Phases 1 and 2 are checkpointed locally. Viewport scale is not built.
 * **Planned.** Nothing further in M3a. **Depends on.** D-01 (implemented), D-02, D-10, D-44.
   **Integration.** Collision (fixed stage), animation (animate stage, camera read from previous
   propagation, D-31), UI (its own stage), scripts (one stage), scenes (apply at a boundary).
@@ -216,14 +217,20 @@ Missing from the original category list and now tracked: **save games** (34), **
   distinct from `Enter`; F13 and above unmapped). Mouse buttons, position, delta, and vertical scroll.
   Key and mouse press and release edges last one frame. `axis()` cancels. Left and right modifiers
   share one variant. The platform keeps that logical key down until the last physical side releases.
-  OS key repeat is dropped. No actions yet (ADR-0013). The fixed-step latch is
-  decided and not built. Phase 1 is checkpointed locally and is not pushed.
-* **Required.** Named actions and axes bound to keys/buttons, rebinding, an input record/replay format
-  (M9), UI input capture before gameplay.
-* **Planned.** M3 actions; gamepad after M9 (unscheduled device layer; actions must not assume keyboard);
+  OS key repeat is dropped. `Actions` maps `&'static str` names to keys and mouse buttons: several
+  bindings, digital buttons, 1D axes, `axis2`, and `set_button` / `set_axis` rebinding. An action
+  press is the aggregate going down, not the OR of the physical edges. Frame action edges clear in
+  `input_clear`. Fixed-step edges on `Input` and `Actions` are published at the start of `step` and
+  concealed after the first fixed iteration, so a later iteration does not see them. A step with no
+  fixed iteration leaves them published. Queries read that published set from any stage. Held state
+  stays live. Phases 1 and 2 are checkpointed locally and are not pushed (ADR-0013). Viewport scale
+  is not built.
+* **Required.** An input record/replay format (M9), UI input capture before gameplay.
+* **Planned.** Gamepad after M9 (unscheduled device layer; actions must not assume keyboard);
   text input only with UI text fields. **Depends on.** D-10 (events).
 * **Integration.** UI focus navigation and scripts use **actions**, never raw devices.
-* **Tests/examples.** Action map unit tests (press, release, axis, rebinding); `spatial_scene` on actions.
+* **Tests/examples.** Latch and action tests (aggregate press, rebinding, zero and many fixed steps);
+  `spatial_scene` on actions, `basic_2_5d` on raw `Input`.
 * **Not initially.** Gamepad, touch, IME, rebinding UI, per-device profiles.
 
 ### 7. Errors, logging, diagnostics, configuration

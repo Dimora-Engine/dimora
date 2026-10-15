@@ -401,7 +401,7 @@ capture, focus, and text. `basic_2_5d` stays on raw `Input`. `spatial_scene` mov
 | Phase | Content | Done when |
 |---|---|---|
 | 1 | Wider physical key map and mouse just-released, on the existing frame clock | **Checkpointed locally.** Evidence under "M3b Phase 1 results" below |
-| 2 | `Actions`, aggregate edges, axes, rebinding, and the fixed-step latch | Not started |
+| 2 | `Actions`, aggregate edges, axes, rebinding, and the fixed-step latch | **Checkpointed locally.** Evidence under "M3b Phase 2 results" below |
 | 3 | `Viewport` physical size, logical size, and scale; `ScaleFactorChanged` | Not started |
 | 4 | Borderless fullscreen, vsync fallback, event-loop frame cap, cursor grab, focus-loss release | Not started |
 
@@ -564,6 +564,22 @@ Wider physical keys and a mouse release edge. Checkpointed locally after the mod
 **Examples.** `basic_2_5d` and `spatial_scene` still read raw `Input`. Their keys were already mapped. Extraction is unchanged.
 
 **Repository check.** `scripts/check.sh` on 2026-10-15, before the modifier correction, exit 0: 239 tests, GPU tests ran. The four screenshots against `6dbabb8` were byte-identical. After the correction, `scripts/check.sh` on 2026-10-15 exited 0 again (fmt, clippy `-D warnings`, `cargo test --workspace` with `DIMORA_REQUIRE_GPU=1`, rustdoc `-D warnings`). Two tests were added: `collapsed_modifier_stays_down_until_both_sides_release` and `collapsed_modifiers_are_independent_and_other_keys_pass_through`, so the suite is 241 tests. The correction does not change a frame with no input.
+
+## M3b Phase 2 results (2026-10-15)
+
+Fixed-step latch and `Actions`. Checkpointed locally. Phases 3 and 4 are not started. The review before the checkpoint added `zero_steps_keep_the_latch_and_rebinding_waits_until_publish`. No latch behavior changed.
+
+**Latch.** A real press or release sets the frame edge and stores a fixed-step bit. `end_frame` clears only the frame edge. `Game::step` publishes the stored bits at the start of the step. After the first fixed iteration's systems and command flush it conceals them, so later iterations read false. A step with zero fixed iterations does not conceal. A transition after conceal stays stored until the next publish, and queries keep reading the published set, so they do not change meaning by stage. A read does not clear a bit. Several transitions before publish collapse to one press bit and one release bit. `key_down` and `mouse_down` stay live.
+
+**Actions.** `Actions` and `ButtonSource` live in `engine-core` and in `engine::prelude`. Names are `&'static str`. `bind_button` / `set_button` cover keys and mouse buttons. `bind_axis` / `set_axis` build 1D axes; `axis2` is two of those. `down`, `pressed`, and `released` are the frame view. `fixed_pressed` and `fixed_released` use the same publish and conceal calls as raw input. `Game::send_input` syncs the aggregate after each device event. The first binding down presses once. Another binding while it is held does not. Releasing one of several held bindings does not release. The last one does. A tap in one frame keeps both edges. Rebinding compares the aggregate with the held snapshot from the last sync. Opposing axis sides read as `0`. A second `press` of a key that is already down does not press the action again.
+
+**Examples.** `spatial_scene` binds its existing camera and gameplay keys to actions and still reads scroll from `Input`. `basic_2_5d` still reads raw `Input`.
+
+**Public API.** New: `Input::fixed_key_pressed`, `fixed_key_released`, `fixed_mouse_pressed`, `fixed_mouse_released`, `publish_fixed_edges`, `conceal_fixed_edges`; `Actions`, `ButtonSource`, and their bind, query, sync, `end_frame`, publish, and conceal methods. `Game::new` inserts `Actions`. `Game::send_input` syncs it. Frame-edge methods are unchanged.
+
+**Repository check.** `scripts/check.sh` on 2026-10-15, exit 0. All 4 steps: fmt, clippy `-D warnings`, `cargo test --workspace` with `DIMORA_REQUIRE_GPU=1` (GPU tests ran, none skipped), rustdoc `-D warnings`. `cargo test --workspace -- --list` reports **255 tests**, including `zero_steps_keep_the_latch_and_rebinding_waits_until_publish`.
+
+**Screenshots.** Release renders with no input, compared with `cmp -s` to the same commands at `6dbabb8`. All four were byte-identical: `basic_2_5d` (746071 bytes), `basic_2_5d --ortho` (462130 bytes), `spatial_scene --camera perspective` (136991 bytes), `spatial_scene --camera orthographic` (34046 bytes).
 
 ## Planned systems and their state
 

@@ -5,8 +5,9 @@ the screenshot baseline for M3a. M3a-2 adds named stages on that code (ADR-0007)
 commands and typed events (ADR-0008). M3a-4 adds the `log` crate and a `Diagnostics` resource
 (ADR-0012). M3a-5 adds opt-in extract-only interpolation (ADR-0007, `523f553`). M3a-6 reviews the
 public re-exports (ADR-0010) and adds no new `hecs`, `wgpu` or `winit` type. M3a is complete locally
-and is not pushed. M3b Phase 1 widens `Key` and adds a mouse release edge (ADR-0013). The fixed-step
-input latch, actions, viewport scale, and window controls are decided and not built. Profiling is not
+and is not pushed. M3b Phase 1 widens `Key`, adds a mouse release edge, and counts collapsed
+modifiers (ADR-0013, `57dbc4a`). Phase 2 adds the fixed-step input latch and `Actions` and is
+checkpointed locally. Viewport scale and window controls are decided and not built. Profiling is not
 in the code. The M2 audit
 date was 2026-10-13 at `4857158`.
 Everything outside the sections "Proposed future architecture" and "Proposed boundaries" exists in the
@@ -31,7 +32,7 @@ About 8,000 lines of Rust in nine library crates and two examples.
 | Crate | Responsibility | Depends on (workspace) | External |
 |---|---|---|---|
 | `engine-math` | `Vec2/3/4`, `Quat`, `Mat3/4`, `Transform`, `Rect`. `f32`, column-major, left-handed | none | none |
-| `engine-core` | `Color`, `Time`, `FixedTimestep`, `Key`/`Input` state | math | none |
+| `engine-core` | `Color`, `Time`, `FixedTimestep`, `Key`/`Input`, `Actions` | math | none |
 | `engine-world` | `World` (wraps `hecs` + typed resources), sequential `Schedule`, `Parent`/`Children`, `GlobalTransform`, `propagate_transforms`, `Interpolate`, `Name`, `Visibility` | math | `hecs` |
 | `engine-assets` | `AssetId`, `AssetKind`, `AssetHandle<T>`, `AssetManager`, `AssetSource` (filesystem, memory), `Texture`, `SpriteAsset`, `MeshData` | math | `image` (PNG), `bytemuck` |
 | `engine-renderer` | Backend-agnostic render model: `Camera`, projections, frustum, render components (`Sprite`, `Mesh`, `Material`, `TileMap`, `Light`, ...), `extract_scene` -> `RenderScene` | math, core, world, assets | none |
@@ -57,7 +58,7 @@ engine ──► engine-platform ──► engine-core ──► engine-math
 
 | Owned by the world (`engine-world`, components in `engine-renderer`/`engine-animation`) | Owned by the renderer (`engine-renderer-wgpu`) |
 |---|---|
-| Entities, components, resources (`Time`, `Input`, `AssetManager`, `AmbientLight`, `Fog`, `Viewport`, `RenderStats`) | `wgpu` device, queue, surface, pipelines, bind-group layouts, samplers |
+| Entities, components, resources (`Time`, `Input`, `Actions`, `AssetManager`, `AmbientLight`, `Fog`, `Viewport`, `RenderStats`) | `wgpu` device, queue, surface, pipelines, bind-group layouts, samplers |
 | `Transform`, `GlobalTransform`, `Parent`/`Children`, `Visibility` | GPU textures and bind groups (cache keyed by `AssetId`, with the asset revision) |
 | `Camera`, `Sprite`, `Mesh`, `Material`, `TileMap`, `Light`, `RenderOrder` | GPU vertex/index buffers for meshes (same cache scheme) |
 | Asset *data* in `AssetManager` (pixels, vertices) and `AssetHandle`s | Instance buffers (growable, rewritten each frame), depth texture |
@@ -152,15 +153,22 @@ logs once and the runner exits. Discarded events are counted and not logged.
 time (advance Time, accumulate the fixed step)
   -> loads (AssetManager::process_loads)
   -> fixed_update (0 to 8 times; each iteration copies marked locals, then runs systems;
-     Time::delta is the fixed step, then restored)
+     Time::delta is the fixed step, then restored; the first iteration then conceals
+     the fixed-step input latch)
   -> update (user systems; both examples stay here; they see the frame delta)
   -> animate (animate_system, frame delta)
   -> post_update (propagate_transforms; full pass, no dirty tracking)
-  -> input_clear (Input::end_frame)
+  -> input_clear (Input::end_frame and Actions::end_frame; frame edges only)
 ```
 
 `elapsed` and `frame` advance once per `step`, not once per fixed iteration. Extract and render are
 not stages: `Game::extract()` then `WindowRenderer::render` (or `render_to_rgba` offscreen).
+
+`step` publishes the fixed-step input latch before `time`. The first fixed iteration sees those
+edges; conceal then drops them, and a later iteration does not. A step with no fixed iteration does
+not conceal. Frame edges still clear only in `input_clear`. `Actions` is published and concealed
+with `Input` (ADR-0013). `spatial_scene` reads actions for its keys. `basic_2_5d` reads raw `Input`.
+Scroll stays on `Input`.
 
 `Interpolate` is an opt-in component (ADR-0007). The fixed loop copies that entity's current local
 `Transform` into `Interpolate::previous` before user fixed systems. `FixedTimestep::alpha` is a

@@ -14,7 +14,7 @@
 //! Configurations (`--camera NAME`, key `C`): perspective, orthographic, isometric, top-down, steep, side.
 //! Each is a `Camera` plus a `Transform` over the same world and the same renderer.
 //!
-//! Controls
+//! Controls. These keys are gameplay actions. The mouse wheel stays raw input.
 //! ```text
 //! W / S        move the camera along its horizontal heading (depth)
 //! A / D        strafe (horizontal)
@@ -84,6 +84,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
     }
     game.world.insert_resource(scene);
+    bind_controls(&mut game);
 
     game.add_system("controls", controls_system);
     game.add_system("camera", scene::camera_system);
@@ -128,20 +129,35 @@ fn screenshot(
     Ok(())
 }
 
+fn bind_controls(game: &mut Game) {
+    let mut actions = game.world.resource_mut::<Actions>();
+    actions.bind_axis("strafe", ButtonSource::Key(Key::A), ButtonSource::Key(Key::D));
+    actions.bind_axis("advance", ButtonSource::Key(Key::S), ButtonSource::Key(Key::W));
+    actions.bind_axis("lift", ButtonSource::Key(Key::Shift), ButtonSource::Key(Key::Space));
+    actions.bind_axis("yaw", ButtonSource::Key(Key::Left), ButtonSource::Key(Key::Right));
+    actions.bind_axis("pitch", ButtonSource::Key(Key::Up), ButtonSource::Key(Key::Down));
+    actions.bind_button("toggle_projection", ButtonSource::Key(Key::P));
+    actions.bind_button("next_config", ButtonSource::Key(Key::C));
+    actions.bind_button("cycle_orientation", ButtonSource::Key(Key::O));
+    actions.bind_button("reset", ButtonSource::Key(Key::R));
+    actions.bind_button("quit", ButtonSource::Key(Key::Escape));
+}
+
 fn controls_system(world: &mut World) {
     let dt = world.resource::<Time>().delta_secs();
     let input = world.resource::<Input>();
-    let (strafe, advance) =
-        (input.axis(Key::A, Key::D), input.axis(Key::S, Key::W) + input.scroll() * 0.4 / dt.max(1e-3));
-    let lift = input.axis(Key::Shift, Key::Space);
-    let (yaw, pitch) = (input.axis(Key::Left, Key::Right), input.axis(Key::Up, Key::Down));
-    let (toggle_projection, next_config, cycle, reset, escape) = (
-        input.key_pressed(Key::P),
-        input.key_pressed(Key::C),
-        input.key_pressed(Key::O),
-        input.key_pressed(Key::R),
-        input.key_pressed(Key::Escape),
-    );
+    let actions = world.resource::<Actions>();
+    let strafe = actions.axis(&input, "strafe");
+    let advance = actions.axis(&input, "advance") + input.scroll() * 0.4 / dt.max(1e-3);
+    let lift = actions.axis(&input, "lift");
+    let yaw = actions.axis(&input, "yaw");
+    let pitch = actions.axis(&input, "pitch");
+    let toggle_projection = actions.pressed("toggle_projection");
+    let next_config = actions.pressed("next_config");
+    let cycle = actions.pressed("cycle_orientation");
+    let reset = actions.pressed("reset");
+    let escape = actions.pressed("quit");
+    drop(actions);
     drop(input);
 
     let mut scene = world.resource_mut::<Scene>();

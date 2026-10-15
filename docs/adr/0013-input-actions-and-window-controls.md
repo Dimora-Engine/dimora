@@ -60,7 +60,13 @@ These edges are visible to every stage of the step, including every fixed iterat
 * Bits OR together until delivery. The latch is not a queue. Two taps before the next fixed iteration produce one press bit and one release bit, plus whatever `down` is at delivery.
 * Variable-step systems keep using frame edges. Reading the latch does not clear it. Only the end of the delivering iteration clears it.
 
-`Actions` (Phase 2) reads those sets. It does not store a third edge clock.
+The readable bits and the stored bits are not the same set after delivery. `Game::step` calls `publish_fixed_edges` at the start of every step and `conceal_fixed_edges` after the first fixed iteration's systems and command flush. Queries (`fixed_key_pressed`, `fixed_key_released`, `fixed_mouse_pressed`, `fixed_mouse_released`) always read the published set. They do not change meaning based on which stage called them.
+
+* Before the first conceal, and for a whole step that runs no fixed iteration, the published set is the latch. `update` on a zero-step frame still sees it.
+* After conceal, queries return false for the rest of that step: later fixed iterations and `update`. Held state is unchanged.
+* A transition after conceal is stored and is not published until the next step. A rebind in a later iteration, or in `update`, therefore waits for the next step's first fixed iteration. It does not also fire on a later iteration of the same step.
+
+`Actions` uses that same publish and conceal pair. It does not keep a second clock. It stores aggregate edges of its own, because an action edge is not the OR of the physical edges. `Game::send_input` applies the device event and then `Actions::sync`. Rebinding compares the aggregate against the held keys and buttons saved by the last sync.
 
 * `down` is the live aggregate: any binding held.
 * `pressed` / `released` are the frame-edge aggregate, cleared with `end_frame`.
@@ -71,9 +77,38 @@ These edges are visible to every stage of the step, including every fixed iterat
 * A press and release of the last binding before `end_frame` leaves both action edges set.
 * `axis` is `+1`, `-1`, or `0` from held bindings. Several bindings on one side count once. Both sides or neither side are `0`. `axis2` is two axes.
 * Rebinding replaces the binding list, then compares the aggregate held state before and after using current `down`. Up to down records a press on the frame edge and the latch. Down to up records a release on both. No change in aggregate records no edge. A physical edge already stored is left set.
-* Names are `&'static str`. One resource. `set_button` / `set_axis` are the rebind API.
+* Names are `&'static str`. One resource. `bind_button` adds a binding. `set_button` replaces the list. `bind_axis` adds one negative and one positive source. `set_axis` replaces both sides. Axes have no press or release.
 
 Device events stay on `Game::send_input`. They are not typed `World` events. Routing them through ADR-0008 would delay them by a stage.
+
+### Usage
+
+A button, a second binding, and a rebind:
+
+```rust
+actions.bind_button("jump", ButtonSource::Key(Key::Space));
+actions.bind_button("jump", ButtonSource::Mouse(MouseButton::Left));
+if actions.pressed("jump") {
+    // variable-step one-shot
+}
+actions.set_button("jump", &[ButtonSource::Key(Key::J)]);
+```
+
+A 2D axis from two 1D axes. Opposing keys on one axis read as `0`.
+
+```rust
+actions.bind_axis("move_x", ButtonSource::Key(Key::A), ButtonSource::Key(Key::D));
+actions.bind_axis("move_y", ButtonSource::Key(Key::S), ButtonSource::Key(Key::W));
+let move_dir = actions.axis2(&input, "move_x", "move_y");
+```
+
+A one-shot inside `fixed_update`. The same call is false in later iterations of that step.
+
+```rust
+if actions.fixed_pressed("jump") {
+    // one simulation tick
+}
+```
 
 ### Keys and mouse, Phase 1
 
@@ -98,13 +133,13 @@ Phase 4, still without `winit` or `wgpu` in the new signatures:
 
 ## Consequences and follow-up
 
-* Phase 1 is the wider `Key` map and `mouse_released` on the frame clock. The latch and `Actions` are Phase 2. Viewport is Phase 3. Window controls are Phase 4.
+* Phase 1 is the wider `Key` map, `mouse_released`, and the collapsed-modifier count. Phase 2, the latch and `Actions`, is checkpointed locally. Viewport is Phase 3. Window controls are Phase 4.
 * D-39 stays open for UI capture, focus navigation, text, and any scale policy beyond physical, logical, and the device factor.
 * Gamepad, touch, IME, a rebinding UI, action-map stacks, exclusive fullscreen, and an input log are not part of M3b.
 * The collapsed multi-tap is the bound of the latch. A replay queue would be a new decision.
 
 ## Evidence and revisit conditions
 
-winit 0.30.13 `event.rs` documents `ScaleFactorChanged`, and the macOS `window_delegate` emits `Resized` after it. The frame-edge test is `input_edges_survive_fixed_and_update_and_clear_at_the_end`. Phase 1 tests cover the mouse release edge, a same-frame tap, ignored key repeat, and the new physical codes.
+winit 0.30.13 `event.rs` documents `ScaleFactorChanged`, and the macOS `window_delegate` emits `Resized` after it. The frame-edge test is `input_edges_survive_fixed_and_update_and_clear_at_the_end`. Phase 1 tests cover the mouse release edge, a same-frame tap, ignored key repeat, the new physical codes, and the collapsed-modifier count. Phase 2 tests cover the latch (`the_fixed_latch_survives_end_frame_and_a_read_does_not_clear_it`, `fixed_edges_are_visible_once_and_a_zero_step_frame_keeps_them`, `zero_steps_keep_the_latch_and_rebinding_waits_until_publish`) and aggregate actions (`the_first_binding_presses_once_and_the_second_does_not`, `rebinding_follows_the_aggregate`, `action_edges_follow_the_fixed_latch_and_aggregate_bindings`).
 
 Reopen the latch if a fixed-step game needs each collapsed tap delivered on its own iteration. Reopen presentation fallback if a real surface has none of `Fifo`, `Mailbox`, and `Immediate`.

@@ -2,7 +2,7 @@ use std::time::{Duration, Instant};
 
 use engine_animation::animate_system;
 use engine_assets::AssetManager;
-use engine_core::{FixedTimestep, Input, InputEvent, Time};
+use engine_core::{Actions, FixedTimestep, Input, InputEvent, Time};
 use engine_math::Vec2;
 use engine_platform::WindowConfig;
 use engine_renderer::{extract_scene, AmbientLight, ExtractStats, MissingAssetWarnings, RenderScene};
@@ -172,6 +172,7 @@ impl Game {
         };
         world.insert_resource(Time::default());
         world.insert_resource(Input::default());
+        world.insert_resource(Actions::default());
         world.insert_resource(assets);
         world.insert_resource(AmbientLight::default());
         world.insert_resource(WindowControl::default());
@@ -280,9 +281,11 @@ impl Game {
         self.schedule(stage).execution_order()
     }
 
-    /// Feeds a device event into the `Input` resource.
+    /// Feeds a device event into `Input`, then updates `Actions` from the new held state.
     pub fn send_input(&mut self, event: InputEvent) {
         self.world.resource_mut::<Input>().apply(event);
+        let input = self.world.resource::<Input>().clone();
+        self.world.resource_mut::<Actions>().sync(&input);
     }
 
     /// Advances the simulation by `dt`. The windowed loop calls this once per frame; tests and
@@ -293,8 +296,11 @@ impl Game {
     /// fixed step; it is restored to `dt` before `update`. At the start of each fixed iteration,
     /// before fixed-update systems, a marked entity's current local is copied into
     /// [`engine_world::Interpolate::previous`]. That copy is not a system. `Time::elapsed_secs` and `Time::frame`
-    /// advance once per call. Input edges stay visible until `input_clear`. Extract and render
-    /// are not part of this call.
+    /// advance once per call. Frame input edges stay visible until `input_clear`. Fixed-step edges
+    /// are published at the start of this call and concealed after the first fixed iteration's
+    /// systems and command flush. Later iterations do not see them. A step with no fixed iteration
+    /// leaves them published. An edge stored after conceal waits for the next call. Extract and
+    /// render are not part of this call.
     ///
     /// Deferred commands flush after every stage run, and after each fixed iteration. Events sent
     /// in a stage become visible to later stages once that stage's run has finished. `fixed_update`
@@ -312,6 +318,8 @@ impl Game {
     pub fn step(&mut self, dt: Duration) {
         self.world.clear_command_failures();
         self.world.clear_discarded_events();
+        self.world.resource_mut::<Input>().publish_fixed_edges();
+        self.world.resource_mut::<Actions>().publish_fixed_edges();
         self.world.resource_mut::<StepClock>().dt = dt;
 
         let started = Instant::now();
@@ -331,11 +339,15 @@ impl Game {
             (steps, fixed_dt, frame_delta)
         };
         let started = Instant::now();
-        for _ in 0..steps {
+        for index in 0..steps {
             self.world.resource_mut::<Time>().set_delta(fixed_dt);
             snapshot_interpolation(&mut self.world);
             self.fixed_update.run(&mut self.world);
             self.world.flush_commands_in(Stage::FixedUpdate.name());
+            if index == 0 {
+                self.world.resource_mut::<Input>().conceal_fixed_edges();
+                self.world.resource_mut::<Actions>().conceal_fixed_edges();
+            }
         }
         self.world.promote_events();
         let fixed_update = started.elapsed();
@@ -498,4 +510,5 @@ fn process_loads(world: &mut World) {
 
 fn end_input_frame(world: &mut World) {
     world.resource_mut::<Input>().end_frame();
+    world.resource_mut::<Actions>().end_frame();
 }

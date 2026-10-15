@@ -1,6 +1,6 @@
 [package]
 name = "engine-core"
-description = "Platform-independent runtime primitives: color, time, input state."
+description = "Platform-independent runtime primitives: color, time, input state, and actions."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
