@@ -48,8 +48,8 @@ without it.
 | 2 | ECS, world, hierarchy | Working, thin | `hecs` wrapper; commands and events included (ADR-0008). No change detection (D-02 provisional, not built) | M3, M4 |
 | 3 | Frame loop and scheduling | Working | Named stages, deferred commands, typed events, logging, diagnostics, and opt-in extract-only `Interpolate` (M3a, local, not pushed). `FixedTimestep::alpha` is finite in `0..=1`. The blend does not write `Transform`. The public-API review (M3a-6) added no new `hecs` type. Limits: no pause or time scale, no variable-step mix on a marked entity, no parallel systems | M3 |
 | 4 | Events and deferred commands | Working | FIFO commands flush per stage run and per fixed iteration. Typed events are visible to later stages and cleared after `input_clear` (ADR-0008). Reading copies the buffer (`T: Clone`). No observers | M3 |
-| 5 | Platform, window, timing | Working, narrow | winit loop, resize, exit, and display scale (M3b Phase 3, working tree). No fullscreen, vsync, or multi-window | M3, M10 |
-| 6 | Input and action mapping | Partial | Phases 1 and 2 checkpointed locally: fixed-step latch and `Actions`. Phase 3 (working tree): physical pointer stays physical; logical conversion is on `Viewport` (ADR-0013). No gamepad, text, or rebinding UI | M3 |
+| 5 | Platform, window, timing | Working, narrow | winit loop, resize, exit, display scale (`9c99edf`), borderless fullscreen, requested versus effective vsync, optional frame cap, cursor visibility and grab (M3b Phase 4, checkpointed locally). Exclusive fullscreen and multi-window are not built | M3, M10 |
+| 6 | Input and action mapping | Working for M3b | Fixed-step latch and `Actions` (Phases 1–2). Physical pointer stays physical; logical conversion is on `Viewport` (`9c99edf`). A grabbed cursor takes `mouse_delta` from device motion; a free cursor uses position changes; focus loss releases held input and the grab (ADR-0013). Gamepad, text, and a rebinding UI are deferred | M3 |
 | 7 | Errors, logging, diagnostics, config | Partial | `log` 0.4 and `Diagnostics` (ADR-0012, M3a-4). No runtime config. No profiler, no history | M20, M24 |
 | **Rendering** | | | | |
 | 8 | Cameras and projection | Working; six views demonstrated by the example | Ortho + perspective, viewport, picking rays; 27 camera tests. `spatial_scene` also renders isometric, top-down, steep and side through example-local constructors (not an engine preset API). One camera/frame; closed projection enum; custom projection still absent | M6 |
@@ -159,8 +159,8 @@ Missing from the original category list and now tracked: **save games** (34), **
   `Transform`), rotation exactly opposite (`Quat::slerp` is unstable there), scale sign changes
   (they pass through zero), shear, and skeletal or physics interpolation.
 * **Required.** A headless `step` exists. M3a-6 reviewed the re-exports (ADR-0010). The frame-model
-  slice is complete locally and is not pushed. M3b Phases 1 and 2 are checkpointed locally. Phase 3
-  (`Viewport` scale) is in the working tree and is not committed.
+  slice is complete locally and is not pushed. M3b Phases 1–3 are checkpointed locally (`57dbc4a`,
+  `83286a9`, `9c99edf`). Phase 4 (window controls) is checkpointed locally. M3b is not pushed.
 * **Planned.** Nothing further in M3a. **Depends on.** D-01 (implemented), D-02, D-10, D-44.
   **Integration.** Collision (fixed stage), animation (animate stage, camera read from previous
   propagation, D-31), UI (its own stage), scripts (one stage), scenes (apply at a boundary).
@@ -199,23 +199,32 @@ Missing from the original category list and now tracked: **save games** (34), **
 * **Not initially.** Observers/reactive triggers, event persistence, networking. Change detection (D-02).
 
 ### 5. Platform, window, timing
-* **Now.** winit 0.30 loop, resize, exit, title, `ControlFlow::Poll`, default present mode. `Time` and
-  `FixedTimestep` tested. The window scale factor is forwarded (M3b Phase 3, working tree, not
-  committed). `Viewport` stores physical pixels, a finite positive scale, and logical size
-  (`physical / scale`). A scale event does not resize; the following `Resized` stores the physical
-  size. A zero resize keeps the last positive framebuffer. Single window. Fullscreen, vsync, a frame
-  cap, and cursor grab are not built.
-* **Required (desktop).** Fullscreen, vsync/frame cap, cursor grab/visibility, focus loss, and monitor
-  info remain. DPI scale and its changes are implemented for the single window.
-* **Planned.** M3b Phase 4 for window controls. M10 for UI. **Depends on.** Nothing.
+* **Now.** winit 0.30.13 loop, resize, exit, and title. `Time` and `FixedTimestep` are tested. The
+  window scale factor is forwarded (M3b Phase 3, `9c99edf`). `Viewport` stores physical pixels, a
+  finite positive scale, and logical size (`physical / scale`). A scale event does not resize; the
+  following `Resized` stores the physical size. A zero resize keeps the last positive framebuffer.
+  Single window. Phase 4, checkpointed locally, adds borderless fullscreen on the
+  current monitor, a vsync request whose effective mode is chosen from the surface's listed present
+  modes, an optional frame cap via `ControlFlow::WaitUntil`, and cursor visibility plus grab
+  (locked, then confined). The previous windowed logical size is restored on leaving fullscreen.
+  `WindowControl` is the request. `WindowState` is what the runner last applied, including
+  `present_mode` (`None` until a surface exists) and `cursor_grab`. A requested cap is a scheduling
+  target. `Game::step` still receives the redraw delta. Uncapped frames still use `ControlFlow::Poll`.
+  Exclusive fullscreen, display-mode selection, and multi-window are not built.
+* **Required (desktop).** Monitor enumeration beyond the current monitor remains. DPI scale and its
+  changes are implemented for the single window. Borderless fullscreen, vsync, the frame cap, cursor
+  visibility, and cursor grab are implemented.
+* **Planned.** M10 for UI. **Depends on.** Nothing.
   **Integration.** UI maps a physical pointer through `Viewport::physical_to_logical`. Reference-resolution
   fit modes stay in D-39.
-* **Performance.** Poll loop burns CPU; a frame cap is needed before shipping.
+* **Performance.** An uncapped loop still polls. The optional cap waits until a deadline instead of
+  spinning. It does not pace against the display blank; vsync can still hold a frame for one refresh.
 * **Tests/examples.** `Viewport` size, scale, zero resize, and pointer conversion are pure tests
-  (`crates/engine/src/viewport.rs`, `crates/engine/tests/viewport.rs`). Key mapping stays a pure
-  function. A real HiDPI window is a manual check, per OS.
-* **Unresolved.** D-39 (UI capture, focus, text, and reference-resolution fit modes), D-23 (platforms).
-  **Not initially.** Multi-window, IME, touch, mobile lifecycle.
+  (`crates/engine/src/viewport.rs`, `crates/engine/tests/viewport.rs`). Present-mode selection, the
+  fullscreen toggle, the frame-cap deadline, and cursor-grab fallback are pure tests. A real window
+  is a manual check, per OS. Phase 4's manual check is macOS only.
+* **Unresolved.** D-39 (UI capture, focus navigation, text, and reference-resolution fit modes), D-23 (platforms).
+  **Not initially.** Multi-window, exclusive fullscreen, IME, touch, mobile lifecycle.
 
 ### 6. Input and action mapping
 * **Now.** Physical keys through F12, US punctuation, navigation, and the numeric keypad (`NumpadEnter`
@@ -230,7 +239,14 @@ Missing from the original category list and now tracked: **save games** (34), **
   fixed iteration leaves them published. Queries read that published set from any stage. Held state
   stays live. Phases 1 and 2 are checkpointed locally and are not pushed (ADR-0013). `mouse_position`
   stays in physical pixels. Logical coordinates are `Viewport::physical_to_logical`, top-left, +X
-  right, +Y down, with no Y flip and no clamp. Phase 3 is in the working tree and is not committed.
+  right, +Y down, with no Y flip and no clamp.   Phase 3 is checkpointed locally as `9c99edf`.
+  Phase 4, checkpointed locally, selects one `mouse_delta` source: device motion while the cursor is
+  grabbed (locked or confined), and cursor-position changes while it is free. A grab transition
+  swallows one position delta. Focus loss releases every held key and mouse button, clears
+  `mouse_delta`, releases the grab, and restores the requested cursor visibility. It does not grab
+  again when focus returns. Collapsed Shift, Control, and Alt drop both physical sides, so a logical
+  modifier is not left down. Device-motion units are winit's; this is not unaccelerated HID input.
+  macOS rejects confined grab. X11 rejects locked grab. A failed grab is recorded and does not panic.
 * **Required.** An input record/replay format (M9), UI input capture before gameplay.
 * **Planned.** Gamepad after M9 (unscheduled device layer; actions must not assume keyboard);
   text input only with UI text fields. **Depends on.** D-10 (events).
@@ -471,7 +487,7 @@ Missing from the original category list and now tracked: **save games** (34), **
 
 ### 26. UI runtime (screen-space and world-space)
 * **Now.** Absent. No font loading, text, layout, widgets, focus or overlay pass; `RenderScene` is
-  world-only. The device scale and logical pointer conversion exist (M3b Phase 3). Whole-texture
+  world-only. The device scale and logical pointer conversion exist (M3b Phase 3, `9c99edf`). Whole-texture
   re-upload still blocks a glyph atlas (KI-25). Reference-resolution UI scaling is not built (D-39).
 * **Planned.** M10: a retained node tree with pure-function layout, a plain-data draw list, an overlay
   pass (no depth, painter's order, scissor), shared device/texture cache/atlases, world-anchored UI by
@@ -605,7 +621,7 @@ before the related foundation freezes".
 | Category | Why it matters | Where it should enter |
 |---|---|---|
 | Diagnostics and logging facade | Failures need a record a game can capture | Implemented in M3a-4 (`log` crate, `Diagnostics`, ADR-0012). Profiling remains M20 |
-| DPI and logical versus physical pixels | Device scale, physical and logical `Viewport`, and pointer conversion are implemented (M3b Phase 3, working tree). UI fit modes and text are not | M10 for UI scaling policy (D-39) |
+| DPI and logical versus physical pixels | Device scale, physical and logical `Viewport`, and pointer conversion are implemented (M3b Phase 3, `9c99edf`). UI fit modes and text are not | M10 for UI scaling policy (D-39) |
 | Threading model (`Send`/`Sync`, main thread rules) | Async asset loading, parallel extraction and scripting all depend on it; resources are `RefCell` | Decided (ADR-0006): calling thread owns `World`. Already how the code works |
 | Public API tiers | The facade re-exports every crate including `hecs`, `winit` and `wgpu` | Rule decided (ADR-0010). The list is still M9 |
 | Save games and settings | Shipped games need them; format promises start at first release | Decision by M18 |

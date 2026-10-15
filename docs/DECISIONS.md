@@ -80,7 +80,7 @@ the risk register). **Prototype where the answer depends on a measurement; do no
 | D-01 | Scheduling model | M3 | M3, M7, M8, M10, M15 | Decided, [ADR-0007](adr/0007-named-stages-on-the-existing-schedule.md) (2026-10-14). Stages in M3a-2. Interpolation in M3a-5 (committed locally, not pushed) |
 | D-02 | Change detection | M3 | M3, M4 (dirty transforms), M23 | Provisional, [ADR-0009](adr/0009-no-change-detection-until-measured.md) (2026-10-14): none until a profile |
 | D-10 | Events and deferred commands | M3 | M3, M4, M7, M8, M18 | Decided, [ADR-0008](adr/0008-commands-and-per-frame-events.md) (2026-10-14). Implemented in M3a-3 |
-| D-49 | Input actions, fixed-step one-shots, viewport scale, window controls | M3b | M3b, M10 | Decided, [ADR-0013](adr/0013-input-actions-and-window-controls.md) (2026-10-15). Phases 1 and 2 are checkpointed locally. Phase 3 (`Viewport` and DPI) is in the working tree and is not committed. Window controls are not built |
+| D-49 | Input actions, fixed-step one-shots, viewport scale, window controls | M3b | M3b, M10 | Decided, [ADR-0013](adr/0013-input-actions-and-window-controls.md) (2026-10-15). Phases 1–4 are checkpointed locally and are not pushed. M3b's acceptance criteria are met |
 | D-18 | Scene format, serde, component registry | M4 (registry shape), M19 | M4, M18, M19, M22 | Open |
 | D-27 | Units and pixels per unit | M5 | M5, M8, M9, M13 | Open |
 | D-05 | Materials, alpha modes, blended meshes | M5 | M5, M14 | Open |
@@ -197,14 +197,17 @@ M3b keeps it on `Input` (ADR-0013).
 **Decided 2026-10-15: [ADR-0013](adr/0013-input-actions-and-window-controls.md).** Frame edges on `Input`
 stay visible to every fixed iteration and clear in `input_clear`. Phase 2 adds a latch that a fixed
 iteration sees once, including a transition that arrived on a frame with no fixed step. Several
-transitions before that delivery collapse to one press bit and one release bit. `Actions` will follow
+transitions before that delivery collapse to one press bit and one release bit. `Actions` follows
 both timings. Phase 1 widens `Key` and adds `mouse_released` on the frame clock. Viewport scale uses
 winit 0.30.13 `ScaleFactorChanged`. Window controls are borderless fullscreen, vsync with an explicit
 capability fallback, an event-loop frame cap, and cursor grab. D-39's UI capture, focus, and text stay
-open. Phases 1 and 2 are checkpointed locally (`57dbc4a`, `83286a9`) and are not pushed. Phase 3 is
-implemented in the working tree: physical size, logical size (`physical / scale`), and a validated
-scale, with pointer conversion and no new `winit` type on that API. It is not committed. Window
-controls are not built.
+open. Phases 1–3 are checkpointed locally (`57dbc4a`, `83286a9`, `9c99edf`) and are not pushed.
+Phase 3 stores physical size, logical size (`physical / scale`), and a validated scale, with pointer
+conversion and no new `winit` type on that API. Phase 4 is checkpointed locally: borderless fullscreen with a restored windowed size, vsync chosen from the surface's
+listed modes (`Fifo` when on; `Immediate`, then `Mailbox`, then `Fifo` when off), an optional
+`WaitUntil` frame cap, cursor visibility and grab (locked, then confined), device-motion
+`mouse_delta` while grabbed, and focus-loss release of held input and the grab. Exclusive fullscreen
+is not implemented. None of M3b is pushed.
 
 ### D-18 Scene format, serde, component registry
 
@@ -446,8 +449,8 @@ detail and the proposed boundaries are in [ARCHITECTURE.md](ARCHITECTURE.md#prop
   navigation model (spatial or ordered focus, activation through M3 actions); text input scope (none for
   the first runtime, or text fields with IME); scaling (logical units, reference resolution, device scale
   factor). The device scale factor, physical and logical viewport sizes, and logical pointer conversion
-  are implemented for M3b in [ADR-0013](adr/0013-input-actions-and-window-controls.md) (working tree,
-  not committed). winit 0.30.13 dispatches `WindowEvent::ScaleFactorChanged { scale_factor, inner_size_writer }`.
+  are implemented for M3b in [ADR-0013](adr/0013-input-actions-and-window-controls.md) (checkpoint
+  `9c99edf`). winit 0.30.13 dispatches `WindowEvent::ScaleFactorChanged { scale_factor, inner_size_writer }`.
   The handler does not write `inner_size_writer`. Capture, focus navigation, text, and
   reference-resolution fit modes stay open.
 * **Needed by.** M10 (start). **Blocks.** M10.

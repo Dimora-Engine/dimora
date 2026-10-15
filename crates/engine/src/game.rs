@@ -38,15 +38,70 @@ impl GameConfig {
         self.window.height = height;
         self
     }
+    pub fn with_fullscreen(mut self, fullscreen: bool) -> Self {
+        self.window.fullscreen = fullscreen;
+        self
+    }
+    pub fn with_vsync(mut self, vsync: bool) -> Self {
+        self.window.vsync = vsync;
+        self
+    }
+    /// `None` or `Some(0)` disables the frame cap.
+    pub fn with_max_frame_rate(mut self, frames_per_second: Option<u32>) -> Self {
+        self.window.max_frame_rate = frames_per_second;
+        self
+    }
 }
 
-/// Lets systems talk to the window without depending on it.
-#[derive(Clone, Debug, Default)]
+/// Requests a system makes of the window. The runner applies them after `step`.
+///
+/// [`crate::WindowState`] is what was actually applied. A grab that the window rejects is cleared
+/// here and recorded as failed on that state. Focus loss clears `cursor_grabbed` and does not
+/// set it again when focus returns.
+#[derive(Clone, Debug)]
 pub struct WindowControl {
     /// Set to `true` to end the run loop after this frame.
     pub exit: bool,
     /// If `Some`, the window title is changed and this is reset to `None`.
     pub title: Option<String>,
+    /// Borderless fullscreen on the current monitor. Exclusive fullscreen is not available.
+    pub fullscreen: bool,
+    /// Requested vertical sync. The effective mode is [`crate::WindowState::present_mode`].
+    pub vsync: bool,
+    /// Target frames per second for the event loop. `None` or `Some(0)` disables the cap.
+    ///
+    /// The cap does not change [`Game::step`]. It is a scheduling target, not a promise that the
+    /// display presents at that rate.
+    pub max_frame_rate: Option<u32>,
+    /// `false` hides the cursor. The runner applies this to the window.
+    pub cursor_visible: bool,
+    /// Ask to grab the cursor. The runner tries locked, then confined, and clears this if both fail.
+    pub cursor_grabbed: bool,
+}
+
+impl Default for WindowControl {
+    fn default() -> Self {
+        Self::from_config(&WindowConfig::default())
+    }
+}
+
+impl WindowControl {
+    pub fn from_config(config: &WindowConfig) -> Self {
+        Self {
+            exit: false,
+            title: None,
+            fullscreen: config.fullscreen,
+            vsync: config.vsync,
+            max_frame_rate: config.max_frame_rate.filter(|hz| *hz > 0),
+            cursor_visible: true,
+            cursor_grabbed: false,
+        }
+    }
+
+    /// Focus loss drops the grab request. Focus gain does not set it again.
+    pub(crate) fn release_grab_request(&mut self) {
+        self.cursor_grabbed = false;
+    }
 }
 
 /// Statistics from the most recent rendered frame.
@@ -171,7 +226,13 @@ impl Game {
         world.insert_resource(Actions::default());
         world.insert_resource(assets);
         world.insert_resource(AmbientLight::default());
-        world.insert_resource(WindowControl::default());
+        world.insert_resource(WindowControl::from_config(&config.window));
+        world.insert_resource(crate::window::WindowState {
+            fullscreen: config.window.fullscreen,
+            vsync_requested: config.window.vsync,
+            max_frame_rate: config.window.max_frame_rate.filter(|hz| *hz > 0),
+            ..crate::window::WindowState::default()
+        });
         world.insert_resource(RenderStats::default());
         world.insert_resource(Diagnostics::default());
         world.insert_resource(MissingAssetWarnings::default());
@@ -507,4 +568,25 @@ fn process_loads(world: &mut World) {
 fn end_input_frame(world: &mut World) {
     world.resource_mut::<Input>().end_frame();
     world.resource_mut::<Actions>().end_frame();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn focus_loss_clears_a_grab_request_and_focus_gain_does_not_restore_it() {
+        let mut game = Game::new(GameConfig::default());
+        {
+            let mut control = game.world.resource_mut::<WindowControl>();
+            control.cursor_grabbed = true;
+            control.cursor_visible = false;
+            control.release_grab_request();
+        }
+        assert!(!game.world.resource::<WindowControl>().cursor_grabbed);
+        assert!(!game.world.resource::<WindowControl>().cursor_visible);
+        game.send_input(InputEvent::FocusGained);
+        assert!(!game.world.resource::<WindowControl>().cursor_grabbed);
+        assert_eq!(game.world.resource::<crate::WindowState>().cursor_grab, crate::CursorGrab::Free);
+    }
 }

@@ -1,6 +1,7 @@
 use engine_assets::AssetManager;
 use engine_renderer::RenderScene;
 
+use crate::present::{choose_surface_present, surface_presents_from_wgpu, wgpu_present_for, SurfacePresent};
 use crate::{GpuContext, RenderError, SceneRenderer};
 
 /// A [`SceneRenderer`] presenting to a window surface.
@@ -48,9 +49,29 @@ impl WindowRenderer {
         if width == 0 || height == 0 {
             return;
         }
+        if self.config.width == width && self.config.height == height {
+            return;
+        }
         self.config.width = width;
         self.config.height = height;
         self.surface.configure(&self.gpu.device, &self.config);
+    }
+
+    /// Selects a present mode for `vsync` from this surface's capabilities and configures the
+    /// surface when the mode changes. Returns the mode that is now configured.
+    ///
+    /// A request that resolves to the mode already in use does not reconfigure the surface.
+    pub fn apply_vsync(&mut self, vsync: bool) -> SurfacePresent {
+        let listed = self.surface.get_capabilities(&self.gpu.adapter).present_modes;
+        let choice = choose_surface_present(vsync, &surface_presents_from_wgpu(&listed));
+        let mode = wgpu_present_for(choice, &listed);
+        if self.config.present_mode != mode {
+            self.config.present_mode = mode;
+            if self.config.width > 0 && self.config.height > 0 {
+                self.surface.configure(&self.gpu.device, &self.config);
+            }
+        }
+        choice
     }
 
     pub fn size(&self) -> (u32, u32) {

@@ -18,9 +18,9 @@ because they wait on the owner, not on code: licence files (KI-17) and CI (D-22,
 **M3a, the frame model, is complete locally and is not pushed.** Full scope and acceptance criteria:
 [ROADMAP.md](ROADMAP.md#m3-frame-model-input-and-platform-in-progress). M3a-2 is commit `312a05f`.
 Lifecycle anchors are `ecf4fa1`. M3a-3 is `cd802f0`. M3a-4 is `5c4fd97`. M3a-5 is `523f553`. M3a-6
-is the public-API review recorded below. M3b Phase 1 (wider keys and mouse release) is in the working
-tree and is not committed. Later M3b phases are not started. The rendering regression baseline is
-commit `6dbabb8`.
+is the public-API review recorded below. M3b Phases 1–3 are checkpointed locally (`57dbc4a`,
+`83286a9`, `9c99edf`) and are not pushed. Phase 4 and the M3b acceptance audit are checkpointed
+locally and are not pushed. The rendering regression baseline is commit `6dbabb8`.
 
 ## Completed work
 
@@ -177,16 +177,16 @@ yet reproduced.
 | KI-12 | Assets: synchronous loading; PNG is the only decoder (sprites, meshes, skeletons, clips are code-built); no hot-reload watcher; `AssetId` is a name hash and changes on rename. The collision check is **done by T3** (commit `8abee2e`): `insert`, `load` and `reload` return `AssetError::IdCollision` and never overwrite. Remaining limit: the check is per asset type (see "Task T3 results") | Read | M17 |
 | KI-13 | Skeletal animation has no blending, events, IK, skinning or file loading | Read | M11 |
 | KI-14 | Blended sprites sort by quad centre only; large or intersecting blended quads can mis-order | Read | M5/M14 |
-| KI-15 | ~~Input has 47 keys and no F-keys~~ Phase 1 maps F1–F12, punctuation, navigation, and the keypad, and mouse release is a one-frame edge. Phase 2 adds `Actions` and the fixed-step latch. Still open: cursor grab, gamepad, touch, and text | Partial (Phases 1 and 2 checkpointed locally) | M3b (text and UI scale policy: M10, D-39) |
+| KI-15 | ~~Input has 47 keys and no F-keys~~ Phase 1 maps F1–F12, punctuation, navigation, and the keypad, and mouse release is a one-frame edge. Phase 2 adds `Actions` and the fixed-step latch. Phase 4 adds cursor visibility, grab (locked, then confined), and focus-loss release of held input. Still open: gamepad, touch, and text. Device motion is winit's units, not unaccelerated HID. Relative motion and OS focus-loss were not observed on a window; the unit tests cover them | Done for M3b (gamepad, touch, and text stay deferred) | M3b (text and UI scale policy: M10, D-39) |
 | KI-16 | ~~Two rustdoc warnings: unresolved `World` and `Schedule` links in `crates/engine/src/lib.rs`~~ **Fixed by T1** (commit `e08033e`); `cargo doc` with `-D warnings` is clean | Verified | M2 |
 | KI-17 | `Cargo.toml` declares `MIT OR Apache-2.0` but no licence files exist. The licence is **proposed, not owner-confirmed** (OD-3); copyright holder unknown. Audit and the list of files that would change: "Licence audit" below | Verified (repository listing, `cargo metadata --locked`) | Owner decision, then M24 notices |
 | KI-18 | `Visibility::Hidden` applies to the entity only; it does not hide children | Read (`extract.rs`) | M4 |
 | KI-19 | Performance is unmeasured: extraction is O(renderables) every frame, tilemaps expand per tile per frame, instance buffers are fully rewritten; the only timings available come from a software rasterizer | Read | M6 |
-| KI-20 | Platform: single window, `ControlFlow::Poll`, default present mode; no fullscreen/vsync configuration | Read | M3 |
+| KI-20 | ~~Platform: single window, `ControlFlow::Poll`, default present mode; no fullscreen/vsync configuration~~ Phase 4 adds borderless fullscreen, a vsync request with a surface-capability fallback, and an optional `WaitUntil` frame cap. Still one window. Uncapped frames still poll. Exclusive fullscreen and a frame pacer are not built. macOS showed Fifo with vsync on and Immediate with vsync off | Done for M3b | M3 |
 | KI-21 | A sprite's natural size comes from the whole `SpriteAsset`, not from `Sprite.region`, so showing a sheet frame without also setting `size` stretches it to the asset's size | Read (`extract.rs`: `sprite.size.unwrap_or_else(|| asset.world_size())`) | M8 |
 | KI-22 | `animate_system` writes sampled transforms directly onto bone entities and only visits entities that have a `SkeletonInstance`; `Pose` is not in the path, so there is no stage for blending or IK, and a skeleton-less sprite cannot be animated by it | Read (`clip.rs`) | M11 (sprite sheets: M8) |
 | KI-23 | `Vertex` is position, normal and uv; no joints, weights or tangents; no model loader; meshes are code-built | Read (`mesh.rs`) | M12 |
-| KI-24 | ~~The platform layer does not forward the window scale factor, and `Viewport` is one pixel size~~ M3b Phase 3 stores physical size, logical size, and a validated scale, and converts the physical pointer. Remaining: no text-input events, so UI text still has no input path, and reference-resolution fit modes are not built (D-39) | Partial (working tree, not committed) | M10 |
+| KI-24 | ~~The platform layer does not forward the window scale factor, and `Viewport` is one pixel size~~ M3b Phase 3 stores physical size, logical size, and a validated scale, and converts the physical pointer. Remaining: no text-input events, so UI text still has no input path, and reference-resolution fit modes are not built (D-39) | Partial (checkpointed locally as `9c99edf`) | M10 |
 | KI-25 | Any change to a texture re-uploads the whole texture (cache keyed by `AssetId` and revision); there is no sub-rectangle update, which a glyph atlas needs | Read (`scene_renderer.rs`) | M5 |
 | KI-26 | macOS dev machine (Apple M5, macOS 27.0): rustc **older than 1.99** cannot link anything, not even `fn main(){}`, with `ld: tapi error: malformed file ... libSystem.B.tbd ... unknown architecture arm64e.x1-macos`. Cause seen: `xcode-select -p` points at Xcode 26.4.1 (`ld-1266.8`) but `xcrun --show-sdk-path` returns the macOS 27.0 SDK from the Command Line Tools, which that linker cannot read; rustc 1.99.0 links fine (not investigated why). Host setup, not engine code; nothing was changed system-wide. Workaround used for the 1.89.0 and 1.90.0 runs: `SDKROOT=/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk`. Proper fix (user's decision): select a matching Xcode or CLT with `xcode-select`, or update Xcode | Verified (hello-world reproduction with 1.89.0 and 1.90.0 fails, with the `SDKROOT` above succeeds, 1.99.0 succeeds without it) | Environment |
 | KI-27 | ~~The MSRV (1.90) was only built on macOS arm64~~ **Verified on all three systems** by the CI `msrv` job: `cargo +1.90.0 test --workspace --locked`, 138 passed, 0 failed on x86_64 Linux, aarch64 macOS and x86_64 Windows (MSVC). The MSRV holds only with the committed `Cargo.lock` | Verified (run 38475229601) | Done |
@@ -378,8 +378,7 @@ Done on macOS arm64 (2026-10-13); see "Task T3 results" for the evidence and its
 Ordered by dependency. Each task is small enough to verify on its own. The milestone-level acceptance
 criteria (ordering test, command and event tests, interpolation test, logging test, byte-identical example
 screenshots against `6dbabb8`, ADRs) are in ROADMAP.md under M3a and are not repeated here. M3a is
-complete locally and is not pushed. M3b Phases 1 and 2 are checkpointed locally. Phase 3 is in the
-working tree and is not committed.
+complete locally and is not pushed. M3b is complete locally and is not pushed.
 
 | Task | Content | Prerequisite | Done when |
 |---|---|---|---|
@@ -403,8 +402,8 @@ capture, focus, and text. `basic_2_5d` stays on raw `Input`. `spatial_scene` mov
 |---|---|---|
 | 1 | Wider physical key map and mouse just-released, on the existing frame clock | **Checkpointed locally.** Evidence under "M3b Phase 1 results" below |
 | 2 | `Actions`, aggregate edges, axes, rebinding, and the fixed-step latch | **Checkpointed locally.** Evidence under "M3b Phase 2 results" below |
-| 3 | `Viewport` physical size, logical size, and scale; `ScaleFactorChanged` | **In the working tree, not committed.** Evidence under "M3b Phase 3 results" below |
-| 4 | Borderless fullscreen, vsync fallback, event-loop frame cap, cursor grab, focus-loss release | Not started |
+| 3 | `Viewport` physical size, logical size, and scale; `ScaleFactorChanged` | **Checkpointed locally as `9c99edf`.** Evidence under "M3b Phase 3 results" below |
+| 4 | Borderless fullscreen, vsync fallback, event-loop frame cap, cursor grab, focus-loss release | **Checkpointed locally.** Evidence under "M3b Phase 4 results" and "M3b Phase 4 review" below |
 
 ## M3a-1 results (2026-10-14)
 
@@ -568,7 +567,7 @@ Wider physical keys and a mouse release edge. Checkpointed locally after the mod
 
 ## M3b Phase 2 results (2026-10-15)
 
-Fixed-step latch and `Actions`. Checkpointed locally as `83286a9`. Phase 3 is in the working tree and is not committed. The review before the checkpoint added `zero_steps_keep_the_latch_and_rebinding_waits_until_publish`. No latch behavior changed.
+Fixed-step latch and `Actions`. Checkpointed locally as `83286a9`. Phase 3 is checkpointed locally as `9c99edf`. The review before the Phase 2 checkpoint added `zero_steps_keep_the_latch_and_rebinding_waits_until_publish`. No latch behavior changed.
 
 **Latch.** A real press or release sets the frame edge and stores a fixed-step bit. `end_frame` clears only the frame edge. `Game::step` publishes the stored bits at the start of the step. After the first fixed iteration's systems and command flush it conceals them, so later iterations read false. A step with zero fixed iterations does not conceal. A transition after conceal stays stored until the next publish, and queries keep reading the published set, so they do not change meaning by stage. A read does not clear a bit. Several transitions before publish collapse to one press bit and one release bit. `key_down` and `mouse_down` stay live.
 
@@ -584,7 +583,7 @@ Fixed-step latch and `Actions`. Checkpointed locally as `83286a9`. Phase 3 is in
 
 ## M3b Phase 3 results (2026-10-15)
 
-Physical and logical `Viewport`, display scale, and pointer conversion. In the working tree. Not committed. Not pushed.
+Physical and logical `Viewport`, display scale, and pointer conversion. Checkpointed locally as `9c99edf`. Not pushed.
 
 **Viewport.** `Viewport` stores physical width and height (`u32`) and a scale factor (`f64`, finite and greater than zero). Logical size is `physical / scale` (`f32`). `Viewport::new` rejects a non-finite or non-positive scale. `from_logical_pixels` is scale 1, used before a window exists and by `render_to_rgba`. `apply_scale_factor` does not change the physical size. `apply_physical_size` ignores a zero width or height and keeps the last positive framebuffer. `physical_to_logical` and `logical_to_physical` do not clamp and do not flip Y. Both pointer spaces are top-left, +X right, +Y down. World space stays Y-up.
 
@@ -606,6 +605,80 @@ Physical and logical `Viewport`, display scale, and pointer conversion. In the w
 
 A second process used `engine_platform::run` and the same viewport and `WindowRenderer::resize` calls. Initial size, surface, and scale matched. A logical resize to 900×500 became physical 1800×1000 at scale 2, and the surface matched. Two rapid logical resizes (640×360, then 1100×400) settled on physical 2200×800, logical 1100×400, scale still 2, surface matching. `set_minimized(true)` did not emit a zero size on this Mac; the viewport stayed 2200×800. Zero-size handling is covered by `invalid_scales_are_rejected_and_zero_resizes_keep_the_last_framebuffer`, not by this window.
 
+## M3b Phase 4 results (2026-10-15)
+
+Borderless fullscreen, vsync, an optional frame cap, cursor visibility and grab, and focus-loss cleanup. Checkpointed locally. Not pushed.
+
+**Fullscreen.** `WindowConfig.fullscreen` creates the window borderless on the current monitor. `WindowControl.fullscreen` switches later. Entering stores the windowed logical size. Leaving requests that size back. A request that already matches does not call `set_fullscreen`. A resize that still has the fullscreen logical size does not replace the saved windowed size. `WindowRenderer::resize` skips a zero size and an unchanged physical size. Exclusive fullscreen and display-mode selection are not implemented.
+
+**VSync.** `WindowControl.vsync` is the request. `WindowState.present_mode` is the effective mode (`Fifo`, `Immediate`, or `Mailbox`) after the surface is configured, and `None` before that, including every headless `Game`. VSync on prefers Fifo (`Fifo`, then `AutoVsync`, then `FifoRelaxed`). VSync off prefers Immediate, then Mailbox, then Fifo, using the modes the surface lists. The wgpu surface is reconfigured only when its present mode changes. A result other than the preferred mode is logged once per request.
+
+**Frame cap.** `None` or `Some(0)` keeps `ControlFlow::Poll` and a redraw from every `about_to_wait`. A positive cap schedules `ControlFlow::WaitUntil` from the start of that frame, so input is not blocked by a sleep. `Game::step` still receives the time since the previous redraw, clamped as before. The fixed timestep is unchanged. A cap is a scheduling target, not a promise that the display presents at that rate. VSync can still hold a frame for one refresh.
+
+**Cursor and pointer delta.** `cursor_visible` and `cursor_grabbed` are requests. Grab tries locked, then confined. If both are rejected, the request is cleared, `WindowState.grab_failed` stays set until a later attempt succeeds, and the runner does not panic. `WindowState.cursor_grab` is `Free`, `Locked`, or `Confined`. Release asks for grab none and reapplies the requested visibility. While the grab is locked or confined, `mouse_delta` comes only from device motion. While it is free, `mouse_delta` comes only from cursor-position changes. One position event after a grab change adds no delta. Device-motion units are winit's. This is not unaccelerated HID input. winit 0.30.13 rejects confined grab on macOS and locked grab on X11.
+
+**Focus loss.** Every held key and mouse button is released. Collapsed Shift, Control, and Alt drop both physical sides, so the logical key is not left down. The release remains a frame edge and a fixed-step latch edge. `Actions` sync from the same event. `mouse_delta` is cleared. The grab request is cleared and is not set again when focus returns. The next cursor position after focus returns does not add a jump.
+
+**Public API.** `PresentMode`, `CursorGrab`, and `WindowState` on `engine` and `engine::prelude`. `GameConfig::with_fullscreen`, `with_vsync`, `with_max_frame_rate`. `WindowControl` fields `fullscreen`, `vsync`, `max_frame_rate`, `cursor_visible`, `cursor_grabbed`. `WindowConfig` fields `fullscreen`, `vsync`, `max_frame_rate`. `InputEvent::MousePosition`, `MouseDelta`, `FocusLost`, `FocusGained`. `Input::place_mouse`, `add_mouse_delta`, `release_focus`, `regain_focus`. `engine_platform::frame_deadline` and `Flow::WaitUntil`. `SurfacePresent` and the present-mode helpers on `engine-renderer-wgpu`. No new public signature names a winit or wgpu type.
+
+**Repository check.** `scripts/check.sh` on 2026-10-15, exit 0. All 4 steps: fmt, clippy `-D warnings`, `cargo test --workspace` with `DIMORA_REQUIRE_GPU=1` (GPU tests ran, none skipped), rustdoc `-D warnings`. The run reported **277 passed, 0 failed**. The closing review added `a_second_focus_loss_does_not_repeat_the_release` and reran the check at **278 passed, 0 failed** (see "M3b closing check"). New tests: `vsync_on_selects_fifo_and_off_falls_through_immediate_then_mailbox`, `wgpu_modes_collapse_and_map_back_without_assuming_immediate_exists`, `fullscreen_enter_is_once_and_exit_restores_the_windowed_size`, `a_fullscreen_sized_resize_after_exit_does_not_replace_the_windowed_size`, `reentering_before_the_windowed_resize_keeps_the_saved_size`, `logical_window_size_rounds_and_rejects_a_bad_scale`, `grab_tries_locked_then_confined_and_a_failure_does_not_stick_the_request`, `a_failed_grab_stays_visible_until_the_next_attempt`, `pointer_events_use_one_delta_source_and_a_transition_drops_the_warp`, `a_frame_cap_waits_one_period_and_zero_disables_it`, `focus_loss_releases_held_input_and_focus_gain_drops_the_next_jump`, `a_concealed_focus_release_waits_for_the_next_publish`, `focus_loss_clears_both_sides_of_a_collapsed_modifier`, `focus_loss_clears_a_grab_request_and_focus_gain_does_not_restore_it`, `config_seeds_the_request_and_leaves_the_effective_mode_unset`, `focus_loss_releases_actions_and_the_fixed_latch_waits_for_the_next_step`.
+
+**Screenshots.** Release, 1280×720, rendered from this working tree and again from commit `6dbabb8` (`6dbabb88f10779301115d04720ac1f52000ed03a`), then compared with `cmp -s`. All four byte-identical: `basic_2_5d` (746071 bytes), `basic_2_5d --ortho` (462130 bytes), `spatial_scene --camera perspective` (136991 bytes), `spatial_scene --camera orthographic` (34046 bytes).
+
+**Manual window (macOS 27.0, build 26A428, 2026-10-15).** A throwaway program outside the repo called `Game::run`. It is not a committed test. Windows and Linux were not run. The process was not accessibility-trusted.
+
+Requested logical 800×600, scale 2: physical 1600×1200, `present_mode` Fifo while vsync was requested. Borderless fullscreen became physical 3024×1898, logical 1512×949, scale still 2, `WindowState.fullscreen` true. Leaving it restored physical 1600×1200, logical 800×600, scale 2. A second toggle reached the same fullscreen size and restored 800×600 logical again. A second process created the window already borderless (requested 640×480): physical 3024×1898, logical 1512×949, scale 2, fullscreen true, then restored physical 1280×960, logical 640×480, scale 2.
+
+VSync off selected `Immediate` on this Mac, so Mailbox and Fifo were not needed as fallbacks. Those fallbacks are the unit tests above. With vsync off and a cap of 20, eight frame deltas were min 0.0501 s, mean 0.0514 s, max 0.0522 s. With the cap cleared on the same `Immediate` mode, four later deltas averaged 0.0002 s.
+
+`WindowState.cursor_visible` became false, then true. Grab succeeded as `Locked` with `grab_failed` false. Confined was not requested after locked succeeded. winit rejects confined on macOS; the fallback test covers that without a window.
+
+Posted mouse moves did not change `mouse_delta` while grabbed or while free (the sums stayed 0). A posted A key never became `key_down`. The AppleScript that asked System Events to focus the probe, and a later request to resize the window to 900×500, did not return; a 20 s watchdog ended that process. Focus-loss release, the fixed latch, collapsed modifiers, delta-source selection, and grab failure remain the unit tests. The viewport scale stayed 2 through every fullscreen enter and restore that did complete.
+
+## M3b Phase 4 review (2026-10-15)
+
+The scheduling, grab, and focus paths were re-read against ADR-0013 and winit 0.30.13. No scheduling or grab code changed. One test was added.
+
+**Frame cap.** On macOS, winit dispatches a queued `RedrawRequested` and then `about_to_wait` in the same turn (`app_state.rs` `cleared`). `frame` stores the deadline before that `about_to_wait`. While `now` is before the deadline, `about_to_wait` sets `ControlFlow::WaitUntil` and does not call `request_redraw`. An input or `MouseMotion` wake is `WaitCancelled`: the event is applied immediately, and the same wait is armed again. `Game::step` still runs only from `RedrawRequested`, with `dt` measured from the previous redraw. `None` and `0` set `next_frame` to `None`, which restores `Poll` plus a redraw on every `about_to_wait`. The cap is copied onto `WindowState` in the same frame, before the deadline is chosen. VSync blocks inside that redraw. If the blanking interval already passed the deadline, the next wait is immediate. This is the whole pacer.
+
+**Cursor grab.** `WindowControl.cursor_grabbed` is the request. `WindowState.cursor_grab` is the mode `set_cursor_grab` accepted. Locked is tried first, then Confined. Both failing leaves the grab `Free`, sets `grab_failed`, clears the request, and does not panic. Visibility stays the requested `cursor_visible`; a grab does not itself hide the cursor. `mouse_delta` follows `WindowState.cursor_grab`, not the request. An application grab change suppresses one following position delta. Focus loss does not also set that suppress, because focus gain ignores the next position delta, and setting both would drop two moves.
+
+**Focus.** `release` and `release_mouse` emit an edge only when the key or button was down, so a second `FocusLost` after `end_frame` does not emit another edge. `Actions::sync` records a release only when the aggregate goes from down to up. `a_second_focus_loss_does_not_repeat_the_release` and the extra asserts in `focus_loss_releases_actions_and_the_fixed_latch_waits_for_the_next_step` cover that. Collapsed Shift, Control, and Alt counts are cleared before the logical release. The grab request is cleared and focus gain does not set it.
+
+**Still not observed on a window.** Relative `mouse_delta` while grabbed, the unlock sample, focus loss with a key held down, and focus return. A second macOS probe grabbed as `Locked` and released back to `Free`. Posted moves left `mouse_delta` at 0; the helper is not accessibility-trusted. Unit tests cover the unobserved paths. Windows and Linux were not run.
+
+**Manual steps, when a developer can sit at the window.** Run a `Game::run` with an `update` system that sets `WindowControl.cursor_grabbed` and logs `WindowState.cursor_grab` and `Input::mouse_delta`.
+
+1. Set `cursor_grabbed` true and move the mouse. On macOS the grab should read `Locked`, and `mouse_delta` should be non-zero. Confined is rejected on macOS.
+2. Set `cursor_grabbed` false. The grab should read `Free`, and the unlock should not leave one huge delta as the only sample.
+3. Hold a letter key, activate another application, then return. The key should be up. The position jump on return should not be added to `mouse_delta`. Moving again should produce a small delta.
+
+## M3b acceptance (2026-10-15)
+
+Checked against ADR-0013, ROADMAP.md, and the phase results above. M3a frame semantics, the fixed step, commands, typed events, interpolation, and logging were not changed by M3b. `basic_2_5d` still reads raw `Input`. `spatial_scene` uses `Actions` for keys and still reads scroll from `Input`.
+
+| Requirement | Result |
+|---|---|
+| Wider keys, mouse press and release, collapsed modifiers | Met. Phase 1, `57dbc4a`. Unit tests |
+| Frame edges and the fixed-step latch | Met. Phases 1–2. Unit tests |
+| Actions, several bindings, rebinding, 1D and 2D axes, aggregate edges | Met. Phase 2, `83286a9`. Unit tests. `spatial_scene` uses actions |
+| Raw `Input` still available | Met. `basic_2_5d` |
+| Focus-loss cleanup, including a repeated loss | Met in tests. Not observed as an OS focus change |
+| Physical and logical viewport, DPI, resize, pointer conversion, physical render size | Met. Phase 3, `9c99edf`. Unit tests, macOS window, byte-identical screenshots |
+| Borderless fullscreen and windowed restore | Met. Unit tests and macOS window |
+| VSync request versus effective mode | Met. Unit tests. macOS: Fifo on, Immediate off |
+| Optional frame cap | Met. Deadline test and macOS 20 Hz measurement. Uncapped poll restored on that window |
+| Cursor visibility, grab, release, delta source | Grab and visibility observed on macOS (`Locked`). Release, confined fallback, and delta source are unit-tested. Relative motion was not observed on the window |
+| M3a compatibility and screenshot baseline | Met when the closing `scripts/check.sh` and `cmp -s` against `6dbabb8` pass. Recorded in the closing check below |
+
+Deferred, and not acceptance blockers: gamepad, touch, text and IME, UI capture, action stacks, exclusive fullscreen, multi-window, a frame pacer, unaccelerated HID.
+
+## M3b closing check (2026-10-15)
+
+`scripts/check.sh` exit 0. `cargo fmt --check` passed. `cargo clippy --workspace --all-targets -- -D warnings` passed. `cargo test --workspace` with `DIMORA_REQUIRE_GPU=1` reported **278 passed, 0 failed, 0 ignored**. The 18 tests in `engine-renderer-wgpu` `tests/headless.rs` and the 16 in `spatial_scene` `tests/configurations.rs` ran; none were skipped. `cargo doc --workspace --no-deps` with `-D warnings` passed.
+
+Release screenshots at 1280×720 were rendered again and compared with `cmp -s` to the renders of commit `6dbabb8` (`6dbabb88f10779301115d04720ac1f52000ed03a`). All four were byte-identical: `basic_2_5d` 746071 bytes, `basic_2_5d --ortho` 462130, `spatial_scene --camera perspective` 136991, `spatial_scene --camera orthographic` 34046.
+
 ## Planned systems and their state
 
 None of these exists. They are in the roadmap so that earlier work does not block them; they are not
@@ -623,8 +696,9 @@ in the current scope.
 
 ## Not in scope now
 
-Everything after M3a. In particular: no new rendering features, no collision, no editor work, and no
-work on UI, scripting or any of the three character representations until M3a is finished and the plan is
-re-read. These systems are deliberately not being started together: each has its own milestone,
-prerequisites and decisions. Decisions that data formats or public APIs will bake in are made before their
-first consumer (see [docs/DECISIONS.md](docs/DECISIONS.md#what-to-resolve-first)).
+M4 and everything after it. In particular: no scene format, no new rendering features, no collision, no
+editor work, and no work on UI, scripting or any of the three character representations until that
+milestone is the current one. M3b is complete locally and is not pushed. These systems are deliberately
+not being started together: each has its own milestone, prerequisites and decisions. Decisions that data
+formats or public APIs will bake in are made before their first consumer (see
+[docs/DECISIONS.md](docs/DECISIONS.md#what-to-resolve-first)).

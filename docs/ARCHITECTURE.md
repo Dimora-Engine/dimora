@@ -8,7 +8,9 @@ public re-exports (ADR-0010) and adds no new `hecs`, `wgpu` or `winit` type. M3a
 and is not pushed. M3b Phase 1 widens `Key`, adds a mouse release edge, and counts collapsed
 modifiers (ADR-0013, `57dbc4a`). Phase 2 adds the fixed-step input latch and `Actions` and is
 checkpointed locally as `83286a9`. Phase 3, physical and logical `Viewport` plus the display scale, is
-implemented in the working tree and is not committed. Window controls are decided and not built.
+checkpointed locally as `9c99edf`. Phase 4, borderless fullscreen, vsync, an optional frame cap,
+cursor grab, and focus-loss cleanup, is checkpointed locally. M3b is complete locally and is not
+pushed.
 Profiling is not in the code. The M2 audit
 date was 2026-10-13 at `4857158`.
 Everything outside the sections "Proposed future architecture" and "Proposed boundaries" exists in the
@@ -278,7 +280,7 @@ Each is verified by reading the code or by a test run; identifiers refer to the 
 13. **No skin data (KI-23).** `Vertex` has position, normal and uv only; nothing carries joints or weights,
     and there is no model loader.
 14. **UI foundations (KI-24, KI-25).** The window scale factor and physical versus logical `Viewport`
-    exist (M3b Phase 3). Input still has no text events, and any texture change re-uploads the whole
+    exist (M3b Phase 3, `9c99edf`). Input still has no text events, and any texture change re-uploads the whole
     texture, which a glyph atlas cannot afford. Reference-resolution UI scaling is still D-39.
 
 ## Cross-system requirements and risks
@@ -334,7 +336,7 @@ texture cache, samplers, atlases (the glyph atlas is an ordinary texture) and th
 machinery. They do not share the ordering model, coordinate space, lighting or input routing.
 World-space UI is a UI node anchored to an entity and positioned by projecting through the active camera
 (a behind-camera policy is required); render-to-texture panels are a later option (D-38).
-*Gaps:* device scale and logical pointer conversion exist (M3b Phase 3); no UI layout, no
+*Gaps:* device scale and logical pointer conversion exist (M3b Phase 3, `9c99edf`); no UI layout, no
 sub-rectangle texture update (KI-25), no overlay pass. Reference-resolution modes stay in D-39.
 
 **6. Asset loading, referencing and retention.** *Today:* components hold `AssetHandle<T>`, a copyable
@@ -420,9 +422,9 @@ systems they touch. Each cites evidence from this audit.
 | R-9 | **Numeric determinism.** `f32` throughout; trigonometry comes from the platform libm and can differ between operating systems, so state hashes for replay may differ across OSes. World size is small enough for `f32` positions today | `engine-math`; M9 replay criterion | Moderate; surfaces as a flaky cross-OS replay test | Policy at M3: replay equality is required on one platform; cross-platform equality is not promised unless simulation avoids platform trig |
 | R-10 | **Animation write path and bone cost.** `animate_system` writes straight onto bone entities; entity-per-bone makes propagation scale with bone count | `clip.rs`; D-33, D-34 | Moderate; contained inside `engine-animation` if the evaluator stays world-free | D-34 first in M11; D-33 by measurement |
 | R-11 | **Material and texture format baked in.** `Material` is a component field, textures are always sRGB, no mipmaps, no sub-rect updates, batching keyed by texture only | `components.rs`, `scene_renderer.rs`; KI-6, KI-25 | Moderate: normal maps, glyph atlases and shadows depend on it | M5, before M8/M10/M14 |
-| R-12 | **Logical versus physical pixels.** `Viewport` stores physical pixels, logical pixels, and the device scale. Rendering and extraction use physical pixels. UI reference-resolution modes are still open | KI-24 (DPI part done in M3b Phase 3); D-39 | Lower for the coordinate split. UI fit modes can still spread if they invent a third size | Device scale is M3b Phase 3. Fit/expand/integer modes stay with D-39 at M10 |
+| R-12 | **Logical versus physical pixels.** `Viewport` stores physical pixels, logical pixels, and the device scale. Rendering and extraction use physical pixels. UI reference-resolution modes are still open | KI-24 (DPI part done in M3b Phase 3, `9c99edf`); D-39 | Lower for the coordinate split. UI fit modes can still spread if they invent a third size | Device scale is M3b Phase 3. Fit/expand/integer modes stay with D-39 at M10 |
 | R-13 | **Diagnostics are counters, not a profile.** Logging is the `log` crate. `Diagnostics` holds one step of CPU stage times, the frame delta, and the latest render stats. There is no history, no per-system timing, and no GPU timestamp | `logging.rs`, `diagnostics.rs`, `missing.rs`; ADR-0012 | Low for the current call sites. A profiler bolted on later would duplicate them | M3a-4 implemented the records and the resource. M20 may add `tracing` or another profiler. The on-screen overlay stays in M10 |
-| R-14 | **Verification is narrower than it looks.** CI now runs on Windows, macOS and Linux (first run green), but only on software or paravirtual adapters, offscreen; GPU tests skip unless `DIMORA_REQUIRE_GPU=1` (CI sets it); windowed and DPI paths, real hardware and performance are unverified; pixel tests use tolerances that held on three rasterisers | TASKS.md "CI results"; KI-3, KI-24, KI-27 | Rises slowly; regressions on real GPUs or windowed paths found by users | Keep CI green and required; add a windowed smoke test when M3b lands the scale factor; real-GPU timing needs a different runner (ADR-0005 option B) |
+| R-14 | **Verification is narrower than it looks.** CI now runs on Windows, macOS and Linux (first run green), but only on software or paravirtual adapters, offscreen; GPU tests skip unless `DIMORA_REQUIRE_GPU=1` (CI sets it). A macOS window was checked for DPI (Phase 3). Phase 4's macOS window check is the one recorded in TASKS.md; Windows and Linux windowed paths are unverified. Performance is unmeasured. Pixel tests use tolerances that held on three rasterisers | TASKS.md "CI results" and "M3b Phase 4 results"; KI-3, KI-24, KI-27 | Rises slowly; regressions on real GPUs or untested windowed paths found by users | Keep CI green and required. Real-GPU timing needs a different runner (ADR-0005 option B) |
 | R-15 | **Foundations not yet shaped for the editor.** The editor is a core product goal, but nothing yet carries what it needs: components have no field names, types, ranges or defaults; there are no undoable commands; entities and assets lack stable identities (R-4); no scene format; the renderer draws one view (R-2) so an editor viewport has nowhere to render; `RenderScene` is a one-way snapshot, so picking needs world queries | `components.rs`, `world.rs`, `extract.rs`; CAPABILITIES rows 2, 8, 32, 33, 36 | High: retrofitting field metadata, commands and identities onto many components and systems is the same cost as R-4 and R-5 | Treat editor needs as acceptance criteria of M3 (commands), M4 (registry with field metadata), M6 (camera-to-texture) and M19 (serialization); write no component or system that hides state the editor must edit |
 | R-16 | **Single-view assumptions hide in details.** Evidence: `Upright` sprites are edge-on under a straight-down camera and foreshortened in a steep view (observed, not settled, D-26); cutout content at equal depth follows draw order or depth-test rounding, and `RenderOrder` orders only blended sprites (three conflicts verified by `spatial_scene`, D-48); the world is +Y up with an XZ ground (a provisional convention, ADR-0004) while gameplay orientation and movement planes have no design yet; directional animation (D-31) will read the camera; shadow and light code is not yet written and could assume a perspective view. Isometric, top-down and side are now rendered by example-local constructors | `components.rs` (`SpriteOrientation`), `extract.rs`, `scene_renderer.rs`; `examples/spatial_scene/tests/configurations.rs`; ADR-0004 | High if found late: ordering, orientation and light direction are baked into M7, M8, M13 and M14 | D-48 mechanisms still to choose before M7 and M8, from the recorded conflicts, not before (principles decided by the owner, ADR-0004); M14 tests under three camera configurations |
 
@@ -567,7 +569,7 @@ glTF handedness conversion and importer choice (D-36).
 
 **Exists today.** Nothing UI-specific. `RenderScene` is world-only. No font or text rendering. Pointer,
 scroll, and keys exist in input. The window scale factor is forwarded, and `Viewport` stores physical
-size, logical size, and scale (M3b Phase 3). Textures re-upload whole (KI-25). Reference-resolution
+size, logical size, and scale (M3b Phase 3, `9c99edf`). Textures re-upload whole (KI-25). Reference-resolution
 UI scaling is not built (D-39).
 
 **Proposed (D-24, D-37, D-38, D-39).**

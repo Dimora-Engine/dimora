@@ -76,6 +76,12 @@ impl HeldKeys {
             (*count == 0).then_some(false)
         }
     }
+
+    /// Drops every collapsed-modifier count. Focus loss calls this so a later physical press
+    /// starts from zero. Both Shift keys being down becomes no logical key still held here.
+    pub fn clear(&mut self) {
+        self.counts.clear();
+    }
 }
 
 #[cfg(test)]
@@ -105,6 +111,18 @@ mod tests {
         assert_eq!(held.update(Key::Shift, false), None);
         assert_eq!(held.update(Key::Shift, false), Some(false));
         assert_eq!(held.update(Key::Shift, false), None);
+    }
+
+    #[test]
+    fn focus_loss_clears_both_sides_of_a_collapsed_modifier() {
+        let mut held = HeldKeys::default();
+        assert_eq!(held.update(Key::Shift, true), Some(true));
+        assert_eq!(held.update(Key::Shift, true), None);
+        held.clear();
+        assert_eq!(held.update(Key::Shift, false), None);
+        assert_eq!(held.update(Key::Shift, false), None);
+        assert_eq!(held.update(Key::Shift, true), Some(true));
+        assert_eq!(held.update(Key::Shift, false), Some(false));
     }
 
     #[test]

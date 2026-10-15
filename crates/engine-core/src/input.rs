@@ -41,8 +41,22 @@ pub enum InputEvent {
         button: MouseButton,
         pressed: bool,
     },
-    /// Cursor position in window pixels, origin top-left.
+    /// Cursor position in physical pixels, origin top-left, +Y down.
+    ///
+    /// While the cursor is free this also adds the change to [`Input::mouse_delta`]. The window
+    /// loop does not deliver this for a grabbed cursor; it delivers [`InputEvent::MousePosition`]
+    /// and [`InputEvent::MouseDelta`] instead.
     MouseMoved(Vec2),
+    /// Sets the cursor position and does not change [`Input::mouse_delta`].
+    MousePosition(Vec2),
+    /// Relative motion added to [`Input::mouse_delta`]. The window loop delivers this only while
+    /// the cursor is grabbed. Units are the platform's device-motion units, not a raw HID sample.
+    MouseDelta(Vec2),
+    /// The window lost focus. Held keys and buttons are released, and `mouse_delta` is cleared.
+    FocusLost,
+    /// The window gained focus. `mouse_delta` is cleared, and the next [`InputEvent::MouseMoved`]
+    /// sets the position without adding the jump from the unfocused cursor.
+    FocusGained,
     Scroll(f32),
 }
 
@@ -70,6 +84,8 @@ pub struct Input {
     buttons_latch: FixedLatch<MouseButton>,
     mouse_position: Vec2,
     mouse_delta: Vec2,
+    /// The next [`Input::set_mouse_position`] stores the position and does not add a delta.
+    ignore_next_position_delta: bool,
     scroll: f32,
 }
 
@@ -86,6 +102,7 @@ impl Default for Input {
             buttons_latch: FixedLatch::publishing(),
             mouse_position: Vec2::ZERO,
             mouse_delta: Vec2::ZERO,
+            ignore_next_position_delta: false,
             scroll: 0.0,
         }
     }
@@ -135,7 +152,7 @@ impl Input {
     pub fn fixed_mouse_released(&self, b: MouseButton) -> bool {
         self.buttons_latch.released(&b)
     }
-    /// Cursor position in window pixels, origin top-left.
+    /// Cursor position in physical pixels, origin top-left, +Y down.
     pub fn mouse_position(&self) -> Vec2 {
         self.mouse_position
     }
@@ -159,6 +176,10 @@ impl Input {
             InputEvent::MouseButton { button, pressed: true } => self.press_mouse(button),
             InputEvent::MouseButton { button, pressed: false } => self.release_mouse(button),
             InputEvent::MouseMoved(p) => self.set_mouse_position(p),
+            InputEvent::MousePosition(p) => self.place_mouse(p),
+            InputEvent::MouseDelta(d) => self.add_mouse_delta(d),
+            InputEvent::FocusLost => self.release_focus(),
+            InputEvent::FocusGained => self.regain_focus(),
             InputEvent::Scroll(s) => self.add_scroll(s),
         }
     }
@@ -188,8 +209,47 @@ impl Input {
         }
     }
     pub fn set_mouse_position(&mut self, p: Vec2) {
+        if self.ignore_next_position_delta {
+            self.ignore_next_position_delta = false;
+            self.mouse_position = p;
+            return;
+        }
         self.mouse_delta += p - self.mouse_position;
         self.mouse_position = p;
+    }
+
+    /// Stores the cursor position without changing [`Input::mouse_delta`].
+    pub fn place_mouse(&mut self, p: Vec2) {
+        self.mouse_position = p;
+    }
+
+    /// Adds relative motion to [`Input::mouse_delta`]. Does not move [`Input::mouse_position`].
+    pub fn add_mouse_delta(&mut self, delta: Vec2) {
+        self.mouse_delta += delta;
+    }
+
+    /// Releases every held key and button and clears `mouse_delta`.
+    ///
+    /// Each key or button that was down gets a frame release edge and a fixed-step release bit.
+    /// A key that was not down is left alone. This is what focus loss applies.
+    pub fn release_focus(&mut self) {
+        let keys: Vec<Key> = self.down.iter().copied().collect();
+        for key in keys {
+            self.release(key);
+        }
+        let buttons: Vec<MouseButton> = self.buttons_down.iter().copied().collect();
+        for button in buttons {
+            self.release_mouse(button);
+        }
+        self.mouse_delta = Vec2::ZERO;
+    }
+
+    /// Clears `mouse_delta` and ignores the next position delta.
+    ///
+    /// Focus returning here does not press keys and does not grab the cursor.
+    pub fn regain_focus(&mut self) {
+        self.mouse_delta = Vec2::ZERO;
+        self.ignore_next_position_delta = true;
     }
     pub fn add_scroll(&mut self, s: f32) {
         self.scroll += s;
@@ -394,6 +454,65 @@ mod tests {
         assert!(!i.mouse_released(MouseButton::Left));
         i.release_mouse(MouseButton::Right);
         assert!(!i.mouse_released(MouseButton::Right));
+    }
+
+    #[test]
+    fn focus_loss_releases_held_input_and_focus_gain_drops_the_next_jump() {
+        let mut input = Input::default();
+        input.press(Key::W);
+        input.press(Key::Shift);
+        input.press_mouse(MouseButton::Left);
+        input.set_mouse_position(Vec2::new(12.0, 8.0));
+        input.apply(InputEvent::FocusLost);
+        assert!(!input.key_down(Key::W) && input.key_released(Key::W));
+        assert!(!input.key_down(Key::Shift) && input.key_released(Key::Shift));
+        assert!(input.fixed_key_released(Key::W) && input.fixed_key_released(Key::Shift));
+        assert!(!input.mouse_down(MouseButton::Left) && input.mouse_released(MouseButton::Left));
+        assert!(input.fixed_mouse_released(MouseButton::Left));
+        assert_eq!(input.mouse_delta(), Vec2::ZERO);
+        input.apply(InputEvent::FocusGained);
+        input.apply(InputEvent::MouseMoved(Vec2::new(400.0, 20.0)));
+        assert_eq!(input.mouse_position(), Vec2::new(400.0, 20.0));
+        assert_eq!(input.mouse_delta(), Vec2::ZERO);
+        input.apply(InputEvent::MouseMoved(Vec2::new(403.0, 22.0)));
+        assert_eq!(input.mouse_delta(), Vec2::new(3.0, 2.0));
+        assert!(!input.key_down(Key::W));
+        input.press(Key::W);
+        assert!(input.key_down(Key::W) && input.key_pressed(Key::W));
+    }
+
+    #[test]
+    fn a_second_focus_loss_does_not_repeat_the_release() {
+        let mut input = Input::default();
+        input.press(Key::Shift);
+        input.press_mouse(MouseButton::Right);
+        input.add_mouse_delta(Vec2::new(5.0, 1.0));
+        input.apply(InputEvent::FocusLost);
+        assert!(input.key_released(Key::Shift));
+        assert!(input.mouse_released(MouseButton::Right));
+        assert!(input.fixed_key_released(Key::Shift));
+        input.end_frame();
+        input.conceal_fixed_edges();
+        input.apply(InputEvent::FocusLost);
+        assert!(!input.key_released(Key::Shift));
+        assert!(!input.mouse_released(MouseButton::Right));
+        assert!(!input.fixed_key_released(Key::Shift));
+        assert!(!input.fixed_mouse_released(MouseButton::Right));
+        assert!(!input.key_down(Key::Shift));
+        assert_eq!(input.mouse_delta(), Vec2::ZERO);
+    }
+
+    #[test]
+    fn a_concealed_focus_release_waits_for_the_next_publish() {
+        let mut input = Input::default();
+        input.press(Key::A);
+        input.conceal_fixed_edges();
+        input.apply(InputEvent::FocusLost);
+        assert!(input.key_released(Key::A));
+        assert!(!input.fixed_key_released(Key::A));
+        input.publish_fixed_edges();
+        assert!(input.fixed_key_released(Key::A));
+        assert!(!input.key_down(Key::A));
     }
 
     #[test]

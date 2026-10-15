@@ -57,14 +57,14 @@ first" tiers in [docs/DECISIONS.md](docs/DECISIONS.md#what-to-resolve-first).
 * **Now: close M2.** All numbered tasks are done (T1 to T3). Two items remain, both blocked on the owner
   rather than on code: licence files (KI-17, waiting for the owner to confirm a licence) and owner confirmation of GitHub as host (CI itself is done on the PR branch, see TASKS.md). Neither blocks
   M3, so M2 is closed for planning purposes once they are listed as carried items in TASKS.md.
-* **Now: M3a is complete locally and is not pushed** (see M3 below). Named stages, commands and events,
-  logging, opt-in interpolation, and the public-API review are done. M3b is in progress: Phase 1 is
-  checkpointed locally and is not pushed. Phase 2 (actions and the fixed-step latch) is checkpointed
-  locally and is not pushed.
+* **Now: M3a and M3b are complete locally and are not pushed** (see M3 below). Named stages, commands
+  and events, logging, opt-in interpolation, and the public-API review are done. M3b's four phases
+  (keys, actions, viewport scale, window controls) are checkpointed locally. M4 is next and is not
+  started.
   M3a was first because
   collision, animation, scenes, UI and scripting all hang off its stages, commands and events, and because
   three high-cost risks (R-5, R-7, R-8) are cheapest to settle before more systems exist.
-* **Then, in order:** M3b input and platform; M4 scenes and the registry shape; M5 materials and textures;
+* **Then, in order:** M4 scenes and the registry shape; M5 materials and textures;
   M6 renderer stabilisation. M7 (collision) and M8 (sprite sheets) can proceed in parallel after M3a, M4,
   M5 and M6 as stated below; M9 is the first point where APIs freeze.
 * **Considered now, built later:** see "Considered now, implemented later" after the dependency graph.
@@ -265,7 +265,7 @@ more on top.
 
 ---
 
-## M3. Frame model, input and platform: In progress
+## M3. Frame model, input and platform: Complete locally, not pushed
 
 **Objective.** A deterministic, documented frame with ordered stages, safe mutation and events, and an
 input and platform layer sufficient for a real game. Delivered in **two slices** so each can be completed
@@ -276,8 +276,9 @@ once M3a's stage and event API is merged; it does not need M3a's interpolation.
 `523f553`. M3a-6 is the public-API review in this documentation. M3b Phase 1 (keys, mouse release, and
 collapsed modifiers) is checkpointed locally as `57dbc4a` and is not pushed. Phase 2 (the fixed-step
 latch and `Actions`) is checkpointed locally as `83286a9` and is not pushed. Phase 3 (`Viewport`
-physical size, logical size, and display scale) is implemented in the working tree and is not
-committed. Window controls are specified in ADR-0013 and are not built. Profiling
+physical size, logical size, and display scale) is checkpointed locally as `9c99edf`. Phase 4
+(borderless fullscreen, vsync, frame cap, cursor grab, and focus-loss cleanup) is checkpointed
+locally and is not pushed. The M3b acceptance criteria below are met. Profiling
 is not in the code. The rendering regression baseline is commit `6dbabb8`.
 
 **Prerequisites.** M2 (closed for planning). Decisions recorded before implementation code, 2026-10-14:
@@ -341,19 +342,23 @@ examples ported to the stage API (behaviour unchanged).
 
 ### M3b. Input and platform
 
-**Status.** In progress. The decisions are ADR-0013 (D-49). Phase 1, the wider key map,
-`mouse_released`, and collapsed modifiers, is checkpointed locally as `57dbc4a` and is not pushed.
-Phase 2, `Actions` and the fixed-step latch, is checkpointed locally as `83286a9` and is not pushed.
-Phase 3, `Viewport` and DPI, is implemented in the working tree and is not committed. Phase 4 is not started.
+**Status.** Complete locally, not pushed. The decisions are ADR-0013 (D-49). Phase 1, the wider key map,
+`mouse_released`, and collapsed modifiers, is checkpointed locally as `57dbc4a`. Phase 2, `Actions`
+and the fixed-step latch, is checkpointed locally as `83286a9`. Phase 3, `Viewport` and DPI, is
+checkpointed locally as `9c99edf`. Phase 4, borderless fullscreen, vsync, the frame cap, cursor grab,
+and focus-loss cleanup, is checkpointed locally. None of M3b is pushed.
 
 **Tasks.**
 - Input: full key set (F-keys, punctuation, numpad) — **Phase 1, checkpointed locally.** Cursor
-  grab/visibility, relative mouse delta while grabbed, and an
-  action map (named actions and axes bound to keys and buttons) that does not assume a keyboard, so a
-  gamepad can bind later. The action map and the fixed-step latch are **Phase 2, checkpointed locally.**
+  grab/visibility and relative mouse delta while grabbed are **Phase 4, checkpointed locally.**
+  Relative motion is unit-tested. A macOS window confirmed Locked grab; posted motion did not arrive
+  (the process was not accessibility-trusted). An action map (named actions and axes bound to keys
+  and buttons) that does not assume a keyboard, so a gamepad can bind later, and the fixed-step
+  latch, are **Phase 2, checkpointed locally.**
 - Platform: forward the window scale factor and its changes; `Viewport` carries physical size, logical
-  size and scale (moved here from M10: R-12) — **Phase 3, in the working tree, not committed.**
-  Vsync on/off, optional frame cap, and fullscreen toggle remain Phase 4.
+  size and scale (moved here from M10: R-12) — **Phase 3, checkpointed locally as `9c99edf`.**
+  Borderless fullscreen, vsync on/off with a capability fallback, and an optional frame cap are
+  **Phase 4, checkpointed locally.** Exclusive fullscreen is not in this milestone.
 
 **Dependencies.** D-10 (input events through the M3a channels), D-39 (scaling model, in outline).
 
@@ -685,7 +690,7 @@ binding UI to game state waits for M9.
 **What exists today (read).** Nothing UI-specific. Input has pointer position, buttons, scroll,
 arrows, Enter, Escape and Tab, but no text input, no cursor-left event and no gamepad. The
 window scale factor is forwarded, and `Viewport` stores physical size, logical size, and scale
-(M3b Phase 3, working tree). Resolution-independent UI fit modes are not built (D-39, KI-24's
+(M3b Phase 3, `9c99edf`). Resolution-independent UI fit modes are not built (D-39, KI-24's
 remaining text-input gap). Textures re-upload whole on a revision
 change (KI-25). There is no font loading or text rendering. `RenderScene` is world-only.
 

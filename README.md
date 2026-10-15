@@ -184,7 +184,8 @@ scene serialization, asset bundling or editor.
 Planned but not started: three character representations (sprite sheet, skeletal 2D, 3D skinned) over one
 gameplay model, a UI runtime, and gameplay scripting. See `ROADMAP.md` for their order and prerequisites. The current
 milestone was M3a, the frame model (stages, commands, events, logging, opt-in interpolation, and the
-public-API review). It is complete locally and is not pushed. M3b, input and platform, is next and is not started.
+public-API review). It is complete locally and is not pushed. M3b, input and platform, is complete
+locally and is not pushed. M4 is next and is not started.
 
 Each question has one home, so documents do not compete:
 

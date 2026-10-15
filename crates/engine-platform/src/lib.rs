@@ -12,9 +12,9 @@ use engine_core::{InputEvent, MouseButton};
 use engine_math::Vec2;
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
-use winit::event::{ElementState, MouseScrollDelta, WindowEvent};
+use winit::event::{DeviceEvent, DeviceId, ElementState, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, OwnedDisplayHandle};
-use winit::window::{Window, WindowId};
+use winit::window::{Fullscreen, Window, WindowId};
 
 pub use winit;
 
@@ -24,19 +24,49 @@ pub struct WindowConfig {
     /// Initial inner size in logical pixels.
     pub width: u32,
     pub height: u32,
+    /// Create the window borderless fullscreen on the current monitor.
+    pub fullscreen: bool,
+    /// Request vertical sync. The surface may still present with Fifo when it cannot disable it.
+    pub vsync: bool,
+    /// Target frames per second. `None` or `Some(0)` leaves the loop polling every frame.
+    ///
+    /// This is a scheduling target for the event loop. It does not change `Game::step` and it
+    /// does not guarantee the display presents at that rate. VSync can still hold a frame for a
+    /// blanking interval.
+    pub max_frame_rate: Option<u32>,
 }
 
 impl Default for WindowConfig {
     fn default() -> Self {
-        Self { title: "2.5D engine".into(), width: 1280, height: 720 }
+        Self {
+            title: "2.5D engine".into(),
+            width: 1280,
+            height: 720,
+            fullscreen: false,
+            vsync: true,
+            max_frame_rate: None,
+        }
     }
 }
 
-/// Whether the loop should keep going after a frame.
+/// When the next frame should run.
+///
+/// `Continue` polls and requests a redraw immediately. `WaitUntil` waits without a blocking
+/// sleep, and input events still wake the loop. `Exit` stops the loop.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Flow {
     Continue,
+    WaitUntil(Instant),
     Exit,
+}
+
+/// Deadline for the next frame, or `None` when the cap is off.
+///
+/// Zero and `None` both disable the cap. The deadline is `now + 1/hz`, truncated to a whole
+/// number of nanoseconds. It is a scheduling target, not a presentation guarantee.
+pub fn frame_deadline(now: Instant, cap_hz: Option<u32>) -> Option<Instant> {
+    let hz = cap_hz.filter(|hz| *hz > 0)?;
+    Some(now + Duration::from_secs(1) / hz)
 }
 
 /// What the platform layer drives. Everything happens on the main thread.
@@ -70,8 +100,15 @@ impl std::error::Error for PlatformError {}
 pub fn run(config: WindowConfig, app: &mut dyn App) -> Result<(), PlatformError> {
     let event_loop = EventLoop::new().map_err(|e| PlatformError(e.to_string()))?;
     event_loop.set_control_flow(ControlFlow::Poll);
-    let mut runner =
-        Runner { config, app, window: None, last_frame: None, keys: keymap::HeldKeys::default(), error: None };
+    let mut runner = Runner {
+        config,
+        app,
+        window: None,
+        last_frame: None,
+        next_frame: None,
+        keys: keymap::HeldKeys::default(),
+        error: None,
+    };
     event_loop.run_app(&mut runner).map_err(|e| PlatformError(e.to_string()))?;
     runner.error.map_or(Ok(()), |e| Err(PlatformError(e)))
 }
@@ -81,6 +118,8 @@ struct Runner<'a> {
     app: &'a mut dyn App,
     window: Option<Arc<Window>>,
     last_frame: Option<Instant>,
+    /// `None` polls continuously. `Some` is the earliest time to request the next redraw.
+    next_frame: Option<Instant>,
     keys: keymap::HeldKeys,
     error: Option<String>,
 }
@@ -90,9 +129,12 @@ impl ApplicationHandler for Runner<'_> {
         if self.window.is_some() {
             return;
         }
-        let attrs = Window::default_attributes()
+        let mut attrs = Window::default_attributes()
             .with_title(self.config.title.clone())
             .with_inner_size(LogicalSize::new(self.config.width, self.config.height));
+        if self.config.fullscreen {
+            attrs = attrs.with_fullscreen(Some(Fullscreen::Borderless(None)));
+        }
         match event_loop.create_window(attrs) {
             Ok(window) => {
                 let window = Arc::new(window);
@@ -136,6 +178,13 @@ impl ApplicationHandler for Runner<'_> {
             WindowEvent::CursorMoved { position, .. } => {
                 self.app.input(InputEvent::MouseMoved(Vec2::new(position.x as f32, position.y as f32)));
             }
+            WindowEvent::Focused(false) => {
+                // Both physical sides of a collapsed modifier drop together, so the logical
+                // key cannot stay down after the matching `FocusLost` release.
+                self.keys.clear();
+                self.app.input(InputEvent::FocusLost);
+            }
+            WindowEvent::Focused(true) => self.app.input(InputEvent::FocusGained),
             WindowEvent::MouseWheel { delta, .. } => {
                 let y = match delta {
                     MouseScrollDelta::LineDelta(_, y) => y,
@@ -148,17 +197,56 @@ impl ApplicationHandler for Runner<'_> {
                 // Clamp so a debugger pause or window drag does not teleport the simulation.
                 let dt = self.last_frame.map_or(Duration::ZERO, |t| now - t).min(Duration::from_millis(250));
                 self.last_frame = Some(now);
-                if self.app.frame(dt) == Flow::Exit {
-                    event_loop.exit();
+                match self.app.frame(dt) {
+                    Flow::Exit => event_loop.exit(),
+                    Flow::Continue => self.next_frame = None,
+                    Flow::WaitUntil(deadline) => self.next_frame = Some(deadline),
                 }
             }
             _ => {}
         }
     }
 
-    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-        if let Some(w) = &self.window {
-            w.request_redraw();
+    fn device_event(&mut self, _event_loop: &ActiveEventLoop, _device_id: DeviceId, event: DeviceEvent) {
+        // Relative motion only. The engine drops this while the cursor is free, so it is not
+        // added to cursor-position deltas. Units are whatever winit reports for this device.
+        if let DeviceEvent::MouseMotion { delta: (x, y) } = event {
+            self.app.input(InputEvent::MouseDelta(Vec2::new(x as f32, y as f32)));
         }
+    }
+
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        let Some(window) = &self.window else {
+            return;
+        };
+        match self.next_frame {
+            Some(deadline) if Instant::now() < deadline => {
+                event_loop.set_control_flow(ControlFlow::WaitUntil(deadline));
+            }
+            Some(_) => {
+                self.next_frame = None;
+                event_loop.set_control_flow(ControlFlow::Poll);
+                window.request_redraw();
+            }
+            None => {
+                event_loop.set_control_flow(ControlFlow::Poll);
+                window.request_redraw();
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_frame_cap_waits_one_period_and_zero_disables_it() {
+        let now = Instant::now();
+        assert_eq!(frame_deadline(now, None), None);
+        assert_eq!(frame_deadline(now, Some(0)), None);
+        assert_eq!(frame_deadline(now, Some(60)), Some(now + Duration::from_secs(1) / 60));
+        let waited = frame_deadline(now, Some(30)).unwrap() - now;
+        assert_eq!(waited, Duration::from_secs(1) / 30);
     }
 }
