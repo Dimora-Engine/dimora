@@ -5,7 +5,9 @@ the screenshot baseline for M3a. M3a-2 adds named stages on that code (ADR-0007)
 commands and typed events (ADR-0008). M3a-4 adds the `log` crate and a `Diagnostics` resource
 (ADR-0012). M3a-5 adds opt-in extract-only interpolation (ADR-0007, `523f553`). M3a-6 reviews the
 public re-exports (ADR-0010) and adds no new `hecs`, `wgpu` or `winit` type. M3a is complete locally
-and is not pushed. Profiling is not in the code. The M2 audit
+and is not pushed. M3b Phase 1 widens `Key` and adds a mouse release edge (ADR-0013). The fixed-step
+input latch, actions, viewport scale, and window controls are decided and not built. Profiling is not
+in the code. The M2 audit
 date was 2026-10-13 at `4857158`.
 Everything outside the sections "Proposed future architecture" and "Proposed boundaries" exists in the
 repository today, except that "Cross-system requirements and risks" mixes requirements (what must hold) with

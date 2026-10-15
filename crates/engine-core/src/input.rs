@@ -4,6 +4,10 @@ use engine_math::Vec2;
 
 /// Physical keys the engine cares about. The platform layer maps its native key codes to these,
 /// which keeps gameplay code independent of the windowing library.
+///
+/// Letters, digits, and punctuation are positions on a US keyboard, so the W position stays W on
+/// AZERTY. Left and right Shift, Control, and Alt share one variant. [`Key::NumpadEnter`] is not
+/// [`Key::Enter`]. F13 and above are not mapped.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[rustfmt::skip]
 pub enum Key {
@@ -11,6 +15,12 @@ pub enum Key {
     Digit0, Digit1, Digit2, Digit3, Digit4, Digit5, Digit6, Digit7, Digit8, Digit9,
     Up, Down, Left, Right,
     Space, Enter, Escape, Tab, Shift, Control, Alt,
+    F1, F2, F3, F4, F5, F6, F7, F8, F9, F10, F11, F12,
+    Backquote, Minus, Equal, BracketLeft, BracketRight, Backslash,
+    Semicolon, Quote, Comma, Period, Slash,
+    Backspace, Delete, Insert, Home, End, PageUp, PageDown,
+    Numpad0, Numpad1, Numpad2, Numpad3, Numpad4, Numpad5, Numpad6, Numpad7, Numpad8, Numpad9,
+    NumpadAdd, NumpadSubtract, NumpadMultiply, NumpadDivide, NumpadDecimal, NumpadEnter,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -48,6 +58,7 @@ pub struct Input {
     just_released: HashSet<Key>,
     buttons_down: HashSet<MouseButton>,
     buttons_pressed: HashSet<MouseButton>,
+    buttons_released: HashSet<MouseButton>,
     mouse_position: Vec2,
     mouse_delta: Vec2,
     scroll: f32,
@@ -68,6 +79,12 @@ impl Input {
     }
     pub fn mouse_pressed(&self, b: MouseButton) -> bool {
         self.buttons_pressed.contains(&b)
+    }
+    /// `true` for the rest of this frame after the button transitions up.
+    ///
+    /// A release of a button that was not down does not set the edge. [`Input::end_frame`] clears it.
+    pub fn mouse_released(&self, b: MouseButton) -> bool {
+        self.buttons_released.contains(&b)
     }
     /// Cursor position in window pixels, origin top-left.
     pub fn mouse_position(&self) -> Vec2 {
@@ -113,7 +130,9 @@ impl Input {
         }
     }
     pub fn release_mouse(&mut self, b: MouseButton) {
-        self.buttons_down.remove(&b);
+        if self.buttons_down.remove(&b) {
+            self.buttons_released.insert(b);
+        }
     }
     pub fn set_mouse_position(&mut self, p: Vec2) {
         self.mouse_delta += p - self.mouse_position;
@@ -128,6 +147,7 @@ impl Input {
         self.just_pressed.clear();
         self.just_released.clear();
         self.buttons_pressed.clear();
+        self.buttons_released.clear();
         self.mouse_delta = Vec2::ZERO;
         self.scroll = 0.0;
     }
@@ -149,6 +169,34 @@ mod tests {
         assert!(!i.key_down(Key::W) && i.key_released(Key::W));
         i.end_frame();
         assert!(!i.key_released(Key::W));
+    }
+
+    #[test]
+    fn a_tap_inside_one_frame_keeps_both_key_edges() {
+        let mut i = Input::default();
+        i.apply(InputEvent::Key { key: Key::Space, pressed: true });
+        i.apply(InputEvent::Key { key: Key::Space, pressed: false });
+        assert!(!i.key_down(Key::Space));
+        assert!(i.key_pressed(Key::Space) && i.key_released(Key::Space));
+        i.end_frame();
+        assert!(!i.key_pressed(Key::Space) && !i.key_released(Key::Space));
+    }
+
+    #[test]
+    fn mouse_release_is_an_edge_for_one_frame() {
+        let mut i = Input::default();
+        i.press_mouse(MouseButton::Left);
+        i.press_mouse(MouseButton::Left);
+        assert!(i.mouse_down(MouseButton::Left) && i.mouse_pressed(MouseButton::Left));
+        assert!(!i.mouse_released(MouseButton::Left));
+        i.end_frame();
+        assert!(i.mouse_down(MouseButton::Left) && !i.mouse_pressed(MouseButton::Left));
+        i.release_mouse(MouseButton::Left);
+        assert!(!i.mouse_down(MouseButton::Left) && i.mouse_released(MouseButton::Left));
+        i.end_frame();
+        assert!(!i.mouse_released(MouseButton::Left));
+        i.release_mouse(MouseButton::Right);
+        assert!(!i.mouse_released(MouseButton::Right));
     }
 
     #[test]

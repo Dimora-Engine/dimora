@@ -150,7 +150,7 @@ use the position in that matrix.
 
 * M3a-2 implements the stages and ports the examples without moving their systems out of `update`.
 * M3a-5 implements `alpha`, the `Interpolate` marker, the previous local, and the extract-time blend. It is committed locally and is not pushed. Skeletal interpolation, physics, and a general animation history are not part of it.
-* M3b, collision, and animation events attach to these stages. They do not add a scheduler.
+* M3b keeps these frame edges for raw `Input` and variable-step systems. A separate fixed-step latch, specified in ADR-0013, delivers a one-shot once to the first fixed iteration and is not part of this stage list. Collision and animation events attach to these stages. They do not add a scheduler.
 * This decision does not add pause, time scale, or a fixed-step elapsed clock.
 
 ## Evidence and revisit conditions

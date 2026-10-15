@@ -80,6 +80,7 @@ the risk register). **Prototype where the answer depends on a measurement; do no
 | D-01 | Scheduling model | M3 | M3, M7, M8, M10, M15 | Decided, [ADR-0007](adr/0007-named-stages-on-the-existing-schedule.md) (2026-10-14). Stages in M3a-2. Interpolation in M3a-5 (committed locally, not pushed) |
 | D-02 | Change detection | M3 | M3, M4 (dirty transforms), M23 | Provisional, [ADR-0009](adr/0009-no-change-detection-until-measured.md) (2026-10-14): none until a profile |
 | D-10 | Events and deferred commands | M3 | M3, M4, M7, M8, M18 | Decided, [ADR-0008](adr/0008-commands-and-per-frame-events.md) (2026-10-14). Implemented in M3a-3 |
+| D-49 | Input actions, fixed-step one-shots, viewport scale, window controls | M3b | M3b, M10 | Decided, [ADR-0013](adr/0013-input-actions-and-window-controls.md) (2026-10-15). Phase 1 (keys, mouse release, collapsed modifiers) is checkpointed locally. The latch, actions, viewport, and window controls are not built |
 | D-18 | Scene format, serde, component registry | M4 (registry shape), M19 | M4, M18, M19, M22 | Open |
 | D-27 | Units and pixels per unit | M5 | M5, M8, M9, M13 | Open |
 | D-05 | Materials, alpha modes, blended meshes | M5 | M5, M14 | Open |
@@ -188,7 +189,20 @@ Queues clear at the end of `step`. No observers. Implemented in M3a-3 (`World::c
 `None` when the queue is already borrowed. Each failure is a `CommandFailure` and stays readable
 after `step` until the next step starts. Events still pending at the end-of-step clear are counted
 by `discarded_events` for that same window and are not delivered on the next step. The throwaway
-check that preceded the implementation is in the ADR.
+check that preceded the implementation is in the ADR. Device input is not one of these events.
+M3b keeps it on `Input` (ADR-0013).
+
+### D-49 Input actions and window controls
+
+**Decided 2026-10-15: [ADR-0013](adr/0013-input-actions-and-window-controls.md).** Frame edges on `Input`
+stay visible to every fixed iteration and clear in `input_clear`. Phase 2 adds a latch that a fixed
+iteration sees once, including a transition that arrived on a frame with no fixed step. Several
+transitions before that delivery collapse to one press bit and one release bit. `Actions` will follow
+both timings. Phase 1 widens `Key` and adds `mouse_released` on the frame clock. Viewport scale uses
+winit 0.30.13 `ScaleFactorChanged`. Window controls are borderless fullscreen, vsync with an explicit
+capability fallback, an event-loop frame cap, and cursor grab. D-39's UI capture, focus, and text stay
+open. Phase 1 is checkpointed locally and is not pushed. The latch, actions, viewport, and window
+controls are not built.
 
 ### D-18 Scene format, serde, component registry
 
@@ -429,7 +443,10 @@ detail and the proposed boundaries are in [ARCHITECTURE.md](ARCHITECTURE.md#prop
 * **Options.** Input capture (does a pressed pointer or key reach gameplay after UI consumed it);
   navigation model (spatial or ordered focus, activation through M3 actions); text input scope (none for
   the first runtime, or text fields with IME); scaling (logical units, reference resolution, device scale
-  factor, which the platform layer does not forward today, KI-24).
+  factor). The device scale factor, physical and logical viewport sizes, and logical pointer conversion
+  are specified for M3b in [ADR-0013](adr/0013-input-actions-and-window-controls.md) and are not built.
+  winit 0.30.13 dispatches `WindowEvent::ScaleFactorChanged { scale_factor, inner_size_writer }`.
+  Capture, focus navigation, and text stay open.
 * **Needed by.** M10 (start). **Blocks.** M10.
 
 ## Needed for lighting, particles and audio (M14, M15, M16)

@@ -65,7 +65,8 @@ impl std::error::Error for PlatformError {}
 pub fn run(config: WindowConfig, app: &mut dyn App) -> Result<(), PlatformError> {
     let event_loop = EventLoop::new().map_err(|e| PlatformError(e.to_string()))?;
     event_loop.set_control_flow(ControlFlow::Poll);
-    let mut runner = Runner { config, app, window: None, last_frame: None, error: None };
+    let mut runner =
+        Runner { config, app, window: None, last_frame: None, keys: keymap::HeldKeys::default(), error: None };
     event_loop.run_app(&mut runner).map_err(|e| PlatformError(e.to_string()))?;
     runner.error.map_or(Ok(()), |e| Err(PlatformError(e)))
 }
@@ -75,6 +76,7 @@ struct Runner<'a> {
     app: &'a mut dyn App,
     window: Option<Arc<Window>>,
     last_frame: Option<Instant>,
+    keys: keymap::HeldKeys,
     error: Option<String>,
 }
 
@@ -108,7 +110,10 @@ impl ApplicationHandler for Runner<'_> {
             WindowEvent::Resized(size) => self.app.resize(size.width, size.height),
             WindowEvent::KeyboardInput { event, .. } if !event.repeat => {
                 if let Some(key) = keymap::map_key(event.physical_key) {
-                    self.app.input(InputEvent::Key { key, pressed: event.state == ElementState::Pressed });
+                    let pressed = event.state == ElementState::Pressed;
+                    if let Some(pressed) = self.keys.update(key, pressed) {
+                        self.app.input(InputEvent::Key { key, pressed });
+                    }
                 }
             }
             WindowEvent::MouseInput { state, button, .. } => {

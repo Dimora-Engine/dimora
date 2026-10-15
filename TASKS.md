@@ -18,7 +18,8 @@ because they wait on the owner, not on code: licence files (KI-17) and CI (D-22,
 **M3a, the frame model, is complete locally and is not pushed.** Full scope and acceptance criteria:
 [ROADMAP.md](ROADMAP.md#m3-frame-model-input-and-platform-in-progress). M3a-2 is commit `312a05f`.
 Lifecycle anchors are `ecf4fa1`. M3a-3 is `cd802f0`. M3a-4 is `5c4fd97`. M3a-5 is `523f553`. M3a-6
-is the public-API review recorded below. M3b is not started. The rendering regression baseline is
+is the public-API review recorded below. M3b Phase 1 (wider keys and mouse release) is in the working
+tree and is not committed. Later M3b phases are not started. The rendering regression baseline is
 commit `6dbabb8`.
 
 ## Completed work
@@ -176,7 +177,7 @@ yet reproduced.
 | KI-12 | Assets: synchronous loading; PNG is the only decoder (sprites, meshes, skeletons, clips are code-built); no hot-reload watcher; `AssetId` is a name hash and changes on rename. The collision check is **done by T3** (commit `8abee2e`): `insert`, `load` and `reload` return `AssetError::IdCollision` and never overwrite. Remaining limit: the check is per asset type (see "Task T3 results") | Read | M17 |
 | KI-13 | Skeletal animation has no blending, events, IK, skinning or file loading | Read | M11 |
 | KI-14 | Blended sprites sort by quad centre only; large or intersecting blended quads can mis-order | Read | M5/M14 |
-| KI-15 | Input has 47 keys, no gamepad/touch/text/actions/cursor grab, no F-keys | Read | M3 (text and scale factor for UI: M10) |
+| KI-15 | ~~Input has 47 keys and no F-keys~~ Phase 1 maps F1–F12, punctuation, navigation, and the keypad, and mouse release is a one-frame edge. Still open: actions, the fixed-step latch, cursor grab, gamepad, touch, and text | Partial (M3b Phase 1 in the working tree) | M3b (text and UI scale policy: M10, D-39) |
 | KI-16 | ~~Two rustdoc warnings: unresolved `World` and `Schedule` links in `crates/engine/src/lib.rs`~~ **Fixed by T1** (commit `e08033e`); `cargo doc` with `-D warnings` is clean | Verified | M2 |
 | KI-17 | `Cargo.toml` declares `MIT OR Apache-2.0` but no licence files exist. The licence is **proposed, not owner-confirmed** (OD-3); copyright holder unknown. Audit and the list of files that would change: "Licence audit" below | Verified (repository listing, `cargo metadata --locked`) | Owner decision, then M24 notices |
 | KI-18 | `Visibility::Hidden` applies to the entity only; it does not hide children | Read (`extract.rs`) | M4 |
@@ -388,9 +389,21 @@ complete locally and is not pushed. M3b is not started.
 | M3a-5 | Fixed-step alpha exposed and opt-in transform interpolation (R-3) | M3a-2 | **Done, committed locally, not pushed.** 60 Hz fixed versus 144 Hz render test; simulation still reads the un-interpolated `Transform`. Evidence under "M3a-5 results" |
 | M3a-6 | No new public `hecs` types. Review the `engine` re-exports against ADR-0010 | M3a-1 | **Done, committed locally with this review, not pushed.** No new public `hecs` type, no new `hecs` re-export, no `wgpu` or `winit` type on a new public interface. Evidence under "M3a-6 results" |
 
-M3b (input actions, scale factor, vsync, fullscreen) starts after M3a-3. M4, M5 and M6 are the next
+M3b phases are listed under "M3b". M4, M5 and M6 are the next
 milestones; M7 (collision) and M8 (sprite sheets) follow M3a, M4, M5 and M6, then M9 (stable character and
 scene API with a playable slice).
+
+## M3b. Input and platform
+
+Decisions: [ADR-0013](docs/adr/0013-input-actions-and-window-controls.md) (D-49). D-39 stays open for UI
+capture, focus, and text. `basic_2_5d` stays on raw `Input`. `spatial_scene` moves to actions in Phase 2.
+
+| Phase | Content | Done when |
+|---|---|---|
+| 1 | Wider physical key map and mouse just-released, on the existing frame clock | **Checkpointed locally.** Evidence under "M3b Phase 1 results" below |
+| 2 | `Actions`, aggregate edges, axes, rebinding, and the fixed-step latch | Not started |
+| 3 | `Viewport` physical size, logical size, and scale; `ScaleFactorChanged` | Not started |
+| 4 | Borderless fullscreen, vsync fallback, event-loop frame cap, cursor grab, focus-loss release | Not started |
 
 ## M3a-1 results (2026-10-14)
 
@@ -537,6 +550,20 @@ Public-API review against ADR-0010. No signature was removed or renamed. `docs/A
 **Acceptance, re-checked against the suite that `scripts/check.sh` runs.** Ordering and cycles: `stages_run_in_order_and_builtins_stay_at_their_anchors`, `a_cycle_is_rejected_and_run_keeps_the_previous_order`. Commands: `a_queued_spawn_stays_invisible_until_the_stage_ends`. Events: `events_cross_stage_boundaries_and_not_fixed_iterations_or_the_next_frame`. Interpolation: the 60 Hz / 144 Hz test named in ROADMAP, plus the hierarchy tests in M3a-5. Logging: `a_failed_load_warns_once_per_occurrence_and_names_the_asset`. Screenshots: the four images under M3a-5, compared with `cmp -s` to `6dbabb8` after the hierarchy snap. This review did not change extraction, so those images were not re-rendered. ADRs 0006 through 0012 exist. D-02 stays deferred to profiling (ADR-0009).
 
 **Repository check.** `scripts/check.sh` on 2026-10-14, after these comments, exit 0. All 4 steps passed, including rustdoc `-D warnings`. `cargo test --workspace -- --list` still reports 237 tests. The GPU tests were not skipped.
+
+## M3b Phase 1 results (2026-10-15)
+
+Wider physical keys and a mouse release edge. Checkpointed locally after the modifier correction below. Phases 2–4 are not started in that commit. The fixed-step latch is specified in ADR-0013 and is not built there.
+
+**Keys.** `Key` adds F1–F12, US punctuation positions, Backspace, Delete, Insert, Home, End, PageUp, PageDown, and the numeric keypad. `NumpadEnter` is not `Enter`. Left and right Shift, Control, and Alt stay one variant. `map_key` still uses physical `KeyCode`s. F13 and unidentified codes stay unmapped. OS key repeat is still dropped before `Input`. A second `press` while a key is down still does not set another edge.
+
+**Collapsed modifiers.** Holding both physical Shift keys and releasing one used to emit `Key::Shift` released while the other side was still down. The platform now counts physical downs for Shift, Control, and Alt. The logical key goes down on the first side and up on the last. A side that does not change the logical key emits nothing. Other keys still emit every non-repeat event. This is a behavior change from the earlier Phase 1 working tree, recorded in ADR-0013.
+
+**Mouse.** `mouse_released` is set only when a held button transitions up, and `end_frame` clears it with the other frame edges. `mouse_pressed` and `key_pressed` are unchanged. A press and release before `end_frame` leave both key edges set and the key up.
+
+**Examples.** `basic_2_5d` and `spatial_scene` still read raw `Input`. Their keys were already mapped. Extraction is unchanged.
+
+**Repository check.** `scripts/check.sh` on 2026-10-15, before the modifier correction, exit 0: 239 tests, GPU tests ran. The four screenshots against `6dbabb8` were byte-identical. After the correction, `scripts/check.sh` on 2026-10-15 exited 0 again (fmt, clippy `-D warnings`, `cargo test --workspace` with `DIMORA_REQUIRE_GPU=1`, rustdoc `-D warnings`). Two tests were added: `collapsed_modifier_stays_down_until_both_sides_release` and `collapsed_modifiers_are_independent_and_other_keys_pass_through`, so the suite is 241 tests. The correction does not change a frame with no input.
 
 ## Planned systems and their state
 
