@@ -3,15 +3,15 @@ use std::time::Duration;
 
 use engine_assets::AssetManager;
 use engine_core::InputEvent;
-use engine_math::Vec2;
 use engine_platform::winit::event_loop::OwnedDisplayHandle;
 use engine_platform::winit::window::Window;
 use engine_platform::{App, Flow};
 use engine_renderer_wgpu::WindowRenderer;
 
 use crate::diagnostics::Diagnostics;
-use crate::game::{Game, RenderStats, Viewport, WindowControl};
+use crate::game::{Game, RenderStats, WindowControl};
 use crate::logging::{log_render_failure, log_window_init_failure};
+use crate::viewport::Viewport;
 
 pub fn run(game: Game) -> Result<(), Box<dyn std::error::Error>> {
     let window_config = game.config.window.clone();
@@ -30,6 +30,7 @@ struct WindowedGame {
 impl App for WindowedGame {
     fn init(&mut self, window: Arc<Window>, display: OwnedDisplayHandle) {
         let size = window.inner_size();
+        let scale = window.scale_factor();
         match WindowRenderer::new(window.clone(), Some(Box::new(display)), (size.width, size.height)) {
             Ok(r) => self.renderer = Some(r),
             Err(e) => {
@@ -38,6 +39,7 @@ impl App for WindowedGame {
             }
         }
         self.window = Some(window);
+        self.scale_factor(scale);
     }
 
     fn input(&mut self, event: InputEvent) {
@@ -48,8 +50,14 @@ impl App for WindowedGame {
         if let Some(r) = &mut self.renderer {
             r.resize(width, height);
         }
-        if width > 0 && height > 0 {
-            self.game.world.insert_resource(Viewport(Vec2::new(width as f32, height as f32)));
+        self.game.world.resource_mut::<Viewport>().apply_physical_size(width, height);
+    }
+
+    fn scale_factor(&mut self, scale: f64) {
+        let mut viewport = self.game.world.resource_mut::<Viewport>();
+        // `false` is also "already this scale". A duplicate event must not warn or resize.
+        if !viewport.apply_scale_factor(scale) && viewport.scale_factor() != scale {
+            log::warn!("ignored window scale factor {scale}");
         }
     }
 

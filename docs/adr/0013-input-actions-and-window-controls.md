@@ -116,9 +116,21 @@ if actions.fixed_pressed("jump") {
 
 Before this correction, each physical release of a collapsed modifier emitted a logical release. Holding both Shift keys and releasing the left one cleared `Key::Shift` while the right one was still down. The platform now counts physical downs for Shift, Control, and Alt. The logical key goes down on the first side and up on the last side. A side that changes nothing does not emit an `InputEvent`. Other keys are unchanged: one physical event still emits one logical event. `Input::press` and `Input::release` still see only the logical `Key`.
 
-### Viewport and the window, later phases
+### Viewport and pointer coordinates, Phase 3
 
-winit 0.30.13 (`Cargo.lock`) defines `WindowEvent::ScaleFactorChanged { scale_factor, inner_size_writer }`. The macOS backend sends `Resized` with the physical size after that event. Phase 3 handles both. Until a scale event has arrived, the scale is `window.scale_factor()` from startup. `Viewport` becomes physical size, logical size (`physical / scale`), and scale. Extraction and the surface keep the physical size. Pointer conversion to logical units is a pure function. `mouse_position` stays physical.
+`Viewport` stores the physical framebuffer size (`u32` width and height) and a display scale (`f64`). The scale must be finite and greater than zero; `Viewport::new` returns `ViewportError::InvalidScale` otherwise. Logical size is always `physical / scale`, as an `f32` `Vec2`. Changing the scale does not multiply the physical size. A later resize supplies the new framebuffer, so the scale is not applied twice.
+
+`WindowConfig` width and height are logical pixels and only size the window at creation. The real window is the authority after that. `WindowedGame::init` reads `window.scale_factor()` and creates the surface from `window.inner_size()`. The platform then calls `resize` with that physical size. `Viewport::from_logical_pixels` is the headless and pre-window case: scale 1, so the physical size equals the requested size. `render_to_rgba` uses it, so a headless screenshot is a scale-1 framebuffer of the requested pixel size.
+
+winit 0.30.13 defines `WindowEvent::ScaleFactorChanged { scale_factor, inner_size_writer }`. The handler forwards `scale_factor` and does not call `inner_size_writer.request_inner_size`. On macOS, Wayland, and X11 that backend then emits `Resized` with the physical size the OS chose, and that event is what stores the new framebuffer. Between the two events the logical size is the previous framebuffer divided by the new scale. A game frame runs after both events on those backends. Windows `WM_DPICHANGED` and the web and iOS backends also emit `ScaleFactorChanged`; this record does not claim a windowed check on those platforms.
+
+`WindowEvent::Resized` stores the physical size when both sides are non-zero. A zero width or height, as from a minimized window, leaves the last positive framebuffer in place. `WindowRenderer::resize` skips a zero size the same way, so the surface and the viewport stay together. A repeated scale event with the same factor is a no-op and is not logged. A non-finite or non-positive scale is logged and ignored. On this Mac, showing the window also emitted `Resized` and then `ScaleFactorChanged` with the scale already read at init; the second scale event did not change the framebuffer.
+
+GPU surfaces and camera extraction use `physical_size_pixels()`. The same physical size keeps the same camera projection at any scale. Sprite and mesh transforms are world-space and do not read `Viewport`.
+
+Both pointer spaces are top-left, +X right, +Y down. `Input::mouse_position` stays in physical pixels. `physical_to_logical` and `logical_to_physical` use that same origin and axis direction. They do not clamp, so a pointer outside the window converts too. World space stays Y-up and is a different system. Future UI hit-testing converts the physical pointer with `physical_to_logical`, or works in physical pixels and converts layout rectangles the other way. World picking, camera raycasting, and reference-resolution fit modes are not part of this phase (D-39).
+
+`Viewport` and `ViewportError` are on `engine` and `engine::prelude`. No new `winit` or `wgpu` type is added to that API.
 
 Phase 4, still without `winit` or `wgpu` in the new signatures:
 
@@ -133,13 +145,13 @@ Phase 4, still without `winit` or `wgpu` in the new signatures:
 
 ## Consequences and follow-up
 
-* Phase 1 is the wider `Key` map, `mouse_released`, and the collapsed-modifier count. Phase 2, the latch and `Actions`, is checkpointed locally. Viewport is Phase 3. Window controls are Phase 4.
+* Phase 1 is the wider `Key` map, `mouse_released`, and the collapsed-modifier count, checkpointed locally as `57dbc4a`. Phase 2, the latch and `Actions`, is checkpointed locally as `83286a9`. Phase 3, `Viewport` and DPI, is implemented in the working tree and is not committed. Window controls are Phase 4.
 * D-39 stays open for UI capture, focus navigation, text, and any scale policy beyond physical, logical, and the device factor.
 * Gamepad, touch, IME, a rebinding UI, action-map stacks, exclusive fullscreen, and an input log are not part of M3b.
 * The collapsed multi-tap is the bound of the latch. A replay queue would be a new decision.
 
 ## Evidence and revisit conditions
 
-winit 0.30.13 `event.rs` documents `ScaleFactorChanged`, and the macOS `window_delegate` emits `Resized` after it. The frame-edge test is `input_edges_survive_fixed_and_update_and_clear_at_the_end`. Phase 1 tests cover the mouse release edge, a same-frame tap, ignored key repeat, the new physical codes, and the collapsed-modifier count. Phase 2 tests cover the latch (`the_fixed_latch_survives_end_frame_and_a_read_does_not_clear_it`, `fixed_edges_are_visible_once_and_a_zero_step_frame_keeps_them`, `zero_steps_keep_the_latch_and_rebinding_waits_until_publish`) and aggregate actions (`the_first_binding_presses_once_and_the_second_does_not`, `rebinding_follows_the_aggregate`, `action_edges_follow_the_fixed_latch_and_aggregate_bindings`).
+winit 0.30.13 `event.rs` documents `ScaleFactorChanged`, and the macOS `window_delegate` emits `Resized` after it. The frame-edge test is `input_edges_survive_fixed_and_update_and_clear_at_the_end`. Phase 1 tests cover the mouse release edge, a same-frame tap, ignored key repeat, the new physical codes, and the collapsed-modifier count. Phase 2 tests cover the latch (`the_fixed_latch_survives_end_frame_and_a_read_does_not_clear_it`, `fixed_edges_are_visible_once_and_a_zero_step_frame_keeps_them`, `zero_steps_keep_the_latch_and_rebinding_waits_until_publish`) and aggregate actions (`the_first_binding_presses_once_and_the_second_does_not`, `rebinding_follows_the_aggregate`, `action_edges_follow_the_fixed_latch_and_aggregate_bindings`). Phase 3 tests cover construction, logical size, invalid scales, a zero resize, a non-integer round trip including points outside the window (`a_non_integer_scale_round_trips_including_points_outside_the_window`), scale-then-resize without applying the scale twice (`resize_and_scale_events_do_not_apply_the_scale_twice`), camera extraction staying on the physical size (`extraction_uses_the_physical_size_at_every_scale`), and `mouse_position` staying physical (`mouse_position_stays_physical_and_logical_conversion_does_not_change_input`).
 
 Reopen the latch if a fixed-step game needs each collapsed tap delivered on its own iteration. Reopen presentation fallback if a real surface has none of `Fifo`, `Mailbox`, and `Immediate`.

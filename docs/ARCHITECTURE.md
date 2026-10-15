@@ -7,8 +7,9 @@ commands and typed events (ADR-0008). M3a-4 adds the `log` crate and a `Diagnost
 public re-exports (ADR-0010) and adds no new `hecs`, `wgpu` or `winit` type. M3a is complete locally
 and is not pushed. M3b Phase 1 widens `Key`, adds a mouse release edge, and counts collapsed
 modifiers (ADR-0013, `57dbc4a`). Phase 2 adds the fixed-step input latch and `Actions` and is
-checkpointed locally. Viewport scale and window controls are decided and not built. Profiling is not
-in the code. The M2 audit
+checkpointed locally as `83286a9`. Phase 3, physical and logical `Viewport` plus the display scale, is
+implemented in the working tree and is not committed. Window controls are decided and not built.
+Profiling is not in the code. The M2 audit
 date was 2026-10-13 at `4857158`.
 Everything outside the sections "Proposed future architecture" and "Proposed boundaries" exists in the
 repository today, except that "Cross-system requirements and risks" mixes requirements (what must hold) with
@@ -170,6 +171,14 @@ not conceal. Frame edges still clear only in `input_clear`. `Actions` is publish
 with `Input` (ADR-0013). `spatial_scene` reads actions for its keys. `basic_2_5d` reads raw `Input`.
 Scroll stays on `Input`.
 
+`Viewport` is the window's physical framebuffer (`u32` pixels), a finite positive display scale
+(`f64`), and a logical size of `physical / scale` (`f32`). Both pointer spaces are top-left, +X
+right, +Y down. `Input::mouse_position` stays physical. `physical_to_logical` and
+`logical_to_physical` do not clamp and do not flip Y. A scale event does not resize the
+framebuffer; the following resize stores the physical size the OS chose. A zero resize keeps the
+last positive framebuffer. Camera extraction and the GPU surface use the physical size. World
+transforms stay Y-up and do not move when the scale changes (ADR-0013).
+
 `Interpolate` is an opt-in component (ADR-0007). The fixed loop copies that entity's current local
 `Transform` into `Interpolate::previous` before user fixed systems. `FixedTimestep::alpha` is a
 finite fraction in `0.0..=1.0` of the accumulator; the eight-step stall drops the leftover and alpha
@@ -268,9 +277,9 @@ Each is verified by reading the code or by a test run; identifiers refer to the 
     there is no pose stage for blending or IK and no way to animate a skeleton-less sprite.
 13. **No skin data (KI-23).** `Vertex` has position, normal and uv only; nothing carries joints or weights,
     and there is no model loader.
-14. **UI foundations (KI-24, KI-25).** The platform layer does not forward the window scale factor, input
-    has no text events, and any texture change re-uploads the whole texture, which a glyph atlas cannot
-    afford.
+14. **UI foundations (KI-24, KI-25).** The window scale factor and physical versus logical `Viewport`
+    exist (M3b Phase 3). Input still has no text events, and any texture change re-uploads the whole
+    texture, which a glyph atlas cannot afford. Reference-resolution UI scaling is still D-39.
 
 ## Cross-system requirements and risks
 
@@ -325,7 +334,8 @@ texture cache, samplers, atlases (the glyph atlas is an ordinary texture) and th
 machinery. They do not share the ordering model, coordinate space, lighting or input routing.
 World-space UI is a UI node anchored to an entity and positioned by projecting through the active camera
 (a behind-camera policy is required); render-to-texture panels are a later option (D-38).
-*Gaps:* no scale factor (KI-24), no sub-rectangle texture update (KI-25), no overlay pass.
+*Gaps:* device scale and logical pointer conversion exist (M3b Phase 3); no UI layout, no
+sub-rectangle texture update (KI-25), no overlay pass. Reference-resolution modes stay in D-39.
 
 **6. Asset loading, referencing and retention.** *Today:* components hold `AssetHandle<T>`, a copyable
 64-bit hash of a name; the manager owns the data; the renderer keeps GPU copies keyed by id and revision;
@@ -410,7 +420,7 @@ systems they touch. Each cites evidence from this audit.
 | R-9 | **Numeric determinism.** `f32` throughout; trigonometry comes from the platform libm and can differ between operating systems, so state hashes for replay may differ across OSes. World size is small enough for `f32` positions today | `engine-math`; M9 replay criterion | Moderate; surfaces as a flaky cross-OS replay test | Policy at M3: replay equality is required on one platform; cross-platform equality is not promised unless simulation avoids platform trig |
 | R-10 | **Animation write path and bone cost.** `animate_system` writes straight onto bone entities; entity-per-bone makes propagation scale with bone count | `clip.rs`; D-33, D-34 | Moderate; contained inside `engine-animation` if the evaluator stays world-free | D-34 first in M11; D-33 by measurement |
 | R-11 | **Material and texture format baked in.** `Material` is a component field, textures are always sRGB, no mipmaps, no sub-rect updates, batching keyed by texture only | `components.rs`, `scene_renderer.rs`; KI-6, KI-25 | Moderate: normal maps, glyph atlases and shadows depend on it | M5, before M8/M10/M14 |
-| R-12 | **Logical versus physical pixels.** The code uses physical pixels everywhere; no scale factor | KI-24 | Moderate, spread across viewport, pointer, UI and screenshots | Forward scale factor and logical size in M3's platform slice, not at M10 |
+| R-12 | **Logical versus physical pixels.** `Viewport` stores physical pixels, logical pixels, and the device scale. Rendering and extraction use physical pixels. UI reference-resolution modes are still open | KI-24 (DPI part done in M3b Phase 3); D-39 | Lower for the coordinate split. UI fit modes can still spread if they invent a third size | Device scale is M3b Phase 3. Fit/expand/integer modes stay with D-39 at M10 |
 | R-13 | **Diagnostics are counters, not a profile.** Logging is the `log` crate. `Diagnostics` holds one step of CPU stage times, the frame delta, and the latest render stats. There is no history, no per-system timing, and no GPU timestamp | `logging.rs`, `diagnostics.rs`, `missing.rs`; ADR-0012 | Low for the current call sites. A profiler bolted on later would duplicate them | M3a-4 implemented the records and the resource. M20 may add `tracing` or another profiler. The on-screen overlay stays in M10 |
 | R-14 | **Verification is narrower than it looks.** CI now runs on Windows, macOS and Linux (first run green), but only on software or paravirtual adapters, offscreen; GPU tests skip unless `DIMORA_REQUIRE_GPU=1` (CI sets it); windowed and DPI paths, real hardware and performance are unverified; pixel tests use tolerances that held on three rasterisers | TASKS.md "CI results"; KI-3, KI-24, KI-27 | Rises slowly; regressions on real GPUs or windowed paths found by users | Keep CI green and required; add a windowed smoke test when M3b lands the scale factor; real-GPU timing needs a different runner (ADR-0005 option B) |
 | R-15 | **Foundations not yet shaped for the editor.** The editor is a core product goal, but nothing yet carries what it needs: components have no field names, types, ranges or defaults; there are no undoable commands; entities and assets lack stable identities (R-4); no scene format; the renderer draws one view (R-2) so an editor viewport has nowhere to render; `RenderScene` is a one-way snapshot, so picking needs world queries | `components.rs`, `world.rs`, `extract.rs`; CAPABILITIES rows 2, 8, 32, 33, 36 | High: retrofitting field metadata, commands and identities onto many components and systems is the same cost as R-4 and R-5 | Treat editor needs as acceptance criteria of M3 (commands), M4 (registry with field metadata), M6 (camera-to-texture) and M19 (serialization); write no component or system that hides state the editor must edit |
@@ -555,9 +565,10 @@ glTF handedness conversion and importer choice (D-36).
 
 ### 4. World rendering and UI rendering
 
-**Exists today.** Nothing UI-specific. `RenderScene` is world-only. No font or text rendering; pointer,
-scroll and a few keys exist in input; the window scale factor is not forwarded; textures re-upload whole
-(KI-24, KI-25).
+**Exists today.** Nothing UI-specific. `RenderScene` is world-only. No font or text rendering. Pointer,
+scroll, and keys exist in input. The window scale factor is forwarded, and `Viewport` stores physical
+size, logical size, and scale (M3b Phase 3). Textures re-upload whole (KI-25). Reference-resolution
+UI scaling is not built (D-39).
 
 **Proposed (D-24, D-37, D-38, D-39).**
 

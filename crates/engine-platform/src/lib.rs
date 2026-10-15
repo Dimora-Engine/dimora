@@ -46,7 +46,12 @@ pub trait App {
     fn init(&mut self, window: Arc<Window>, display: OwnedDisplayHandle);
     fn input(&mut self, event: InputEvent);
     /// Inner size in physical pixels changed (also reported once after `init`).
+    /// A zero width or height is a minimized window; the implementor decides whether to keep
+    /// the previous framebuffer.
     fn resize(&mut self, width: u32, height: u32);
+    /// The display scale changed. This does not itself change the physical size. The following
+    /// [`App::resize`] carries the framebuffer the OS chose. Do not multiply that size by the scale.
+    fn scale_factor(&mut self, scale: f64);
     /// Once per display frame. `dt` is the wall-clock time since the previous frame.
     fn frame(&mut self, dt: Duration) -> Flow;
 }
@@ -108,6 +113,9 @@ impl ApplicationHandler for Runner<'_> {
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => self.app.resize(size.width, size.height),
+            // Leave the suggested size in place. The OS then emits `Resized` with that physical
+            // size. Requesting a size here would apply the scale a second time.
+            WindowEvent::ScaleFactorChanged { scale_factor, .. } => self.app.scale_factor(scale_factor),
             WindowEvent::KeyboardInput { event, .. } if !event.repeat => {
                 if let Some(key) = keymap::map_key(event.physical_key) {
                     let pressed = event.state == ElementState::Pressed;

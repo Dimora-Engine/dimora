@@ -213,7 +213,7 @@ fn hud_system(world: &mut World) {
     let figures = scene.figures.clone();
     drop(scene);
 
-    let viewport = world.resource::<Viewport>().0;
+    let viewport = world.resource::<Viewport>().physical_size_pixels();
     let cam = *world.component::<Camera>(camera).unwrap();
     let perspective = cam.projection.is_perspective();
     let view = CameraView::new(&cam, &GlobalTransform { matrix: rig.transform().to_matrix() }, viewport);

@@ -3,13 +3,13 @@ use std::time::{Duration, Instant};
 use engine_animation::animate_system;
 use engine_assets::AssetManager;
 use engine_core::{Actions, FixedTimestep, Input, InputEvent, Time};
-use engine_math::Vec2;
 use engine_platform::WindowConfig;
 use engine_renderer::{extract_scene, AmbientLight, ExtractStats, MissingAssetWarnings, RenderScene};
 use engine_renderer_wgpu::{CacheStats, FrameStats, GpuContext, RenderError, SceneRenderer};
 use engine_world::{propagate_transforms, snapshot_interpolation, Schedule, ScheduleError, World};
 
 use crate::diagnostics::{Diagnostics, StageDurations};
+use crate::viewport::Viewport;
 
 /// Startup options.
 #[derive(Clone, Debug)]
@@ -39,10 +39,6 @@ impl GameConfig {
         self
     }
 }
-
-/// Size of the render target in physical pixels. Updated by the runner on resize.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Viewport(pub Vec2);
 
 /// Lets systems talk to the window without depending on it.
 #[derive(Clone, Debug, Default)]
@@ -179,7 +175,7 @@ impl Game {
         world.insert_resource(RenderStats::default());
         world.insert_resource(Diagnostics::default());
         world.insert_resource(MissingAssetWarnings::default());
-        world.insert_resource(Viewport(Vec2::new(config.window.width as f32, config.window.height as f32)));
+        world.insert_resource(Viewport::from_logical_pixels(config.window.width, config.window.height));
         world.insert_resource(FixedTimestep::new(config.fixed_hz));
         world.insert_resource(StepClock::default());
 
@@ -449,7 +445,7 @@ impl Game {
 
     /// Snapshots the world for the active camera at the current `Viewport`.
     pub fn extract(&self) -> Option<RenderScene> {
-        let viewport = self.world.resource::<Viewport>().0;
+        let viewport = self.world.resource::<Viewport>().physical_size_pixels();
         extract_scene(&self.world, &self.world.resource::<AssetManager>(), viewport)
     }
 
@@ -461,7 +457,7 @@ impl Game {
             let renderer = SceneRenderer::new(&gpu, wgpu_rgba8_srgb());
             self.headless = Some((gpu, renderer));
         }
-        self.world.insert_resource(Viewport(Vec2::new(width as f32, height as f32)));
+        self.world.insert_resource(Viewport::from_logical_pixels(width, height));
         let scene = self.extract().ok_or_else(|| RenderError::Device("no active camera in the world".into()))?;
         let (gpu, renderer) = self.headless.as_mut().expect("created above");
         let assets = self.world.resource::<AssetManager>();

@@ -177,7 +177,7 @@ yet reproduced.
 | KI-12 | Assets: synchronous loading; PNG is the only decoder (sprites, meshes, skeletons, clips are code-built); no hot-reload watcher; `AssetId` is a name hash and changes on rename. The collision check is **done by T3** (commit `8abee2e`): `insert`, `load` and `reload` return `AssetError::IdCollision` and never overwrite. Remaining limit: the check is per asset type (see "Task T3 results") | Read | M17 |
 | KI-13 | Skeletal animation has no blending, events, IK, skinning or file loading | Read | M11 |
 | KI-14 | Blended sprites sort by quad centre only; large or intersecting blended quads can mis-order | Read | M5/M14 |
-| KI-15 | ~~Input has 47 keys and no F-keys~~ Phase 1 maps F1–F12, punctuation, navigation, and the keypad, and mouse release is a one-frame edge. Still open: actions, the fixed-step latch, cursor grab, gamepad, touch, and text | Partial (M3b Phase 1 in the working tree) | M3b (text and UI scale policy: M10, D-39) |
+| KI-15 | ~~Input has 47 keys and no F-keys~~ Phase 1 maps F1–F12, punctuation, navigation, and the keypad, and mouse release is a one-frame edge. Phase 2 adds `Actions` and the fixed-step latch. Still open: cursor grab, gamepad, touch, and text | Partial (Phases 1 and 2 checkpointed locally) | M3b (text and UI scale policy: M10, D-39) |
 | KI-16 | ~~Two rustdoc warnings: unresolved `World` and `Schedule` links in `crates/engine/src/lib.rs`~~ **Fixed by T1** (commit `e08033e`); `cargo doc` with `-D warnings` is clean | Verified | M2 |
 | KI-17 | `Cargo.toml` declares `MIT OR Apache-2.0` but no licence files exist. The licence is **proposed, not owner-confirmed** (OD-3); copyright holder unknown. Audit and the list of files that would change: "Licence audit" below | Verified (repository listing, `cargo metadata --locked`) | Owner decision, then M24 notices |
 | KI-18 | `Visibility::Hidden` applies to the entity only; it does not hide children | Read (`extract.rs`) | M4 |
@@ -186,7 +186,7 @@ yet reproduced.
 | KI-21 | A sprite's natural size comes from the whole `SpriteAsset`, not from `Sprite.region`, so showing a sheet frame without also setting `size` stretches it to the asset's size | Read (`extract.rs`: `sprite.size.unwrap_or_else(|| asset.world_size())`) | M8 |
 | KI-22 | `animate_system` writes sampled transforms directly onto bone entities and only visits entities that have a `SkeletonInstance`; `Pose` is not in the path, so there is no stage for blending or IK, and a skeleton-less sprite cannot be animated by it | Read (`clip.rs`) | M11 (sprite sheets: M8) |
 | KI-23 | `Vertex` is position, normal and uv; no joints, weights or tangents; no model loader; meshes are code-built | Read (`mesh.rs`) | M12 |
-| KI-24 | The platform layer does not forward the window scale factor (no use of it anywhere in the code), `Viewport` is one pixel size, and there are no text-input events, so resolution-independent UI has no foundation | Read (search for `scale_factor` finds nothing) | M10 |
+| KI-24 | ~~The platform layer does not forward the window scale factor, and `Viewport` is one pixel size~~ M3b Phase 3 stores physical size, logical size, and a validated scale, and converts the physical pointer. Remaining: no text-input events, so UI text still has no input path, and reference-resolution fit modes are not built (D-39) | Partial (working tree, not committed) | M10 |
 | KI-25 | Any change to a texture re-uploads the whole texture (cache keyed by `AssetId` and revision); there is no sub-rectangle update, which a glyph atlas needs | Read (`scene_renderer.rs`) | M5 |
 | KI-26 | macOS dev machine (Apple M5, macOS 27.0): rustc **older than 1.99** cannot link anything, not even `fn main(){}`, with `ld: tapi error: malformed file ... libSystem.B.tbd ... unknown architecture arm64e.x1-macos`. Cause seen: `xcode-select -p` points at Xcode 26.4.1 (`ld-1266.8`) but `xcrun --show-sdk-path` returns the macOS 27.0 SDK from the Command Line Tools, which that linker cannot read; rustc 1.99.0 links fine (not investigated why). Host setup, not engine code; nothing was changed system-wide. Workaround used for the 1.89.0 and 1.90.0 runs: `SDKROOT=/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk`. Proper fix (user's decision): select a matching Xcode or CLT with `xcode-select`, or update Xcode | Verified (hello-world reproduction with 1.89.0 and 1.90.0 fails, with the `SDKROOT` above succeeds, 1.99.0 succeeds without it) | Environment |
 | KI-27 | ~~The MSRV (1.90) was only built on macOS arm64~~ **Verified on all three systems** by the CI `msrv` job: `cargo +1.90.0 test --workspace --locked`, 138 passed, 0 failed on x86_64 Linux, aarch64 macOS and x86_64 Windows (MSVC). The MSRV holds only with the committed `Cargo.lock` | Verified (run 38475229601) | Done |
@@ -378,7 +378,8 @@ Done on macOS arm64 (2026-10-13); see "Task T3 results" for the evidence and its
 Ordered by dependency. Each task is small enough to verify on its own. The milestone-level acceptance
 criteria (ordering test, command and event tests, interpolation test, logging test, byte-identical example
 screenshots against `6dbabb8`, ADRs) are in ROADMAP.md under M3a and are not repeated here. M3a is
-complete locally and is not pushed. M3b is not started.
+complete locally and is not pushed. M3b Phases 1 and 2 are checkpointed locally. Phase 3 is in the
+working tree and is not committed.
 
 | Task | Content | Prerequisite | Done when |
 |---|---|---|---|
@@ -402,7 +403,7 @@ capture, focus, and text. `basic_2_5d` stays on raw `Input`. `spatial_scene` mov
 |---|---|---|
 | 1 | Wider physical key map and mouse just-released, on the existing frame clock | **Checkpointed locally.** Evidence under "M3b Phase 1 results" below |
 | 2 | `Actions`, aggregate edges, axes, rebinding, and the fixed-step latch | **Checkpointed locally.** Evidence under "M3b Phase 2 results" below |
-| 3 | `Viewport` physical size, logical size, and scale; `ScaleFactorChanged` | Not started |
+| 3 | `Viewport` physical size, logical size, and scale; `ScaleFactorChanged` | **In the working tree, not committed.** Evidence under "M3b Phase 3 results" below |
 | 4 | Borderless fullscreen, vsync fallback, event-loop frame cap, cursor grab, focus-loss release | Not started |
 
 ## M3a-1 results (2026-10-14)
@@ -567,7 +568,7 @@ Wider physical keys and a mouse release edge. Checkpointed locally after the mod
 
 ## M3b Phase 2 results (2026-10-15)
 
-Fixed-step latch and `Actions`. Checkpointed locally. Phases 3 and 4 are not started. The review before the checkpoint added `zero_steps_keep_the_latch_and_rebinding_waits_until_publish`. No latch behavior changed.
+Fixed-step latch and `Actions`. Checkpointed locally as `83286a9`. Phase 3 is in the working tree and is not committed. The review before the checkpoint added `zero_steps_keep_the_latch_and_rebinding_waits_until_publish`. No latch behavior changed.
 
 **Latch.** A real press or release sets the frame edge and stores a fixed-step bit. `end_frame` clears only the frame edge. `Game::step` publishes the stored bits at the start of the step. After the first fixed iteration's systems and command flush it conceals them, so later iterations read false. A step with zero fixed iterations does not conceal. A transition after conceal stays stored until the next publish, and queries keep reading the published set, so they do not change meaning by stage. A read does not clear a bit. Several transitions before publish collapse to one press bit and one release bit. `key_down` and `mouse_down` stay live.
 
@@ -579,7 +580,31 @@ Fixed-step latch and `Actions`. Checkpointed locally. Phases 3 and 4 are not sta
 
 **Repository check.** `scripts/check.sh` on 2026-10-15, exit 0. All 4 steps: fmt, clippy `-D warnings`, `cargo test --workspace` with `DIMORA_REQUIRE_GPU=1` (GPU tests ran, none skipped), rustdoc `-D warnings`. `cargo test --workspace -- --list` reports **255 tests**, including `zero_steps_keep_the_latch_and_rebinding_waits_until_publish`.
 
-**Screenshots.** Release renders with no input, compared with `cmp -s` to the same commands at `6dbabb8`. All four were byte-identical: `basic_2_5d` (746071 bytes), `basic_2_5d --ortho` (462130 bytes), `spatial_scene --camera perspective` (136991 bytes), `spatial_scene --camera orthographic` (34046 bytes).
+**Screenshots.** Release renders, compared with `cmp -s` to the same commands at `6dbabb8`. All four were byte-identical: `basic_2_5d` (746071 bytes), `basic_2_5d --ortho` (462130 bytes), `spatial_scene --camera perspective` (136991 bytes), `spatial_scene --camera orthographic` (34046 bytes). `basic_2_5d`'s screenshot path holds D and W for 75 steps; `spatial_scene` steps three times with no keys.
+
+## M3b Phase 3 results (2026-10-15)
+
+Physical and logical `Viewport`, display scale, and pointer conversion. In the working tree. Not committed. Not pushed.
+
+**Viewport.** `Viewport` stores physical width and height (`u32`) and a scale factor (`f64`, finite and greater than zero). Logical size is `physical / scale` (`f32`). `Viewport::new` rejects a non-finite or non-positive scale. `from_logical_pixels` is scale 1, used before a window exists and by `render_to_rgba`. `apply_scale_factor` does not change the physical size. `apply_physical_size` ignores a zero width or height and keeps the last positive framebuffer. `physical_to_logical` and `logical_to_physical` do not clamp and do not flip Y. Both pointer spaces are top-left, +X right, +Y down. World space stays Y-up.
+
+**Window.** winit 0.30.13 `ScaleFactorChanged` updates the scale and does not call `inner_size_writer.request_inner_size`. The following `Resized` stores the physical size, so the scale is not applied twice. `WindowedGame::init` reads `window.scale_factor()` and builds the surface from `window.inner_size()`. The platform then calls `resize` with that size. `WindowConfig` width and height stay logical pixels and only size the window at creation. An invalid scale is logged and ignored. A zero resize skips both the viewport update and `WindowRenderer::resize`.
+
+**Rendering and input.** Extraction and the surface use `physical_size_pixels()`. The same physical size keeps the same camera projection at scale 2 and at 1.5. `Input::mouse_position` stays physical. `spatial_scene`'s HUD projects with the physical size. Sprite and mesh transforms do not read `Viewport`.
+
+**Public API.** `Viewport` and `ViewportError` on `engine` and `engine::prelude`. No new `winit` or `wgpu` type. Methods: `physical_width`, `physical_height`, `physical_size`, `physical_size_pixels`, `logical_size`, `scale_factor`, `physical_to_logical`, `logical_to_physical`, `apply_physical_size`, `apply_scale_factor`, `new`, `from_logical_pixels`.
+
+**Not in this phase.** Fullscreen, vsync, frame cap, cursor grab, controllers, UI layout, UI capture, world picking, camera raycasting, multi-window.
+
+**Repository check.** `scripts/check.sh` on 2026-10-15, exit 0. All 4 steps: fmt, clippy `-D warnings`, `cargo test --workspace` with `DIMORA_REQUIRE_GPU=1` (GPU tests ran, none skipped), rustdoc `-D warnings`. The run reported **261 passed, 0 failed**. New tests: `logical_size_is_physical_divided_by_scale`, `a_non_integer_scale_round_trips_including_points_outside_the_window`, `invalid_scales_are_rejected_and_zero_resizes_keep_the_last_framebuffer`, `resize_and_scale_events_do_not_apply_the_scale_twice`, `extraction_uses_the_physical_size_at_every_scale`, `mouse_position_stays_physical_and_logical_conversion_does_not_change_input`.
+
+**Screenshots.** Release, 1280×720, rendered from this working tree and again from commit `6dbabb8` (`6dbabb88f10779301115d04720ac1f52000ed03a`), then compared with `cmp -s`. All four byte-identical: `basic_2_5d` (746071 bytes), `basic_2_5d --ortho` (462130 bytes), `spatial_scene --camera perspective` (136991 bytes), `spatial_scene --camera orthographic` (34046 bytes). `basic_2_5d`'s screenshot path holds D and W; `spatial_scene` does not send keys.
+
+**Manual window (macOS only, 2026-10-15).** A throwaway program outside the repo opened a winit window. It is not a committed test. Windows and Linux were not run. Moving the window to a second monitor was not run; the only monitor scale observed was 2.
+
+`Game::run` (the real `WindowedGame`), requested logical size 800×600: physical viewport 1600×1200, scale 2, logical size 800×600. `window.inner_size()` was 1600×1200 and `window.scale_factor()` was 2. `WindowRenderer::size()` was 1600×1200. A physical point (100, 40) converted to logical (50, 20) and back to (100, 40). The pointer had not moved, so `mouse_position` was (0, 0). The first run logged `ignored window scale factor 2` for a duplicate scale event after init had already stored 2. That warning was wrong: the scale was already applied, and the framebuffer was not scaled again. The runner now warns only when the scale is rejected. The rerun did not log it, and the viewport stayed 1600×1200 at scale 2.
+
+A second process used `engine_platform::run` and the same viewport and `WindowRenderer::resize` calls. Initial size, surface, and scale matched. A logical resize to 900×500 became physical 1800×1000 at scale 2, and the surface matched. Two rapid logical resizes (640×360, then 1100×400) settled on physical 2200×800, logical 1100×400, scale still 2, surface matching. `set_minimized(true)` did not emit a zero size on this Mac; the viewport stayed 2200×800. Zero-size handling is covered by `invalid_scales_are_rejected_and_zero_resizes_keep_the_last_framebuffer`, not by this window.
 
 ## Planned systems and their state
 

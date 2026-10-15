@@ -275,8 +275,9 @@ once M3a's stage and event API is merged; it does not need M3a's interpolation.
 **Status.** M3a is complete locally and is not pushed. M3a-3 is `cd802f0`, M3a-4 is `5c4fd97`, M3a-5 is
 `523f553`. M3a-6 is the public-API review in this documentation. M3b Phase 1 (keys, mouse release, and
 collapsed modifiers) is checkpointed locally as `57dbc4a` and is not pushed. Phase 2 (the fixed-step
-latch and `Actions`) is checkpointed locally and is not pushed. Viewport and window controls are
-specified in ADR-0013 and are not built. Profiling
+latch and `Actions`) is checkpointed locally as `83286a9` and is not pushed. Phase 3 (`Viewport`
+physical size, logical size, and display scale) is implemented in the working tree and is not
+committed. Window controls are specified in ADR-0013 and are not built. Profiling
 is not in the code. The rendering regression baseline is commit `6dbabb8`.
 
 **Prerequisites.** M2 (closed for planning). Decisions recorded before implementation code, 2026-10-14:
@@ -342,7 +343,8 @@ examples ported to the stage API (behaviour unchanged).
 
 **Status.** In progress. The decisions are ADR-0013 (D-49). Phase 1, the wider key map,
 `mouse_released`, and collapsed modifiers, is checkpointed locally as `57dbc4a` and is not pushed.
-Phase 2, `Actions` and the fixed-step latch, is checkpointed locally and is not pushed. Phases 3 and 4 are not started.
+Phase 2, `Actions` and the fixed-step latch, is checkpointed locally as `83286a9` and is not pushed.
+Phase 3, `Viewport` and DPI, is implemented in the working tree and is not committed. Phase 4 is not started.
 
 **Tasks.**
 - Input: full key set (F-keys, punctuation, numpad) — **Phase 1, checkpointed locally.** Cursor
@@ -350,7 +352,8 @@ Phase 2, `Actions` and the fixed-step latch, is checkpointed locally and is not 
   action map (named actions and axes bound to keys and buttons) that does not assume a keyboard, so a
   gamepad can bind later. The action map and the fixed-step latch are **Phase 2, checkpointed locally.**
 - Platform: forward the window scale factor and its changes; `Viewport` carries physical size, logical
-  size and scale (moved here from M10: R-12); vsync on/off, optional frame cap, fullscreen toggle.
+  size and scale (moved here from M10: R-12) — **Phase 3, in the working tree, not committed.**
+  Vsync on/off, optional frame cap, and fullscreen toggle remain Phase 4.
 
 **Dependencies.** D-10 (input events through the M3a channels), D-39 (scaling model, in outline).
 
@@ -681,16 +684,17 @@ binding UI to game state waits for M9.
 
 **What exists today (read).** Nothing UI-specific. Input has pointer position, buttons, scroll,
 arrows, Enter, Escape and Tab, but no text input, no cursor-left event and no gamepad. The
-code has no use of the window scale factor, and `Viewport` is a single size in pixels, so
-resolution-independent scaling has no foundation (KI-24). Textures re-upload whole on a revision
+window scale factor is forwarded, and `Viewport` stores physical size, logical size, and scale
+(M3b Phase 3, working tree). Resolution-independent UI fit modes are not built (D-39, KI-24's
+remaining text-input gap). Textures re-upload whole on a revision
 change (KI-25). There is no font loading or text rendering. `RenderScene` is world-only.
 
 **Tasks.**
 1. Settle D-24 (model), D-37 (text), D-38 (rendering and world UI) and D-39 (input, focus, scaling) in
    a short design note, using small spikes where a decision depends on a measurement.
-2. Platform: forward the scale factor and its changes; `Viewport` carries physical size, logical size
-   and scale; pointer coordinates map to logical UI space; add cursor-left; text input events only if
-   text fields are in scope (D-39).
+2. Platform: the scale factor, physical and logical `Viewport`, and physical-to-logical pointer
+   conversion are M3b Phase 3. Still to do here: cursor-left, and text input events only if text
+   fields are in scope (D-39).
 3. Text: font asset (TTF/OTF) loading, glyph rasterisation into a glyph atlas using the M5 sub-region
    update, single- and multi-line layout with wrapping and alignment. Latin text first; no complex
    shaping.

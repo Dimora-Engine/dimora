@@ -24,6 +24,7 @@ mod diagnostics;
 mod game;
 mod logging;
 mod runner;
+mod viewport;
 
 pub use engine_animation as animation;
 pub use engine_assets as assets;
@@ -35,8 +36,9 @@ pub use engine_renderer_wgpu as renderer_wgpu;
 pub use engine_world as world;
 
 pub use diagnostics::{Diagnostics, StageDurations};
-pub use game::{Game, GameConfig, RenderStats, Stage, Viewport, WindowControl};
+pub use game::{Game, GameConfig, RenderStats, Stage, WindowControl};
 pub use logging::install_stderr_logger;
+pub use viewport::{Viewport, ViewportError};
 
 /// Gameplay types a typical game needs in scope.
 ///
@@ -45,7 +47,9 @@ pub use logging::install_stderr_logger;
 /// `wgpu` and `winit` re-exports on [`crate::renderer_wgpu`] and [`crate::platform`], are not in
 /// this module.
 pub mod prelude {
-    pub use crate::{Diagnostics, Game, GameConfig, RenderStats, Stage, StageDurations, Viewport, WindowControl};
+    pub use crate::{
+        Diagnostics, Game, GameConfig, RenderStats, Stage, StageDurations, Viewport, ViewportError, WindowControl,
+    };
     pub use engine_animation::{
         animate_system, spawn_skeleton, AnimationClip, AnimationPlayer, Bone, BoneTrack, Keyframe, Pose, Skeleton,
         SkeletonInstance,
