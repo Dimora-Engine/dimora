@@ -333,21 +333,31 @@ Switching among them changes only those two values. Extraction and the wgpu back
 ```text
 cargo run --release -p spatial_scene
 cargo run --release -p spatial_scene -- --screenshot out.png [--camera NAME | --ortho]
-    [--cam x,y,z] [--yaw deg] [--pitch deg] [--size WxH]
+    [--environment a|b] [--cam x,y,z] [--yaw deg] [--pitch deg] [--size WxH]
     [--orientation billboard|upright|fixed] [--frames N]
 ```
 
 `NAME` is `perspective`, `orthographic`, `isometric`, `top-down`, `steep` or `side`. `--ortho` is the
 orthographic configuration. `--frames N` renders N frames and exits with an error if the GPU cache grew.
+The default environment is A. `--environment b` publishes the yard before the first step.
 
-The world is a checkerboard of mesh slabs on the `XZ` plane (`+Y` up), four cutout figures at Z = 0, 100,
-300 and 600, a walker moved by a `Transform` write, overlapping cutout figures, cutout trees, blended ghosts
-(one pair with `RenderOrder`), a pillar, a spinning cube and a pyramid, and the flat decal bench at the left.
-Nothing in it is specific to one visual style. Everything is unlit.
+Environment A is a checkerboard of mesh slabs on the `XZ` plane (`+Y` up), four cutout figures at Z = 0,
+100, 300 and 600, overlapping cutout figures, cutout trees, blended ghosts (one pair with `RenderOrder`),
+a pillar, a spinning cube and a pyramid, and the flat decal bench at the left. It is unlit. Environment B
+is a smaller yard in the same view: four floor tiles, a lit cube, a pillar, a figure, a tree, and one
+point light. Both are `SceneBuilder` functions. Replacing one does not remove assets.
+
+The camera and the walker are not members of either environment. The walker is moved by a `Transform`
+write and keeps that entity across a switch. Tab queues one deferred replacement; holding it does not
+queue another. The world stays on the current environment until the stage flush, and the tracked instance
+id changes only after that replacement reports success. A failure leaves the current environment in place
+and is logged when the status becomes `Failed`. An unexpected load stays published, and an unexpected
+unload is left as the engine applied it: the switch logs that it does not own that instance and does
+not unload or rebuild it.
 
 Controls: `W/S` move in depth, `A/D` strafe, `Space/Shift` move up/down, arrows rotate, `C` selects the next
 configuration, `P` toggles perspective/orthographic on the current pose, `O` cycles the figures' sprite
-orientation, `R` returns to the current configuration, `Esc` quits.
+orientation, `R` returns to the current configuration, `Tab` switches environment, `Esc` quits.
 
 <img src="spatial_scene_m6_perspective.png" alt="The same scene in perspective">
 

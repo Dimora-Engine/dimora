@@ -26,9 +26,9 @@ pushed (ADR-0014). Phase 2, hierarchical visibility, is commit `2c76f71` and is 
 name and tag lookup, is commit `f9a4aab` and is not pushed. M4-4A, scene instance tracking, is
 commit `302622b` and is not pushed. M4-4B, synchronous scene load, is commit `128c70e` and is not
 pushed. M4-4C, unload and replace, is commit `e12fb5b` and is not pushed. M4-4D, deferred scene
-operations, is implemented locally and is not committed. The `spatial_scene` switch is not started.
-M4 is not complete. Evidence is under "M4 Phase 1 results", "M4 Phase 2 results", "M4 Phase 3 results",
-"M4-4A results", "M4-4B results", "M4-4C results", and "M4-4D results".
+operations, is commit `8398e49` and is not pushed. M4-4E, the `spatial_scene` switch, is implemented
+locally and is not committed. M4 is not complete. Evidence is under "M4 Phase 1 results", "M4 Phase 2 results", "M4 Phase 3 results",
+"M4-4A results", "M4-4B results", "M4-4C results", "M4-4D results", and "M4-4E results".
 
 ## Completed work
 
@@ -787,7 +787,7 @@ Commit `e12fb5b`. Not pushed. M4 is not complete. M4-4A is `302622b`. M4-4B is `
 
 ## M4-4D results (2026-10-16)
 
-Implemented locally. Not committed. M4 is not complete. M4-4C is `e12fb5b`.
+Commit `8398e49`. Not pushed. M4 is not complete. M4-4C is `e12fb5b`.
 
 **Queue.** `CommandWriter::load_scene`, `unload_scene`, and `replace_scene` append to the existing FIFO command queue. Each accepted call returns a `SceneOpId` and stores `SceneOpStatus::Pending`. The flush calls the synchronous lifecycle. The closure does not enqueue another command. `Commands` stays removed for the duration of the flush, which is the existing rule.
 
@@ -800,6 +800,24 @@ Implemented locally. Not committed. M4 is not complete. M4-4C is `e12fb5b`.
 **Repository check.** `scripts/check.sh` on 2026-10-16, macOS 27.0 arm64, `rustc 1.99.0`, exit 0. All 4 steps passed: `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` with `DIMORA_REQUIRE_GPU=1` (**348 passed, 0 failed, 0 ignored**), `cargo doc --workspace --no-deps` with `-D warnings`. `headless.rs` ran 20 tests. `spatial_scene` `configurations.rs` ran 16.
 
 **Screenshots.** Release, 1280×720, rendered from this working tree and compared with `cmp -s` to the four PNGs rendered from commit `6dbabb8` (`6dbabb88f10779301115d04720ac1f52000ed03a`). All four byte-identical: `basic_2_5d` 746071 bytes, `basic_2_5d --ortho` 462130, `spatial_scene --camera perspective` 136991, `spatial_scene --camera orthographic` 34046. SHA-256: basic `c3c5874adeea119c98255c6c1d08208c0244224d930d86e8736c280ef88b38fe`, ortho `f2aedc0c4a65e13a33187f391d2a778d073b3befbf1ce207bc6484d961ac980f`, perspective `ec5f6252a88f642b454ae768f9eec8cdd5fba88a5aeb7a424fcefe5fda12275e`, orthographic `3551d84fe2ec1c14fc0729c7a86e2031c068285a6551597ee32d100f76805cde`.
+
+## M4-4E results (2026-10-16)
+
+Implemented locally. Not committed. M4 is not complete. M4-4D is `8398e49`. The documented code-defined prefab is M4-5 and was not started.
+
+**Environments.** `build_environment_a` is the original `spatial_scene` content, built with `SceneBuilder`. `build_environment_b` is a yard of four floor tiles, a lit cube, a pillar, a figure, a tree, and one point light. Mesh assets are inserted once in `build_world`. Sprite and panel assets stay in `art::register`. Neither build spawns the camera or the walker, and neither inserts `SceneMember` by hand.
+
+**Persistent entities.** The camera and the walker are ordinary `World::spawn` calls. They are not members of either `SceneInstanceId`. Replacement leaves their `Entity` values and transforms in place. The camera pose and projection stay on the example `Scene` resource. There is no new player controller.
+
+**Switch.** Tab is bound to `switch_environment`. `request_environment_switch` runs in `update` and queues `CommandWriter::replace_scene` on the frame-scoped press. A held key does not queue again, and a press while one operation is pending does not queue another. `apply_environment_switch` runs in `post_update`. `Replaced` updates the active id and dismisses the record. `Failed` dismisses it and leaves the active id unchanged. The engine logs that failure once when the status is stored. `Loaded` and `Unloaded` are logged with the instance id. The example does not own those instances: an unexpected load stays published, an unexpected unload is left as the engine applied it, and the tracked id stays unchanged. `Pending` stays stored.
+
+**Launch.** `cargo run -p spatial_scene` opens environment A. `--environment b` publishes B before the first step. The default screenshot path stays on A.
+
+**Repository check.** `scripts/check.sh` on 2026-10-16, macOS 27.0 arm64, `rustc 1.99.0`, exit 0. All 4 steps passed: `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` with `DIMORA_REQUIRE_GPU=1` (**359 passed, 0 failed, 0 ignored**), `cargo doc --workspace --no-deps` with `-D warnings`. `headless.rs` ran 20 tests on Apple M5, Metal. `spatial_scene` `configurations.rs` ran 16. `switching.rs` ran 11.
+
+**Screenshots.** Release, 1280×720, rendered from this working tree and compared with `cmp -s` to the four PNGs rendered from commit `6dbabb8` (`6dbabb88f10779301115d04720ac1f52000ed03a`). All four byte-identical: `basic_2_5d` 746071 bytes, `basic_2_5d --ortho` 462130, `spatial_scene --camera perspective` 136991, `spatial_scene --camera orthographic` 34046. SHA-256: basic `c3c5874adeea119c98255c6c1d08208c0244224d930d86e8736c280ef88b38fe`, ortho `f2aedc0c4a65e13a33187f391d2a778d073b3befbf1ce207bc6484d961ac980f`, perspective `ec5f6252a88f642b454ae768f9eec8cdd5fba88a5aeb7a424fcefe5fda12275e`, orthographic `3551d84fe2ec1c14fc0729c7a86e2031c068285a6551597ee32d100f76805cde`. Environment B, same size, is a new render and does not replace those baselines: perspective 22179 bytes, SHA-256 `a3da6f1d3ce9543fc3cd04c7b677ad9498fbe7cde65857de157db69fedbcd9b8`; orthographic 21934 bytes, SHA-256 `b71ffbb52aa52e0a96d31dfc670752af45d379ebcb3da813800684c234dfb093`.
+
+**Window.** `cargo run -p spatial_scene` stayed running, which is the windowed loop, and was then closed from this session. The framebuffer was not inspected. Keyboard switching, walker motion, and the absence of render errors were not observed in that window.
 
 ## Planned systems and their state
 
@@ -818,8 +836,8 @@ in the current scope.
 
 ## Not in scope now
 
-The `spatial_scene` switch and everything after M4. In particular: no scene format, no scene switching in `spatial_scene`, no new rendering features, no collision, no
-editor work, and no work on UI, scripting or any of the three character representations. M4 Phase 1 is commit `cdb5ec3`. Phase 2 is commit `2c76f71`. Phase 3 is commit `f9a4aab`. M4-4A is commit `302622b`. M4-4B is commit `128c70e`. M4-4C is commit `e12fb5b`. M4-4D is implemented locally and is not committed. None of M4 is pushed. M4 is not complete. M3b is complete locally and is not pushed. These systems are deliberately
+The documented code-defined prefab (M4-5) and everything after M4. In particular: no scene format, no new rendering features, no collision, no
+editor work, and no work on UI, scripting or any of the three character representations. M4 Phase 1 is commit `cdb5ec3`. Phase 2 is commit `2c76f71`. Phase 3 is commit `f9a4aab`. M4-4A is commit `302622b`. M4-4B is commit `128c70e`. M4-4C is commit `e12fb5b`. M4-4D is commit `8398e49`. M4-4E is implemented locally and is not committed. None of M4 is pushed. M4 is not complete. M3b is complete locally and is not pushed. These systems are deliberately
 not being started together: each has its own milestone, prerequisites and decisions. Decisions that data
 formats or public APIs will bake in are made before their first consumer (see
 [docs/DECISIONS.md](docs/DECISIONS.md#what-to-resolve-first)).

@@ -64,8 +64,9 @@ first" tiers in [docs/DECISIONS.md](docs/DECISIONS.md#what-to-resolve-first).
   visibility) is commit `2c76f71` and is not pushed. M4 Phase 3 (name and tag lookup) is commit
   `f9a4aab` and is not pushed. M4-4A (scene instance tracking) is commit `302622b` and is not pushed.
   M4-4B (synchronous scene load) is commit `128c70e` and is not pushed. M4-4C (unload and replace)
-  is commit `e12fb5b` and is not pushed. M4-4D (deferred scene operations) is implemented locally and
-  is not committed. The `spatial_scene` switch is not started. M4 is not complete.
+  is commit `e12fb5b` and is not pushed. M4-4D (deferred scene operations) is commit `8398e49` and
+  is not pushed. M4-4E (the `spatial_scene` switch) is implemented locally and is not committed.
+  M4 is not complete.
   M3a was first because
   collision, animation, scenes, UI and scripting all hang off its stages, commands and events, and because
   three high-cost risks (R-5, R-7, R-8) are cheapest to settle before more systems exist.
@@ -409,14 +410,15 @@ Phase 3 (name and tag lookup) is commit `f9a4aab` and is not pushed. M4-4A (empt
 `SceneMember`, and validated lookup) is commit `302622b` and is not pushed. M4-4B (`SceneBuilder` and
 synchronous `load_scene`) is commit `128c70e` and is not pushed. M4-4C (`unload_scene` and
 `replace_scene`) is commit `e12fb5b` and is not pushed. M4-4D queues those operations on the existing
-command queue and is implemented locally, not committed. The `spatial_scene` switch is not started.
+command queue and is commit `8398e49`. M4-4E switches `spatial_scene` between two code-defined
+environments and is implemented locally, not committed. The documented prefab is still M4-5.
 Scene files stay in M19. D-16 stays open.
 
 **Acceptance criteria.**
 - Loading then unloading a scene returns entity count and GPU resource counts to baseline (test).
 - A hidden parent hides all descendants in the extracted scene (test). **Met by Phase 2.** Cameras still activate from `Camera.active`.
 - Despawning any entity cannot leave a dangling `Parent` (test).
-- `spatial_scene` switches between two scenes at runtime.
+- `spatial_scene` switches between two scenes at runtime (test). **Met by M4-4E**, local and not committed. The camera and the walker stay. One Tab press queues one replacement.
 - The dump of a known world lists each entity's registered components and fields, and a component that is
   not registered is reported as such, not omitted silently (test). **Met by Phase 1.**
 - Exact name and tag lookup returns every live match in `Entity` order (test). **Met by Phase 3.**
@@ -424,7 +426,6 @@ Scene files stay in M19. D-16 stays open.
 - Loading a code-defined scene publishes an instance only when the build returns `Ok`, and a failed build leaves no created entities (test). **Met by M4-4B.**
 - Unloading a scene removes its validated members and leaves a non-member child at a TRS approximation of its world transform (test). **Met by M4-4C.**
 - A scene operation queued from a system runs at the existing stage flush, and its result stays readable after that flush (test). **Met by M4-4D.**
-- Switching `spatial_scene` is not met.
 
 **Tests/examples.** Scene lifecycle tests; `spatial_scene` scene-switch demo.
 

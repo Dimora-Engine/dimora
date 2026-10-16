@@ -1,6 +1,6 @@
 [package]
 name = "spatial_scene"
-description = "One spatial world of sprites and meshes, viewed through six example-local camera configurations."
+description = "Two code-defined spatial environments, viewed through six example-local camera configurations."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,3 +10,4 @@ publish.workspace = true
 [dependencies]
 engine.workspace = true
 image = { version = "0.25", default-features = false, features = ["png"] }
+log.workspace = true

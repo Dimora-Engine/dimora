@@ -1,6 +1,6 @@
 # ADR-0014: One world, code-defined scenes, and an explicit component registry
 
-* **Status:** Settled for the scene model, the registry, membership, synchronous load, unload, and replace, and for deferred scene operations on the existing command queue. D-16 stays open. The `spatial_scene` switch is not done.
+* **Status:** Settled for the scene model, the registry, membership, synchronous load, unload, and replace, and for deferred scene operations on the existing command queue. `spatial_scene` switches two code-defined environments with that queue. D-16 stays open. The documented code-defined prefab is still M4-5. M4 is not complete.
 * **Date:** 2026-10-15
 * **Backlog id:** D-18
 * **Decided by:** project owner (approved the M4 architecture and the five-phase sequence, with the refinements in this record)
@@ -121,7 +121,21 @@ Each call that is accepted returns a `SceneOpId` before the flush. The id is not
 
 `dismiss_scene_operation` removes one completed status and returns it. A pending id returns `OperationPending` and stays queued. `clear_scene_operations` removes every completed status and leaves pending ones. `Game::step` does not clear them. Unclaimed results stay until one of those calls. An unknown id is `NoSuchOperation`.
 
-The operation runs at the existing flush: after the stage's systems, and between fixed iterations. A later system in the same stage still sees `Pending`. The next stage, and the next fixed iteration, sees the completed status. `spatial_scene` does not switch scenes in this checkpoint.
+The operation runs at the existing flush: after the stage's systems, and between fixed iterations. A later system in the same stage still sees `Pending`. The next stage, and the next fixed iteration, sees the completed status. M4-4D is commit `8398e49`. The example that consumes these results is M4-4E.
+
+### M4-4E runtime switching in `spatial_scene` (2026-10-16)
+
+`build_world` registers mesh assets once, then `load_scene(build_environment_a)` publishes the original environment. `build_environment_b` is a smaller yard: floor tiles, a lit cube, a pillar, a figure, a tree, and one point light, using those same assets. Both functions take `SceneBuilder` and can run more than once. The example does not insert `SceneMember` itself and does not call `create_scene_instance` or `track_scene_entity`.
+
+The camera and the walker are `World::spawn` calls after that load. They are not members of either instance. A replacement despawns the published environment and leaves those entities, their `Entity` values, and their transforms. The camera pose and projection stay on the example `Scene` resource and are written to the same camera entity. There is no persistent-entity subsystem.
+
+Tab is bound to the action `switch_environment`. `request_environment_switch` runs in `update` and reads the frame-scoped press, so holding Tab queues one replacement. A press while a switch is already pending queues nothing. The call is `CommandWriter::replace_scene`. The returned `SceneOpId` is stored. `Scene.instance` stays unchanged until the result is `Replaced`.
+
+`apply_environment_switch` runs in `post_update`, before `propagate_transforms`. `Pending` stays stored. `Replaced` is dismissed, and the new id becomes the active instance. `Failed` is dismissed and the active id stays. That failure was already logged when the status was stored; the example does not log it again and does not record a `CommandError`. `Loaded` or `Unloaded` is an unexpected result for this action. The example logs the instance id, says it does not own that instance, and dismisses the operation record. An unexpected load stays published. An unexpected unload is left as the engine applied it. This switch does not unload or rebuild either one, and it does not change the tracked id. Completed records are not left for a later frame.
+
+A later `update` system still sees the old members and `Pending`. `animate` sees the completed replacement. The tracked id changes in `post_update`. No stage was added. Shared assets stay registered. D-16 stays open.
+
+`--environment b` publishes B with synchronous `replace_scene` before the first step, for a screenshot. The default launch and the default screenshot path stay on A. This checkpoint is local and is not committed. The documented prefab function is M4-5 and is not part of it.
 
 ### Follow-ups that stay open
 
@@ -141,7 +155,8 @@ The operation runs at the existing flush: after the stage's systems, and between
 * M4-4A is scene identity and membership: `SceneInstanceId`, `SceneMember`, `SceneError`, an internal `SceneManager`, and `World` methods that create an empty instance, track an existing entity, look it up, and sweep stale rows. It is commit `302622b`.
 * M4-4B is `SceneBuilder` and synchronous `load_scene`, including rollback of a failed build. It is commit `128c70e`.
 * M4-4C is synchronous `unload_scene` and `replace_scene`. It is commit `e12fb5b`.
-* M4-4D queues load, unload, and replace on the existing command queue and stores a `SceneOpStatus` until the caller clears it. It is implemented locally and is not committed. The `spatial_scene` switch is the next checkpoint.
+* M4-4D queues load, unload, and replace on the existing command queue and stores a `SceneOpStatus` until the caller clears it. It is commit `8398e49`.
+* M4-4E switches `spatial_scene` between two code-defined environments through that queue. The camera and the walker are not scene members. It is implemented locally and is not committed. The documented code-defined prefab remains M4-5. M4 is not complete.
 * M19 still chooses the file encoding, under ADR-0011, after D-16. RON remains a candidate. It is not a dependency.
 * D-16 and D-41 stay open. D-41 may later read the flags this registry stores.
 
@@ -155,6 +170,8 @@ M4-4B tests cover an empty load, one entity, a parent with children, a deep chai
 
 M4-4C tests cover an empty unload, one entity, a nested hierarchy, siblings, an unknown id, a second unload of the same id, other instances and runtime entities remaining, a runtime child, a deep runtime descendant, a runtime subtree, a member under a runtime parent, a member under a runtime entity that sits under another member, scene B under scene A, several ownership transitions, closed `Parent` and `Children` links, uniform-scale world transforms, the non-uniform-plus-rotation TRS approximation, interpolation snap on the lifted entity, unchanged descendant history, unchanged bystander `GlobalTransform` values, stale rows, a forged `SceneMember`, a broken parent or child link, a non-finite lift, a zero scale axis, replacement of an empty and a populated instance, a failed replacement before any spawn and after nested spawns, consumed ids, and a missing manager. Shared assets used by two instances and by a runtime entity, and an application asset the scene never references, stay after unload. Reloading still resolves the same sprite. The GPU test starts from a camera-only cache of 0 textures and 0 meshes, records 2 textures and 1 mesh after the scene renders, and returns to that camera baseline after unload, an explicit `AssetManager::remove` of the test-owned assets, and another frame. `scripts/check.sh` on 2026-10-16 passed with 341 tests, including the replacement invariant test. The four screenshots match commit `6dbabb8`. That checkpoint is commit `e12fb5b`.
 
-M4-4D tests cover a pending operation, a query that does not consume the status, refusal to dismiss a pending id, clearing completed results while a pending one stays, an unknown operation id, a missing manager at queue time, a failed load before and after nested spawns, a failed unload, a failed replacement that keeps the original, a successful unload that lifts a runtime entity, a successful replacement, FIFO instance ids, a later spawn command after a scene failure, and separation from `command_failures`. `Game::step` tests cover same-stage invisibility, visibility in `post_update`, and a flush between fixed iterations. `scripts/check.sh` on 2026-10-16 passed with 348 tests, including the one-time scene-failure log. The four screenshots match commit `6dbabb8`.
+M4-4D tests cover a pending operation, a query that does not consume the status, refusal to dismiss a pending id, clearing completed results while a pending one stays, an unknown operation id, a missing manager at queue time, a failed load before and after nested spawns, a failed unload, a failed replacement that keeps the original, a successful unload that lifts a runtime entity, a successful replacement, FIFO instance ids, a later spawn command after a scene failure, and separation from `command_failures`. `Game::step` tests cover same-stage invisibility, visibility in `post_update`, and a flush between fixed iterations. `scripts/check.sh` on 2026-10-16 passed with 348 tests, including the one-time scene-failure log. The four screenshots match commit `6dbabb8`. That checkpoint is commit `8398e49`.
+
+M4-4E tests in `examples/spatial_scene/tests/switching.rs` cover the initial environment, a pending replacement, dismissal, A to B and back, a repeated round trip, membership, no leftover members, the camera and walker surviving, extraction under every named camera, shared asset revisions, a rejected replacement, one queue entry for two request calls in one press, and a held Tab. Perspective and orthographic renders of B differ from A and report one light. `scripts/check.sh` on 2026-10-16 passed with 359 tests. The four original screenshots still match commit `6dbabb8`. Environment B's new hashes are recorded in TASKS.md and do not replace those baselines. This checkpoint is local and is not committed.
 
 Reopen the settled items only under the rule at the bottom of DECISIONS.md. Revisit asset ownership when some caller can prove an asset is unused by every remaining entity and system. Revisit the deferred scene-operation record if the stored `SceneOpId` cannot be read after flush without holding `SceneManager` across the command queue. Revisit scene-local ids when M19 has a real file and D-16 has settled asset ids.

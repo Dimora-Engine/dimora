@@ -1,15 +1,20 @@
-//! One spatial world seen through several camera configurations: sprites and 3D meshes at real depths.
+//! Two spatial environments seen through several camera configurations: sprites and 3D meshes at real depths.
+//!
+//! The process starts on environment A, the original scene. Tab queues a deferred replacement of the
+//! other environment. The camera and the walker stay; they are not members of either environment.
 //!
 //! * Four identical figures stand at world Z = 0, 100, 300 and 600 (A, B, C, D). Nothing marks them
 //!   as "far" or "near"; the camera's projection alone makes D smaller than A.
 //! * A pillar (mesh) stands at Z = 200: figure B (Z = 100) is in front of it and figure C (Z = 300)
 //!   is behind it. A spinning cube (mesh) cuts straight through a tree sprite at Z = 400.
-//! * A walker (W) patrols along X: a sprite moved by a plain `Transform` write each frame.
+//! * A walker (W) patrols along X: a sprite moved by a plain `Transform` write each frame. It is not
+//!   part of either environment, so switching scenes leaves it where it is.
 //! * Translucent ghosts are alpha-blended after the opaque geometry, still depth-tested; two pairs overlap
 //!   at equal depth, one with an explicit `RenderOrder`.
 //! * At the left, flat decals lie on the ground at equal and nearly equal heights, cutout and blended: the
 //!   coplanar cases that depth alone cannot order (see docs/SPATIAL_RENDERING.md, "Findings").
-//! * Everything is unlit, so what you see is purely the spatial projection.
+//! * Environment A is unlit, so what you see there is the spatial projection. Environment B is a
+//!   smaller yard in the same view: a lit mesh, unlit sprites, and one point light.
 //!
 //! Configurations (`--camera NAME`, key `C`): perspective, orthographic, isometric, top-down, steep, side.
 //! Each is a `Camera` plus a `Transform` over the same world and the same renderer.
@@ -24,11 +29,20 @@
 //! P            toggle perspective / orthographic projection
 //! O            cycle the figures' sprite orientation: billboard, upright, fixed
 //! R            reset to the current configuration
+//! Tab          switch between environment A and environment B
 //! Esc          quit
 //! ```
 //!
+//! Tab is one gameplay action. A press queues one replacement and the stage flush runs it. Holding
+//! Tab does not queue another. The active environment changes only after that replacement reports
+//! success. A failed replacement leaves the current environment in place; the engine logs the failure.
+//!
 //! Headless: `cargo run --release -p spatial_scene -- --screenshot out.png [--camera NAME | --ortho]
-//! [--cam x,y,z] [--yaw deg] [--pitch deg] [--size WxH] [--orientation billboard|upright|fixed] [--frames N]`
+//! [--environment a|b] [--cam x,y,z] [--yaw deg] [--pitch deg] [--size WxH]
+//! [--orientation billboard|upright|fixed] [--frames N]`
+//!
+//! The default environment is A. `--environment b` publishes B before the first step, for a
+//! screenshot of that yard. It does not change the default launch.
 //!
 //! `--frames N` renders N frames instead of one (the saved image is the last), prints the GPU cache counts
 //! after the first and the last frame, and exits with an error if they grew.
@@ -63,6 +77,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut game = Game::new(GameConfig::default().with_title("Dimora - spatial_scene").with_size(width, height));
     art::register(&mut game.assets());
     let mut scene = scene::build_world(&mut game.world, config);
+    match value("--environment").as_deref().unwrap_or("a") {
+        "a" => {}
+        "b" => scene::replace_environment(&mut game.world, &mut scene, scene::Environment::B)
+            .map_err(|error| format!("environment B: {error}"))?,
+        other => {
+            return Err(format!("unknown environment `{other}`; known: a, b").into());
+        }
+    }
 
     if let Some(cam) = value("--cam") {
         let v: Vec<f32> = cam.split(',').filter_map(|n| n.trim().parse().ok()).collect();
@@ -89,7 +111,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     game.add_system("controls", controls_system);
     game.add_system("camera", scene::camera_system);
     game.add_system("motion", scene::motion_system);
+    game.add_system("switch_environment", scene::request_environment_switch);
     game.add_system("hud", hud_system);
+    game.add_to_stage(Stage::PostUpdate, "apply_environment", scene::apply_environment_switch)
+        .expect("post_update accepts the switch result");
 
     match value("--screenshot") {
         Some(path) => {
@@ -140,6 +165,7 @@ fn bind_controls(game: &mut Game) {
     actions.bind_button("next_config", ButtonSource::Key(Key::C));
     actions.bind_button("cycle_orientation", ButtonSource::Key(Key::O));
     actions.bind_button("reset", ButtonSource::Key(Key::R));
+    actions.bind_button(scene::SWITCH_ENVIRONMENT, ButtonSource::Key(Key::Tab));
     actions.bind_button("quit", ButtonSource::Key(Key::Escape));
 }
 
@@ -192,7 +218,9 @@ fn controls_system(world: &mut World) {
     let figures: Vec<Entity> = scene.figures.iter().map(|&(_, e)| e).collect();
     drop(scene);
     for e in figures {
-        world.component_mut::<Sprite>(e).unwrap().orientation = orientation;
+        if let Ok(mut sprite) = world.component_mut::<Sprite>(e) {
+            sprite.orientation = orientation;
+        }
     }
     if escape {
         world.resource_mut::<WindowControl>().exit = true;
@@ -209,7 +237,8 @@ fn hud_system(world: &mut World) {
         return;
     }
     scene.title_timer = 0.25;
-    let (rig, camera, orientation, name) = (scene.rig, scene.camera, scene.figure_orientation, scene.config_name());
+    let (rig, camera, orientation, name, environment) =
+        (scene.rig, scene.camera, scene.figure_orientation, scene.config_name(), scene.environment);
     let figures = scene.figures.clone();
     drop(scene);
 
@@ -229,7 +258,7 @@ fn hud_system(world: &mut World) {
     let stats = *world.resource::<RenderStats>();
     let diagnostics = *world.resource::<Diagnostics>();
     let title = format!(
-        "spatial_scene | {name} ({}) | cam ({:.0}, {:.0}, {:.0}) | {:?} | {} | {} draws | gpu cache {} tex {} mesh | {} ents, {} fixed, {:.2} ms cpu",
+        "spatial_scene | env {environment:?} | {name} ({}) | cam ({:.0}, {:.0}, {:.0}) | {:?} | {} | {} draws | gpu cache {} tex {} mesh | {} ents, {} fixed, {:.2} ms cpu",
         if perspective { "perspective" } else { "orthographic" },
         rig.position.x,
         rig.position.y,

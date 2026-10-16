@@ -15,8 +15,9 @@ locally and is not pushed. M4 Phase 1, the component registry and text dumps, is
 pushed. M4 Phase 3, `find_by_name` and `Tags` / `find_by_tag`, is commit `f9a4aab` and is not
 pushed. M4-4A, scene instance tracking, is commit `302622b` and is not pushed. M4-4B,
 synchronous `load_scene`, is commit `128c70e` and is not pushed. M4-4C, unload and replace, is
-commit `e12fb5b` and is not pushed. M4-4D, deferred scene operations, is implemented locally and is
-not committed. The `spatial_scene` switch is not built. M4 is not complete.
+commit `e12fb5b` and is not pushed. M4-4D, deferred scene operations, is commit `8398e49` and is
+not pushed. M4-4E, the `spatial_scene` switch, is implemented locally and is not committed. M4 is
+not complete.
 Profiling is not in the code. The M2 audit
 date was 2026-10-13 at `4857158`.
 Everything outside the sections "Proposed future architecture" and "Proposed boundaries" exists in the
@@ -469,7 +470,7 @@ These are settled; revisit only with a concrete problem.
 | Assets | Typed handles holding a name hash; manager owns data; sources behind a trait | Components can reference assets before they load |
 | Despawn (D-03) | `despawn` removes the whole subtree; `detach_children` keeps children as roots with their world transform | Bones and attachments are owned by their parent, so orphans are never wanted. Cost: a caller who wants children to survive must say so |
 | GPU cache lifetime (D-04) | Evict a cached texture or mesh when its asset is removed, and when unused for N frames (configurable) | Removed assets are freed promptly and off-screen assets are not re-uploaded every frame. Cost: an asset unused for N frames is re-uploaded when it returns |
-| Scene model and registry (D-18) | One world; internal `SceneManager`; `SceneBuilder` without `&mut World`; load publishes only on success; unload lifts non-members and does not remove assets; deferred scene ops use the command queue and store `SceneOpStatus` | ADR-0014. Phase 1 is `cdb5ec3`. Phase 2 is `2c76f71`. Phase 3 is `f9a4aab`. M4-4A is `302622b`. M4-4B is `128c70e`. M4-4C is `e12fb5b`. M4-4D is local and not committed. Scene files stay in M19. D-16 stays open |
+| Scene model and registry (D-18) | One world; internal `SceneManager`; `SceneBuilder` without `&mut World`; load publishes only on success; unload lifts non-members and does not remove assets; deferred scene ops use the command queue and store `SceneOpStatus`; `spatial_scene` replaces one environment at the stage flush | ADR-0014. Phase 1 is `cdb5ec3`. Phase 2 is `2c76f71`. Phase 3 is `f9a4aab`. M4-4A is `302622b`. M4-4B is `128c70e`. M4-4C is `e12fb5b`. M4-4D is `8398e49`. M4-4E is local and not committed. Scene files stay in M19. D-16 stays open |
 
 ## Proposed future architecture (NOT implemented)
 
@@ -482,7 +483,9 @@ criteria. Open decisions stay in [DECISIONS.md](DECISIONS.md).
   `2c76f71`). `find_by_name` and `find_by_tag` scan live entities (Phase 3, `f9a4aab`). M4-4A records
   empty instances and `SceneMember` (`302622b`). M4-4B loads a code-defined scene through `SceneBuilder`
   (`128c70e`). M4-4C unloads and replaces an instance without removing assets (`e12fb5b`). M4-4D queues
-  those operations on the command queue. Serialization stays in M19. The `spatial_scene` switch is not built.
+  those operations on the command queue (`8398e49`). M4-4E uses that queue to switch `spatial_scene`
+  between two code-defined environments. The camera and the walker are not scene members. That
+  example change is local and not committed. Serialization stays in M19. The documented prefab is M4-5.
 * **Material assets and sampler/colour-space-aware textures, sub-rectangle texture updates** (M5).
 * **A list of camera passes** instead of one `RenderScene` camera, plus render-to-texture (M6).
 * **A collision world** as a resource rebuilt in the fixed stage, with spatial 3D queries (M7).

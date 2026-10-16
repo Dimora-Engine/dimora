@@ -81,7 +81,7 @@ the risk register). **Prototype where the answer depends on a measurement; do no
 | D-02 | Change detection | M3 | M3, M4 (dirty transforms), M23 | Provisional, [ADR-0009](adr/0009-no-change-detection-until-measured.md) (2026-10-14): none until a profile |
 | D-10 | Events and deferred commands | M3 | M3, M4, M7, M8, M18 | Decided, [ADR-0008](adr/0008-commands-and-per-frame-events.md) (2026-10-14). Implemented in M3a-3 |
 | D-49 | Input actions, fixed-step one-shots, viewport scale, window controls | M3b | M3b, M10 | Decided, [ADR-0013](adr/0013-input-actions-and-window-controls.md) (2026-10-15). Phases 1–4 are checkpointed locally (`57dbc4a`, `83286a9`, `9c99edf`, `cfdf358`) and are not pushed. M3b's acceptance criteria are met |
-| D-18 | Scene format, serde, component registry | M4 (registry shape), M19 | M4, M18, M19, M22 | Decided in part, [ADR-0014](adr/0014-scene-model-and-component-registry.md) (2026-10-16). Registry, scene model, membership, load, unload, replace, and deferred scene operations are settled. Phase 1 is `cdb5ec3`. Phase 2 is `2c76f71`. Phase 3 is `f9a4aab`. M4-4A is `302622b`. M4-4B is `128c70e`. M4-4C is `e12fb5b`. None is pushed. M4-4D is local and not committed. No scene file in M4. D-16 stays open |
+| D-18 | Scene format, serde, component registry | M4 (registry shape), M19 | M4, M18, M19, M22 | Decided in part, [ADR-0014](adr/0014-scene-model-and-component-registry.md) (2026-10-16). Registry, scene model, membership, load, unload, replace, deferred scene operations, and the `spatial_scene` switch are settled. Phase 1 is `cdb5ec3`. Phase 2 is `2c76f71`. Phase 3 is `f9a4aab`. M4-4A is `302622b`. M4-4B is `128c70e`. M4-4C is `e12fb5b`. M4-4D is `8398e49`. None is pushed. M4-4E is local and not committed. No scene file in M4. D-16 stays open |
 | D-27 | Units and pixels per unit | M5 | M5, M8, M9, M13 | Open |
 | D-05 | Materials, alpha modes, blended meshes | M5 | M5, M14 | Open |
 | D-06 | Pixel-art filtering, texel snapping, MSAA: policies at the level of each technique, **not a default or a foundation** | M6 (after D-25 and D-08) | M6, M8, M9, M13 | Principles accepted (ADR-0004); API ownership and defaults **deferred pending a rendering prototype** |
@@ -226,9 +226,11 @@ M4-4B is commit `128c70e`. It adds `SceneBuilder` and synchronous `load_scene`. 
 
 M4-4C is commit `e12fb5b`. It adds `unload_scene` and `replace_scene`. Unload destroys validated members of that instance and lifts a non-member child to a TRS approximation of its world matrix. It does not call `World::despawn`, and it does not remove assets. A failed replacement build leaves the original instance in place. After a successful preflight, the public builder cannot make the following unload fail. `create_scene_instance` and `track_scene_entity` stay public low-level methods. They should become `pub(crate)` before a stable public release.
 
-M4-4D, implemented locally and not committed, queues load, unload, and replace on the existing command queue. The caller receives a `SceneOpId` immediately. The outcome stays as `SceneOpStatus` until `dismiss_scene_operation` or `clear_scene_operations`. A scene failure is not a `CommandError`.
+M4-4D is commit `8398e49`. It queues load, unload, and replace on the existing command queue. The caller receives a `SceneOpId` immediately. The outcome stays as `SceneOpStatus` until `dismiss_scene_operation` or `clear_scene_operations`. A scene failure is not a `CommandError`.
 
-Still open: the `spatial_scene` switch, and which id M19 will persist. D-16 stays open. The file encoding, including whether to take `serde`, is M19's decision. Script flags are stored and unused (D-41). Membership does not own assets.
+M4-4E, implemented locally and not committed, switches `spatial_scene` between environment A and environment B with that queue. Tab is the `switch_environment` action. The camera and the walker are not members of either environment. The example dismisses a completed result in `post_update`. A failed replacement leaves the current environment published. An unexpected load stays published, and an unexpected unload is left as the engine applied it, because that switch does not own the instance.
+
+Still open: which id M19 will persist, and the documented code-defined prefab (M4-5). D-16 stays open. The file encoding, including whether to take `serde`, is M19's decision. Script flags are stored and unused (D-41). Membership does not own assets.
 
 ## Needed during M5-M6 (materials, renderer)
 

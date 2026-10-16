@@ -129,12 +129,13 @@ Missing from the original category list and now tracked: **save games** (34), **
   `load_scene` spawns through `SceneBuilder` and publishes the instance only on success.
   `unload_scene` removes that instance's validated members and lifts a non-member child to a TRS
   world transform. `CommandWriter` queues the same load, unload, and replace. The outcome stays as
-  `SceneOpStatus` until the caller clears it. Lookup requires a live entity whose `SceneMember` matches. **Weak point:** `World.entities` is a public
+  `SceneOpStatus` until the caller clears it. `spatial_scene` replaces its environment from `update`
+  and reads the result in `post_update`. Lookup requires a live entity whose `SceneMember` matches. **Weak point:** `World.entities` is a public
   `hecs::World`, and `get`/`query` return hecs types, so storage is *not* swappable despite the earlier
   claim (R-7).
 * **Required.** Safe hierarchy, deterministic iteration, entity references that survive serialization
   and scripting (generation-checked).
-* **Planned.** Scene switching in `spatial_scene` (M4 phase 5). Dirty transforms only if profiling asks (D-02).
+* **Planned.** The documented code-defined prefab (M4-5). Dirty transforms only if profiling asks (D-02).
 * **Depends on.** Math. **Integration.** Everything is an entity; extraction, animation, UI anchors,
   colliders, scripts and the editor all read it.
 * **Performance.** `propagate_transforms` is O(entities) every frame; extraction walks all renderables.
@@ -561,9 +562,9 @@ Missing from the original category list and now tracked: **save games** (34), **
 ## Scenes, tools, production
 
 ### 32. Scenes and lifecycle
-* **Now.** `load_scene`, `unload_scene`, and `replace_scene` run synchronously in the existing world (M4-4C, `e12fb5b`; load is `128c70e`). The same three operations can be queued on the command writer (M4-4D, local, not committed). A queued operation stays pending until the stage flush and stores a `SceneOpStatus` until the caller clears it. Unload does not remove assets. `Visibility::Hidden` on an entity or any ancestor omits that entity's sprite, mesh, tilemap, or light during extraction (M4 Phase 2, `2c76f71`). Cameras still activate from `Camera.active`. `find_by_name` and `find_by_tag` scan live entities (M4 Phase 3, `f9a4aab`). The component registry and text dumps exist (M4 Phase 1, `cdb5ec3`). Scene membership is `302622b`. `spatial_scene` does not switch scenes yet.
-* **Planned.** The `spatial_scene` switch. **Depends on.** M2, M3, ADR-0014. Asset files stay in M19. D-16 stays open.
-* **Tests/examples.** Phase 1: registry and dump tests. Load/unload returns entity count to baseline, with GPU counts returned by an explicit `AssetManager::remove` in the test. Deferred operations are covered through `Game::step`. Still to come: `spatial_scene` switches scenes.
+* **Now.** `load_scene`, `unload_scene`, and `replace_scene` run synchronously in the existing world (M4-4C, `e12fb5b`; load is `128c70e`). The same three operations can be queued on the command writer (M4-4D, `8398e49`). A queued operation stays pending until the stage flush and stores a `SceneOpStatus` until the caller clears it. Unload does not remove assets. `Visibility::Hidden` on an entity or any ancestor omits that entity's sprite, mesh, tilemap, or light during extraction (M4 Phase 2, `2c76f71`). Cameras still activate from `Camera.active`. `find_by_name` and `find_by_tag` scan live entities (M4 Phase 3, `f9a4aab`). The component registry and text dumps exist (M4 Phase 1, `cdb5ec3`). Scene membership is `302622b`. `spatial_scene` starts on environment A and switches to environment B with Tab (M4-4E, local, not committed). The camera and the walker are not scene members. A failed replacement leaves the current environment published.
+* **Planned.** The documented code-defined prefab (M4-5). **Depends on.** M2, M3, ADR-0014. Asset files stay in M19. D-16 stays open.
+* **Tests/examples.** Phase 1: registry and dump tests. Load/unload returns entity count to baseline, with GPU counts returned by an explicit `AssetManager::remove` in the test. Deferred operations are covered through `Game::step`. `examples/spatial_scene/tests/switching.rs` covers the two environments, the stage flush, Tab, persistent entities, shared assets, a failed replacement, and perspective and orthographic renders of environment B.
 * **Not initially.** Async/streamed scenes, multiple worlds, nested prefab variants, scene files.
 
 ### 33. Scene serialization and versioning
