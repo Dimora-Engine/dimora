@@ -13,6 +13,7 @@ fn game_startup_registers_builtins_and_still_reports_unknown_components() {
     for name in [
         "Transform",
         "Name",
+        "Tags",
         "Visibility",
         "Sprite",
         "Mesh",

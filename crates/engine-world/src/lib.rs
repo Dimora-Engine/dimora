@@ -5,7 +5,7 @@
 //! (ADR-0010). M3a does not wrap `hecs` and adds no further `hecs` type.
 //!
 //! Spatial components shared by everything that exists in the scene live here: [`Transform`],
-//! [`GlobalTransform`], [`Parent`]/[`Children`], [`Visibility`], [`Name`], [`Interpolate`].
+//! [`GlobalTransform`], [`Parent`]/[`Children`], [`Visibility`], [`Name`], [`Tags`], [`Interpolate`].
 //!
 //! [`ComponentRegistry`] names those components for debug dumps. It does not serialize them.
 
@@ -15,6 +15,7 @@ mod dump;
 mod events;
 mod hierarchy;
 mod interpolate;
+mod lookup;
 mod registry;
 mod resources;
 mod schedule;
@@ -32,6 +33,7 @@ pub use dump::DumpError;
 pub use engine_math::Transform;
 pub use hierarchy::{propagate_transforms, Children, GlobalTransform, HierarchyError, Parent};
 pub use interpolate::{snapshot_interpolation, Interpolate};
+pub use lookup::Tags;
 pub use registry::{ComponentDesc, ComponentInfo, ComponentRegistry, FieldDesc, Persistence, RegistryError};
 pub use resources::Resources;
 pub use schedule::{Schedule, ScheduleError};

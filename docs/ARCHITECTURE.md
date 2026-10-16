@@ -11,8 +11,8 @@ checkpointed locally as `83286a9`. Phase 3, physical and logical `Viewport` plus
 checkpointed locally as `9c99edf`. Phase 4, borderless fullscreen, vsync, an optional frame cap,
 cursor grab, and focus-loss cleanup, is checkpointed locally as `cfdf358`. M3b is complete
 locally and is not pushed. M4 Phase 1, the component registry and text dumps, is commit `cdb5ec3`
-(ADR-0014) and is not pushed. M4 Phase 2 resolves hierarchical visibility during extraction and is
-checkpointed locally with this record. Scene instances and name/tag lookup are accepted and not built. M4 is not complete.
+(ADR-0014) and is not pushed. M4 Phase 2, hierarchical visibility, is commit `2c76f71` and is not
+pushed. M4 Phase 3, `find_by_name` and `Tags` / `find_by_tag`, is checkpointed locally with this record. Scene instances are accepted and not built. M4 is not complete.
 Profiling is not in the code. The M2 audit
 date was 2026-10-13 at `4857158`.
 Everything outside the sections "Proposed future architecture" and "Proposed boundaries" exists in the
@@ -462,7 +462,7 @@ These are settled; revisit only with a concrete problem.
 | Assets | Typed handles holding a name hash; manager owns data; sources behind a trait | Components can reference assets before they load |
 | Despawn (D-03) | `despawn` removes the whole subtree; `detach_children` keeps children as roots with their world transform | Bones and attachments are owned by their parent, so orphans are never wanted. Cost: a caller who wants children to survive must say so |
 | GPU cache lifetime (D-04) | Evict a cached texture or mesh when its asset is removed, and when unused for N frames (configurable) | Removed assets are freed promptly and off-screen assets are not re-uploaded every frame. Cost: an asset unused for N frames is re-uploaded when it returns |
-| Scene model and registry (D-18) | One world; code-defined scenes; explicit registration; hierarchical visibility at extract; no scene file in M4 | ADR-0014. Phase 1 is `cdb5ec3`. Phase 2 is checkpointed locally with this record. Asset ownership, spawn rollback, and persistent entity ids stay open. Scene files stay in M19 |
+| Scene model and registry (D-18) | One world; code-defined scenes; explicit registration; hierarchical visibility at extract; name and tag lookup by scan; no scene file in M4 | ADR-0014. Phase 1 is `cdb5ec3`. Phase 2 is `2c76f71`. Phase 3 is checkpointed locally with this record. Asset ownership, spawn rollback, and persistent entity ids stay open. Scene files stay in M19 |
 
 ## Proposed future architecture (NOT implemented)
 
@@ -471,8 +471,9 @@ implementation is still a later task. Each item is a roadmap milestone with its 
 criteria. Open decisions stay in [DECISIONS.md](DECISIONS.md).
 
 * **Scenes as units** (M4): the registry and text dumps exist (Phase 1, `cdb5ec3`, ADR-0014). Extraction
-  omits a sprite, mesh, tilemap, or light whose ancestor chain contains `Visibility::Hidden` (Phase 2).
-  Scene membership, load/unload, and name/tag lookup are accepted and not built. Serialization stays in M19.
+  omits a sprite, mesh, tilemap, or light whose ancestor chain contains `Visibility::Hidden` (Phase 2,
+  `2c76f71`). `find_by_name` and `find_by_tag` scan live entities (Phase 3). Scene membership and
+  load/unload are accepted and not built. Serialization stays in M19.
 * **Material assets and sampler/colour-space-aware textures, sub-rectangle texture updates** (M5).
 * **A list of camera passes** instead of one `RenderScene` camera, plus render-to-texture (M6).
 * **A collision world** as a resource rebuilt in the fixed stage, with spatial 3D queries (M7).

@@ -22,9 +22,9 @@ is the public-API review recorded below. M3b Phases 1–3 are checkpointed local
 `83286a9`, `9c99edf`). Phase 4 is checkpointed locally as `cfdf358`. None of M3b is pushed. The rendering regression baseline is commit `6dbabb8`.
 
 **M4 is in progress.** Phase 1, the component registry and text dumps, is commit `cdb5ec3` and is not
-pushed (ADR-0014). Phase 2, hierarchical visibility, is checkpointed locally with this record.
-Phases 3–5 are not started. M4 is not complete. Evidence is under "M4 Phase 1 results" and
-"M4 Phase 2 results".
+pushed (ADR-0014). Phase 2, hierarchical visibility, is commit `2c76f71` and is not pushed. Phase 3,
+name and tag lookup, is checkpointed locally with this record. Phases 4–5 are not started. M4 is
+not complete. Evidence is under "M4 Phase 1 results", "M4 Phase 2 results", and "M4 Phase 3 results".
 
 ## Completed work
 
@@ -699,7 +699,7 @@ Implemented locally. Not pushed. M4 is not complete.
 
 ## M4 Phase 2 results (2026-10-15)
 
-Checkpointed locally with this record. M4 is not complete. Phase 1 remains commit `cdb5ec3`.
+Checkpointed locally as `2c76f71`. M4 is not complete. Phase 1 remains commit `cdb5ec3`.
 
 **Behavior.** `extract_scene` reads `Visibility` and `Parent`. A sprite, mesh, tilemap, or light is omitted when that entity or any ancestor has `Visibility::Hidden`. An entity with no `Visibility` is locally visible. The components are not written, and no inherited visibility component is stored. Transforms, parent links, depth testing, and `RenderOrder` are unchanged. The walk records entity ids it has already seen and stops, so a cycle ends. A parent id with no further `Parent`, including a despawned id, ends the walk. Gameplay systems are not told to skip hidden entities.
 
@@ -710,6 +710,22 @@ Checkpointed locally with this record. M4 is not complete. Phase 1 remains commi
 **Repository check.** `scripts/check.sh` on 2026-10-15, macOS arm64, `rustc 1.99.0`, exit 0. All 4 steps passed. `cargo test --workspace` with `DIMORA_REQUIRE_GPU=1` reported **303 passed, 0 failed, 0 ignored**. `headless.rs` ran 19 tests. `spatial_scene` `configurations.rs` ran 16. Existing hierarchy tests still pass.
 
 **Screenshots.** Release, 1280×720, rendered from this working tree and from commit `6dbabb8` (`6dbabb88f10779301115d04720ac1f52000ed03a`), then compared with `cmp -s`. All four byte-identical: `basic_2_5d` 746071 bytes, `basic_2_5d --ortho` 462130, `spatial_scene --camera perspective` 136991, `spatial_scene --camera orthographic` 34046. KI-18 is closed by the extraction tests and this comparison.
+
+## M4 Phase 3 results (2026-10-15)
+
+Checkpointed locally with this record. Not pushed. M4 is not complete. Phase 1 is `cdb5ec3`. Phase 2 is `2c76f71`.
+
+**Behavior.** `Tags` is a component: a list of plain strings. `insert` rejects `""` and a tag already stored, and returns whether the list changed. A duplicate keeps its first position. `from_tags` skips empty strings and duplicates. Tags do not copy onto children, do not mark scene membership, and do not change `Transform`, `Visibility`, or extraction. `World::find_by_name` and `World::find_by_tag` scan live entities through a query and return every exact, case-sensitive match. Results are sorted by `Entity`'s `Ord` (index, then generation). That order is deterministic for an unchanged world. It is not spawn order and not a persistent id. A missing name or tag returns an empty list. `find_by_name("")` matches only a `Name` whose string is empty. `find_by_tag("")` matches nothing, because an empty tag is not stored. Neither scan follows `Parent`, and neither keeps an index.
+
+**Registry.** `Tags` is registered with the other built-ins: name `"Tags"`, field `values: Vec<String>`, `Persistence::Persist`, script flags false, and a formatter. `dump_entity` prints the stored tags in insertion order, each with `Debug` quotes. An empty list prints `(none)`. No serializer and no script reads the component.
+
+**Not in this change.** `SceneManager`, `SceneMember`, scene definitions, instantiation, unload, scene-aware lookup, asset-ownership changes, component serialization, prefabs, a visual editor, and any name or tag index. Caching, dirty visibility, and a second visibility component were not added.
+
+**Tests.** Five in `engine-world` `lookup`: one match, duplicate names, a missing name, an empty name, rename, despawn and id reuse, tag insert and remove, duplicate and empty tags, several tags on one entity, one tag on several entities, case, no inheritance, lookup across two hierarchies, registry metadata, and dump text. One extraction test, `names_and_tags_do_not_change_extraction`: adding and removing tags leaves the sprite extracted and the transform unchanged.
+
+**Repository check.** `scripts/check.sh` on 2026-10-15, macOS 27.0 arm64, `rustc 1.99.0`, exit 0. All 4 steps passed. `cargo test --workspace` with `DIMORA_REQUIRE_GPU=1` reported **309 passed, 0 failed, 0 ignored**. `headless.rs` ran 19 tests. `spatial_scene` `configurations.rs` ran 16. Clippy `--all-targets` compiled `basic_2_5d` and `spatial_scene`.
+
+**Screenshots.** Release, 1280×720, rendered from this working tree and compared with `cmp -s` to the four PNGs previously rendered from commit `6dbabb8` (`6dbabb88f10779301115d04720ac1f52000ed03a`) and recorded in the Phase 2 results. All four byte-identical: `basic_2_5d` 746071 bytes, `basic_2_5d --ortho` 462130, `spatial_scene --camera perspective` 136991, `spatial_scene --camera orthographic` 34046.
 
 ## Planned systems and their state
 
@@ -728,8 +744,8 @@ in the current scope.
 
 ## Not in scope now
 
-M4 phases 2–5, and everything after M4. In particular: no scene format, no scene manager, no new rendering features, no collision, no
-editor work, and no work on UI, scripting or any of the three character representations. M4 Phase 1 (registry and text dumps) is implemented locally and is not pushed. M4 is not complete. M3b is complete locally and is not pushed. These systems are deliberately
+M4 phases 4–5, and everything after M4. In particular: no scene format, no scene manager, no new rendering features, no collision, no
+editor work, and no work on UI, scripting or any of the three character representations. M4 Phase 1 is commit `cdb5ec3`. Phase 2 is commit `2c76f71`. Phase 3 (name and tag lookup) is checkpointed locally with this record. None of M4 is pushed. M4 is not complete. M3b is complete locally and is not pushed. These systems are deliberately
 not being started together: each has its own milestone, prerequisites and decisions. Decisions that data
 formats or public APIs will bake in are made before their first consumer (see
 [docs/DECISIONS.md](docs/DECISIONS.md#what-to-resolve-first)).

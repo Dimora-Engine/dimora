@@ -81,7 +81,8 @@ An asset that is exclusively owned may be released when that exclusive ownership
 ## Consequences and follow-up
 
 * Phase 1 is the registry, built-in registration, and the text dumps. It is commit `cdb5ec3`, local, not pushed.
-* Phase 2 is hierarchical visibility in `extract_scene`, as item 5 describes. It is checkpointed locally with this record. Sprites, meshes, tilemaps, and lights share one ancestor walk (`AncestorVisibility::hides`). Phase 3 is name and tag lookup. Phase 4 is instances, membership, and the code-defined spawn function, after the feasibility spike. Phase 5 is the `spatial_scene` switch.
+* Phase 2 is hierarchical visibility in `extract_scene`, as item 5 describes. It is commit `2c76f71`. Sprites, meshes, tilemaps, and lights share one ancestor walk (`AncestorVisibility::hides`).
+* Phase 3 is name and tag lookup on the same `World`. `find_by_name` and `find_by_tag` scan live entities and return every exact match in `Entity` order. `Tags` stores plain strings, rejects `""`, keeps the first copy of a duplicate, and does not follow `Parent`. It is `Persistence::Persist` in the registry. There is no name index and no tag index. Phase 3 is checkpointed locally with this record. Phase 4 is instances, membership, and the code-defined spawn function, after the feasibility spike. Phase 5 is the `spatial_scene` switch.
 * M19 still chooses the file encoding, under ADR-0011, after D-16. RON remains a candidate. It is not a dependency.
 * D-16 and D-41 stay open. D-41 may later read the flags this registry stores.
 

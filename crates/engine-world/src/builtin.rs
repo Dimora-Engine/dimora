@@ -4,11 +4,13 @@
 
 use crate::hierarchy::{Children, GlobalTransform, Parent};
 use crate::interpolate::Interpolate;
+use crate::lookup::Tags;
 use crate::registry::{ComponentDesc, ComponentRegistry, FieldDesc, Persistence};
 use crate::world::{Name, Visibility};
 use crate::Transform;
 
 const NAME_FIELDS: &[FieldDesc] = &[FieldDesc::new("value", "String")];
+const TAG_FIELDS: &[FieldDesc] = &[FieldDesc::new("values", "Vec<String>")];
 const TRANSFORM_FIELDS: &[FieldDesc] =
     &[FieldDesc::new("position", "Vec3"), FieldDesc::new("rotation", "Quat"), FieldDesc::new("scale", "Vec3")];
 const VISIBILITY_FIELDS: &[FieldDesc] = &[FieldDesc::new("state", "Visibility")];
@@ -17,7 +19,7 @@ const CHILDREN_FIELDS: &[FieldDesc] = &[FieldDesc::new("entities", "Vec<Entity>"
 const GLOBAL_FIELDS: &[FieldDesc] = &[FieldDesc::new("matrix", "Mat4")];
 const INTERPOLATE_FIELDS: &[FieldDesc] = &[FieldDesc::new("previous", "Option<Transform>")];
 
-/// Registers `Name`, `Transform`, `Visibility`, and the hierarchy and interpolation components.
+/// Registers `Name`, `Tags`, `Transform`, `Visibility`, and the hierarchy and interpolation components.
 ///
 /// `Parent`, `Children`, `GlobalTransform`, and `Interpolate` are [`Persistence::Runtime`].
 /// Their values hold derived data or runtime entity ids.
@@ -26,6 +28,7 @@ const INTERPOLATE_FIELDS: &[FieldDesc] = &[FieldDesc::new("previous", "Option<Tr
 /// A conflicting name or field list is returned.
 pub fn register_world_components(registry: &mut ComponentRegistry) -> Result<(), crate::registry::RegistryError> {
     registry.register_idempotent(ComponentDesc::new("Name", NAME_FIELDS, Persistence::Persist, Some(name_values)))?;
+    registry.register_idempotent(ComponentDesc::new("Tags", TAG_FIELDS, Persistence::Persist, Some(tags_values)))?;
     registry.register_idempotent(ComponentDesc::new(
         "Transform",
         TRANSFORM_FIELDS,
@@ -67,6 +70,15 @@ pub fn register_world_components(registry: &mut ComponentRegistry) -> Result<(),
 
 fn name_values(name: &Name) -> Vec<String> {
     vec![escape_debug(&name.0)]
+}
+
+fn tags_values(tags: &Tags) -> Vec<String> {
+    let listed: Vec<String> = tags.iter().map(|tag| format!("{tag:?}")).collect();
+    if listed.is_empty() {
+        vec!["(none)".to_string()]
+    } else {
+        vec![listed.join(", ")]
+    }
 }
 
 fn transform_values(transform: &Transform) -> Vec<String> {

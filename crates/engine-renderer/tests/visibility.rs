@@ -5,7 +5,7 @@ use engine_assets::{AssetManager, MeshData, SpriteAsset, Texture};
 use engine_core::Color;
 use engine_math::{Transform, Vec2, Vec3};
 use engine_renderer::*;
-use engine_world::{propagate_transforms, GlobalTransform, Parent, Visibility, World};
+use engine_world::{propagate_transforms, GlobalTransform, Name, Parent, Tags, Visibility, World};
 
 const VIEWPORT: Vec2 = Vec2::new(800.0, 600.0);
 
@@ -174,4 +174,24 @@ fn camera_activation_ignores_visibility() {
     assert_eq!(extract(&mut world, &assets).stats.sprites_visible, 1, "the child of that camera is hidden");
     assert!(world.component::<Visibility>(child).is_err());
     assert!(world.component::<Camera>(camera).unwrap().active);
+}
+
+#[test]
+fn names_and_tags_do_not_change_extraction() {
+    let assets = assets();
+    let mut world = scene_world();
+    let entity = world.spawn((
+        Transform::from_xyz(0.0, 0.0, 20.0),
+        Sprite::new("tex_a_sprite"),
+        Name::new("prop"),
+        Tags::from_tags(["interactable", ""]),
+    ));
+    let before = world.component::<Transform>(entity).unwrap().position;
+    assert_eq!(extract(&mut world, &assets).stats.sprites_visible, 1);
+
+    assert!(world.component_mut::<Tags>(entity).unwrap().insert("door"));
+    assert!(world.component_mut::<Tags>(entity).unwrap().remove("interactable"));
+    assert_eq!(world.component::<Transform>(entity).unwrap().position, before);
+    assert!(world.component::<Visibility>(entity).is_err());
+    assert_eq!(extract(&mut world, &assets).stats.sprites_visible, 1);
 }
