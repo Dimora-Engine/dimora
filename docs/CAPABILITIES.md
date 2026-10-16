@@ -126,14 +126,14 @@ Missing from the original category list and now tracked: **save games** (34), **
   is unchanged and no inherited visibility is stored. `World::find_by_name` and `World::find_by_tag`
   scan live entities. `Tags` holds exact strings, rejects `""`, and does not follow `Parent`.
   M4-4A adds `SceneInstanceId`, `SceneMember` (`Persistence::Runtime`), and an internal scene map.
-  `load_scene` (M4-4B) spawns through `SceneBuilder` and publishes the instance only on success.
-  Lookup requires a live entity whose `SceneMember` matches the instance and local id. There is no
-  scene unload or replace. **Weak point:** `World.entities` is a public
+  `load_scene` spawns through `SceneBuilder` and publishes the instance only on success.
+  `unload_scene` removes that instance's validated members and lifts a non-member child to a TRS
+  world transform. Lookup requires a live entity whose `SceneMember` matches. **Weak point:** `World.entities` is a public
   `hecs::World`, and `get`/`query` return hecs types, so storage is *not* swappable despite the earlier
   claim (R-7).
 * **Required.** Safe hierarchy, deterministic iteration, entity references that survive serialization
   and scripting (generation-checked).
-* **Planned.** Scene unload and replace (M4-4C). Dirty transforms only if profiling asks (D-02).
+* **Planned.** Scene switching in `spatial_scene` (M4 phase 5). Dirty transforms only if profiling asks (D-02).
 * **Depends on.** Math. **Integration.** Everything is an entity; extraction, animation, UI anchors,
   colliders, scripts and the editor all read it.
 * **Performance.** `propagate_transforms` is O(entities) every frame; extraction walks all renderables.
@@ -560,8 +560,8 @@ Missing from the original category list and now tracked: **save games** (34), **
 ## Scenes, tools, production
 
 ### 32. Scenes and lifecycle
-* **Now.** `load_scene` instantiates a code-defined scene into the existing world and rolls a failed build back (M4-4B, local, not committed). There is no unload or replace. `Visibility::Hidden` on an entity or any ancestor omits that entity's sprite, mesh, tilemap, or light during extraction (M4 Phase 2, `2c76f71`). Cameras still activate from `Camera.active`. `find_by_name` and `find_by_tag` scan live entities (M4 Phase 3, `f9a4aab`). The component registry and text dumps exist (M4 Phase 1, `cdb5ec3`). Scene membership is `302622b`.
-* **Planned.** M4-4C: unload and replace, preserving non-members and lifting a detached child by walking that chain. Deferred scene commands wait on the `SceneOpId` recommendation in ADR-0014. **Depends on.** M2, M3, ADR-0014. Asset files stay in M19. D-16 stays open.
+* **Now.** `load_scene`, `unload_scene`, and `replace_scene` run synchronously in the existing world (M4-4C, local, not committed; load is `128c70e`). Unload does not remove assets. `Visibility::Hidden` on an entity or any ancestor omits that entity's sprite, mesh, tilemap, or light during extraction (M4 Phase 2, `2c76f71`). Cameras still activate from `Camera.active`. `find_by_name` and `find_by_tag` scan live entities (M4 Phase 3, `f9a4aab`). The component registry and text dumps exist (M4 Phase 1, `cdb5ec3`). Scene membership is `302622b`. `spatial_scene` does not switch scenes yet.
+* **Planned.** Phase 5 switches scenes in `spatial_scene`. Deferred scene commands wait on the `SceneOpId` recommendation in ADR-0014. **Depends on.** M2, M3, ADR-0014. Asset files stay in M19. D-16 stays open.
 * **Tests/examples.** Phase 1: registry and dump tests. Still to come: load/unload returns entity count to baseline, with GPU counts returned by an explicit `AssetManager::remove` in the test; `spatial_scene` switches scenes.
 * **Not initially.** Async/streamed scenes, multiple worlds, nested prefab variants, scene files.
 

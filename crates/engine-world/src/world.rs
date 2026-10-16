@@ -100,27 +100,90 @@ impl World {
             return Err(NoSuchEntity);
         }
         let Ok(children) = self.entities.remove_one::<Children>(parent) else { return Ok(()) };
-        let parent_matrix = self.world_matrix(parent);
         for child in children.0 {
+            let matrix = self.world_matrix(child);
             let _ = self.entities.remove_one::<Parent>(child);
-            let local = self.entities.get::<&Transform>(child).ok().map(|t| t.to_matrix());
-            match local {
-                Some(local) => {
-                    let rewritten = Transform::from_matrix(&(parent_matrix * local));
-                    if let Ok(mut t) = self.entities.get::<&mut Transform>(child) {
-                        *t = rewritten;
-                    }
-                    self.snap_interpolation_history(child, rewritten);
-                }
-                None if self.entities.get::<&Children>(child).is_ok() => {
-                    let rewritten = Transform::from_matrix(&parent_matrix);
-                    let _ = self.entities.insert_one(child, rewritten);
-                    self.snap_interpolation_history(child, rewritten);
-                }
-                None => {}
-            }
+            self.write_lifted_transform(child, matrix);
         }
         Ok(())
+    }
+
+    /// Unlinks `child` from its parent and stores the world transform in its local [`Transform`].
+    ///
+    /// The matrix comes from the parent chain, the same way [`World::detach_children`] computes it.
+    /// [`Transform::from_matrix`] then stores a TRS triple. Shear is dropped. A non-uniform parent
+    /// scale combined with a rotated child is therefore approximate. A grouping node with children
+    /// and no [`Transform`] receives one. A node with neither is only unlinked.
+    ///
+    /// An empty [`Children`] list left on the old parent is removed. Interpolation history on
+    /// `child` is snapped to the rewritten local. Descendants are not rewritten. No
+    /// [`GlobalTransform`](crate::GlobalTransform) is inserted or changed.
+    pub(crate) fn lift_to_world(&mut self, child: Entity) -> Result<(), NoSuchEntity> {
+        if !self.contains(child) {
+            return Err(NoSuchEntity);
+        }
+        let matrix = self.world_matrix(child);
+        let parent = self.entities.get::<&Parent>(child).ok().map(|parent| parent.0);
+        self.detach(child);
+        self.write_lifted_transform(child, matrix);
+        if let Some(parent) = parent {
+            self.drop_empty_children(parent);
+        }
+        Ok(())
+    }
+
+    /// The TRS [`World::lift_to_world`] would store, if it would store one.
+    pub(crate) fn preview_lift(&self, entity: Entity) -> Option<Transform> {
+        let keeps_transform = self.entities.get::<&Transform>(entity).is_ok();
+        let grouping = self.entities.get::<&Children>(entity).is_ok();
+        if !keeps_transform && !grouping {
+            return None;
+        }
+        Some(Transform::from_matrix(&self.world_matrix(entity)))
+    }
+
+    /// Removes `entity` alone. Descendants stay, and their [`Parent`] values are left for the caller.
+    ///
+    /// [`World::despawn`] still removes a whole subtree. Scene unloading uses this so a non-member
+    /// child is not destroyed with a member parent.
+    pub(crate) fn despawn_one(&mut self, entity: Entity) {
+        if !self.contains(entity) {
+            return;
+        }
+        let parent = self.entities.get::<&Parent>(entity).ok().map(|parent| parent.0);
+        self.detach(entity);
+        let _ = self.entities.remove_one::<Children>(entity);
+        let _ = self.entities.despawn(entity);
+        if let Some(parent) = parent {
+            self.drop_empty_children(parent);
+        }
+    }
+
+    fn write_lifted_transform(&mut self, child: Entity, matrix: Mat4) {
+        let has_transform = self.entities.get::<&Transform>(child).is_ok();
+        let has_children = self.entities.get::<&Children>(child).is_ok();
+        if !has_transform && !has_children {
+            return;
+        }
+        let rewritten = Transform::from_matrix(&matrix);
+        if has_transform {
+            if let Ok(mut transform) = self.entities.get::<&mut Transform>(child) {
+                *transform = rewritten;
+            }
+        } else {
+            let _ = self.entities.insert_one(child, rewritten);
+        }
+        self.snap_interpolation_history(child, rewritten);
+    }
+
+    fn drop_empty_children(&mut self, parent: Entity) {
+        if !self.contains(parent) {
+            return;
+        }
+        let empty = self.entities.get::<&Children>(parent).ok().is_some_and(|children| children.0.is_empty());
+        if empty {
+            let _ = self.entities.remove_one::<Children>(parent);
+        }
     }
 
     /// If `entity` opted into interpolation, store `current` so extraction does not blend a local

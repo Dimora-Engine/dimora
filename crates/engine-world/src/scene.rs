@@ -5,8 +5,9 @@
 //! `Err`. A panic during that work is not rolled back: the manager stays out of the world, and
 //! entities created by the interrupted build stay. That is not a transaction.
 //!
-//! [`World::load_scene`] instantiates a code-defined scene through [`SceneBuilder`]. It does not
-//! unload, replace, or enqueue a deferred scene command.
+//! [`World::load_scene`] instantiates a code-defined scene through [`SceneBuilder`].
+//! [`World::unload_scene`] and [`World::replace_scene`] remove an instance synchronously.
+//! Deferred scene commands are a later checkpoint.
 
 use std::collections::{BTreeMap, HashSet};
 use std::fmt;
@@ -74,6 +75,12 @@ pub enum SceneError {
     ParentOutsideBuild { parent: Entity },
     /// A created entity's `Parent` and `Children` links do not agree, or they leave the build.
     InvalidHierarchy { entity: Entity },
+    /// `entity` carries [`SceneMember`] for an instance, and the instance map does not name that entity.
+    ///
+    /// Engine-maintained loads do not produce this. Unload and replace refuse it and change nothing.
+    InconsistentMembership { entity: Entity },
+    /// Lifting `entity` out of a scene would store a non-finite transform. Nothing was removed.
+    TransformUnrepresentable { entity: Entity },
 }
 
 impl fmt::Display for SceneError {
@@ -97,6 +104,12 @@ impl fmt::Display for SceneError {
             }
             SceneError::InvalidHierarchy { entity } => {
                 write!(f, "scene hierarchy is inconsistent at {entity:?}")
+            }
+            SceneError::InconsistentMembership { entity } => {
+                write!(f, "scene membership for {entity:?} does not match the instance map")
+            }
+            SceneError::TransformUnrepresentable { entity } => {
+                write!(f, "lifting {entity:?} would store a non-finite transform")
             }
         }
     }
@@ -304,6 +317,56 @@ impl World {
         result
     }
 
+    /// Removes `instance` and the entities that still belong to it.
+    ///
+    /// A non-member whose parent belongs to `instance` is detached first. Its local [`crate::Transform`]
+    /// becomes the world transform from [`crate::Transform::from_matrix`], which drops shear. Other scene
+    /// instances, runtime entities, and assets stay. An unknown instance returns
+    /// [`SceneError::NoSuchInstance`] and changes nothing. An empty instance succeeds.
+    ///
+    /// Stale map rows (a dead entity, or a live entity whose [`SceneMember`] does not match) are
+    /// dropped with the instance and are not despawned. A live entity that claims this instance
+    /// while the map names someone else is [`SceneError::InconsistentMembership`], and nothing is
+    /// removed. A broken parent or child link, a parent cycle, or a non-finite lifted transform
+    /// is the same: the world is unchanged.
+    ///
+    /// [`World::despawn`] is not used, so a non-member descendant is not destroyed with a member.
+    /// A panic after this method has started changing entities is not undone.
+    pub fn unload_scene(&mut self, instance: SceneInstanceId) -> Result<(), SceneError> {
+        let Some(mut manager) = self.remove_resource::<SceneManager>() else {
+            return Err(SceneError::SceneManagerUnavailable);
+        };
+        let result = unload_with_manager(self, &mut manager, instance);
+        self.insert_resource(manager);
+        result
+    }
+
+    /// Builds a new instance, then unloads `instance` if that build succeeds.
+    ///
+    /// The original instance is checked before the build. A build error rolls the new entities
+    /// back and leaves `instance` published. The new id is still consumed. On success the old id
+    /// no longer resolves and the returned id is the replacement. Assets are not removed.
+    ///
+    /// [`SceneBuilder`] cannot change an entity it did not create. A [`SceneMember`], an outside
+    /// parent, or a child link that leaves the build fails validation and rolls the new entities
+    /// back before the new instance is published, so the preflighted instance is unchanged when
+    /// unload runs. That unload therefore completes for engine-maintained state. The guard that
+    /// unloads a published replacement if the original unload returns an error is not reached
+    /// through this method. A panic is not a transaction, and this method does not undo a lift
+    /// that already happened.
+    pub fn replace_scene(
+        &mut self,
+        instance: SceneInstanceId,
+        build: impl FnOnce(&mut SceneBuilder<'_>) -> Result<(), SceneError>,
+    ) -> Result<SceneInstanceId, SceneError> {
+        let Some(mut manager) = self.remove_resource::<SceneManager>() else {
+            return Err(SceneError::SceneManagerUnavailable);
+        };
+        let result = replace_with_manager(self, &mut manager, instance, build);
+        self.insert_resource(manager);
+        result
+    }
+
     fn member_matches(&self, instance: SceneInstanceId, local: u32, entity: Entity) -> bool {
         self.contains(entity) && component_matches(self, instance, local, entity)
     }
@@ -358,6 +421,163 @@ fn hierarchy_error(parent: Entity, child: Entity, error: HierarchyError) -> Scen
         HierarchyError::NoSuchEntity => SceneError::NoSuchEntity { entity: parent },
         HierarchyError::Cycle => SceneError::InvalidHierarchy { entity: child },
     }
+}
+
+fn replace_with_manager(
+    world: &mut World,
+    manager: &mut SceneManager,
+    instance: SceneInstanceId,
+    build: impl FnOnce(&mut SceneBuilder<'_>) -> Result<(), SceneError>,
+) -> Result<SceneInstanceId, SceneError> {
+    if !manager.instances.contains_key(&instance) {
+        return Err(SceneError::NoSuchInstance { instance });
+    }
+    preflight_unload(world, manager, instance)?;
+    let new_id = load_with_manager(world, manager, build)?;
+    // Unreachable after the preflight above and a builder that only creates new entities:
+    // validate_build rejects membership and links that would make this unload fail, and it
+    // does so before publish. Kept so a later change cannot leave the replacement published
+    // beside the original. A partial lift is not rolled back.
+    if let Err(error) = unload_with_manager(world, manager, instance) {
+        let _ = unload_with_manager(world, manager, new_id);
+        return Err(error);
+    }
+    Ok(new_id)
+}
+
+fn unload_with_manager(
+    world: &mut World,
+    manager: &mut SceneManager,
+    instance: SceneInstanceId,
+) -> Result<(), SceneError> {
+    let members = preflight_unload(world, manager, instance)?;
+    let owned: HashSet<Entity> = members.iter().copied().collect();
+    let mut lift = Vec::new();
+    for &member in &members {
+        let children = world.component::<Children>(member).ok().map(|children| children.0.clone()).unwrap_or_default();
+        for child in children {
+            if !owned.contains(&child) {
+                lift.push(child);
+            }
+        }
+    }
+    for child in lift {
+        world.lift_to_world(child).map_err(|_| SceneError::NoSuchEntity { entity: child })?;
+    }
+    for member in members {
+        world.despawn_one(member);
+    }
+    manager.instances.remove(&instance);
+    Ok(())
+}
+
+fn preflight_unload(
+    world: &World,
+    manager: &SceneManager,
+    instance: SceneInstanceId,
+) -> Result<Vec<Entity>, SceneError> {
+    let Some(record) = manager.instances.get(&instance) else {
+        return Err(SceneError::NoSuchInstance { instance });
+    };
+    let mut members = Vec::new();
+    let mut owned = HashSet::new();
+    for (&local, &entity) in &record.locals {
+        if entity_matches(&world.entities, instance, local, entity) {
+            members.push(entity);
+            owned.insert(entity);
+        }
+    }
+    let claimants: Vec<(Entity, u32)> = world
+        .query::<&SceneMember>()
+        .iter()
+        .filter(|(_, member)| member.instance == instance)
+        .map(|(entity, member)| (entity, member.local))
+        .collect();
+    for (entity, local) in claimants {
+        if record.locals.get(&local).copied() != Some(entity) || !owned.contains(&entity) {
+            return Err(SceneError::InconsistentMembership { entity });
+        }
+    }
+    for &entity in &members {
+        check_links(world, entity)?;
+        check_chain(world, entity)?;
+    }
+    let parent_links: Vec<(Entity, Entity)> =
+        world.query::<&Parent>().iter().map(|(entity, parent)| (entity, parent.0)).collect();
+    for (entity, parent) in parent_links {
+        if !owned.contains(&parent) {
+            continue;
+        }
+        let listed = world.component::<Children>(parent).ok().is_some_and(|children| children.0.contains(&entity));
+        if !listed {
+            return Err(SceneError::InvalidHierarchy { entity });
+        }
+    }
+    for &member in &members {
+        let children = world.component::<Children>(member).ok().map(|children| children.0.clone()).unwrap_or_default();
+        for child in children {
+            if owned.contains(&child) {
+                continue;
+            }
+            check_links(world, child)?;
+            check_chain(world, child)?;
+            if let Some(transform) = world.preview_lift(child) {
+                if !transform_is_finite(&transform) {
+                    return Err(SceneError::TransformUnrepresentable { entity: child });
+                }
+            }
+        }
+    }
+    Ok(members)
+}
+
+fn check_links(world: &World, entity: Entity) -> Result<(), SceneError> {
+    if !world.contains(entity) {
+        return Err(SceneError::InvalidHierarchy { entity });
+    }
+    if let Some(parent) = world.component::<Parent>(entity).ok().map(|parent| parent.0) {
+        if !world.contains(parent) {
+            return Err(SceneError::InvalidHierarchy { entity });
+        }
+        let listed = world.component::<Children>(parent).ok().is_some_and(|children| children.0.contains(&entity));
+        if !listed {
+            return Err(SceneError::InvalidHierarchy { entity });
+        }
+    }
+    let child_ids = world.component::<Children>(entity).ok().map(|children| children.0.clone());
+    if let Some(child_ids) = child_ids {
+        for child in child_ids {
+            if !world.contains(child) {
+                return Err(SceneError::InvalidHierarchy { entity });
+            }
+            let points_here = world.component::<Parent>(child).ok().is_some_and(|parent| parent.0 == entity);
+            if !points_here {
+                return Err(SceneError::InvalidHierarchy { entity });
+            }
+        }
+    }
+    Ok(())
+}
+
+fn check_chain(world: &World, entity: Entity) -> Result<(), SceneError> {
+    let mut seen = HashSet::new();
+    let mut current = Some(entity);
+    while let Some(entity_id) = current {
+        if !seen.insert(entity_id) || !world.contains(entity_id) {
+            return Err(SceneError::InvalidHierarchy { entity });
+        }
+        current = world.component::<Parent>(entity_id).ok().map(|parent| parent.0);
+    }
+    Ok(())
+}
+
+fn transform_is_finite(transform: &crate::Transform) -> bool {
+    let position = transform.position;
+    let scale = transform.scale;
+    let rotation = transform.rotation;
+    [position.x, position.y, position.z, scale.x, scale.y, scale.z, rotation.x, rotation.y, rotation.z, rotation.w]
+        .iter()
+        .all(|component| component.is_finite())
 }
 
 fn load_with_manager(
@@ -484,9 +704,10 @@ fn entity_matches(entities: &hecs::World, instance: SceneInstanceId, local: u32,
 mod tests {
     use super::*;
     use crate::builtin::register_world_components;
-    use crate::hierarchy::{Children, Parent};
+    use crate::hierarchy::{Children, GlobalTransform, Parent};
     use crate::registry::{ComponentRegistry, Persistence};
-    use crate::{Name, Transform};
+    use crate::{Interpolate, Name, Transform};
+    use engine_math::{Mat4, Quat, Vec3};
 
     fn member_line(instance: u64, local: u32) -> String {
         format!(
@@ -896,5 +1117,340 @@ mod tests {
         assert!(!world.has_resource::<SceneManager>());
         world.insert_resource(manager);
         assert_eq!(world.load_scene(|_| Ok(())).unwrap().raw(), 0);
+    }
+
+    fn one_entity(world: &mut World, name: &str) -> (SceneInstanceId, Entity) {
+        let instance = world
+            .load_scene(|builder| {
+                builder.spawn((Name::new(name), Transform::IDENTITY));
+                Ok(())
+            })
+            .unwrap();
+        let entity = world.scene_entity(instance, 0).unwrap().unwrap();
+        (instance, entity)
+    }
+
+    #[test]
+    fn unloading_removes_only_that_instance() {
+        let mut world = World::new();
+        let empty = world.load_scene(|_| Ok(())).unwrap();
+        world.unload_scene(empty).unwrap();
+        assert!(world.scene_instances().unwrap().is_empty());
+        assert_eq!(world.unload_scene(empty).unwrap_err(), SceneError::NoSuchInstance { instance: empty });
+        assert_eq!(world.entities.len(), 0);
+
+        let (first, first_entity) = one_entity(&mut world, "first");
+        let (second, second_entity) = one_entity(&mut world, "second");
+        let runtime = world.spawn((Name::new("runtime"),));
+        world.unload_scene(first).unwrap();
+        assert!(!world.contains(first_entity));
+        assert!(world.scene_entity(first, 0).unwrap().is_none());
+        assert!(world.scene_instances().unwrap() == vec![second]);
+        assert_eq!(world.scene_entity(second, 0).unwrap(), Some(second_entity));
+        assert!(world.contains(runtime));
+        assert_eq!(world.unload_scene(first).unwrap_err(), SceneError::NoSuchInstance { instance: first });
+        assert!(world.contains(second_entity));
+        assert_hierarchy_closed(&world);
+    }
+
+    #[test]
+    fn unloading_a_hierarchy_keeps_other_owners_and_preserves_world_transforms() {
+        let mut world = World::new();
+        let parent_local =
+            Transform::from_xyz(10.0, 0.0, 0.0).with_rotation(Quat::from_rotation_y(0.4)).with_scale(Vec3::splat(2.0));
+        let child_local = Transform::from_xyz(1.0, 2.0, 3.0).with_rotation(Quat::from_rotation_z(0.3));
+        let instance = world
+            .load_scene(|builder| {
+                let root = builder.spawn((Name::new("root"), parent_local));
+                builder.spawn_child(root, (Name::new("sibling-a"), Transform::IDENTITY))?;
+                builder.spawn_child(root, (Name::new("sibling-b"), Transform::IDENTITY))?;
+                let nested = builder.spawn_child(root, (Name::new("nested"), Transform::IDENTITY))?;
+                builder.spawn_child(nested, (Name::new("leaf"), Transform::IDENTITY))?;
+                Ok(())
+            })
+            .unwrap();
+        let root = world.scene_entity(instance, 0).unwrap().unwrap();
+        let runtime = world.spawn((child_local, Interpolate { previous: Some(Transform::from_xyz(4.0, 0.0, 0.0)) }));
+        world.set_parent(runtime, root).unwrap();
+        let grandchild_local = Transform::from_xyz(0.0, 1.0, 0.0);
+        let grandchild_previous = Transform::from_xyz(0.0, 3.0, 0.0);
+        let grandchild = world.spawn((grandchild_local, Interpolate { previous: Some(grandchild_previous) }));
+        world.set_parent(grandchild, runtime).unwrap();
+        let bystander = world.spawn((
+            Transform::from_xyz(5.0, 0.0, 0.0),
+            GlobalTransform { matrix: Mat4::from_translation(Vec3::new(5.0, 0.0, 0.0)) },
+        ));
+        let plain = world.spawn((Name::new("plain"),));
+        let expected = parent_local.mul_transform(&child_local);
+
+        world.unload_scene(instance).unwrap();
+        assert_eq!(world.entities.len(), 4);
+        assert!(world.component::<Parent>(runtime).is_err());
+        assert!(world.component::<Transform>(runtime).unwrap().to_matrix().approx_eq(&expected.to_matrix(), 1e-4));
+        assert_eq!(
+            world.component::<Interpolate>(runtime).unwrap().previous,
+            Some(*world.component::<Transform>(runtime).unwrap())
+        );
+        assert_eq!(world.component::<Parent>(grandchild).unwrap().0, runtime);
+        assert_eq!(*world.component::<Transform>(grandchild).unwrap(), grandchild_local);
+        assert_eq!(world.component::<Interpolate>(grandchild).unwrap().previous, Some(grandchild_previous));
+        assert_eq!(
+            world.component::<GlobalTransform>(bystander).unwrap().matrix,
+            Mat4::from_translation(Vec3::new(5.0, 0.0, 0.0))
+        );
+        assert!(world.component::<GlobalTransform>(plain).is_err());
+        assert!(world.component::<GlobalTransform>(runtime).is_err());
+        assert_hierarchy_closed(&world);
+        assert!(world.scene_instances().unwrap().is_empty());
+    }
+
+    #[test]
+    fn unloading_stops_at_every_ownership_boundary() {
+        let mut world = World::new();
+        let (scene_a, member_a) = one_entity(&mut world, "a");
+        let (scene_b, member_b) = one_entity(&mut world, "b");
+        let runtime = world.spawn((Name::new("runtime"), Transform::from_xyz(2.0, 0.0, 0.0)));
+        let deep_runtime = world.spawn((Name::new("deep"), Transform::IDENTITY));
+        world.set_parent(runtime, member_a).unwrap();
+        world.set_parent(member_b, runtime).unwrap();
+        world.set_parent(deep_runtime, member_b).unwrap();
+        let kept_local = *world.component::<Transform>(deep_runtime).unwrap();
+
+        world.unload_scene(scene_a).unwrap();
+        assert!(!world.contains(member_a));
+        assert!(world.contains(runtime));
+        assert!(world.component::<Parent>(runtime).is_err());
+        assert_eq!(world.component::<Parent>(member_b).unwrap().0, runtime);
+        assert_eq!(world.scene_entity(scene_b, 0).unwrap(), Some(member_b));
+        assert_eq!(world.component::<Parent>(deep_runtime).unwrap().0, member_b);
+        assert_eq!(*world.component::<Transform>(deep_runtime).unwrap(), kept_local);
+
+        let world_before = world.preview_lift(deep_runtime).unwrap();
+        world.unload_scene(scene_b).unwrap();
+        assert!(!world.contains(member_b));
+        assert!(world.contains(runtime));
+        assert!(world.component::<Children>(runtime).is_err());
+        assert!(world.component::<Parent>(deep_runtime).is_err());
+        assert!(world
+            .component::<Transform>(deep_runtime)
+            .unwrap()
+            .to_matrix()
+            .approx_eq(&world_before.to_matrix(), 1e-4));
+        assert!(world.scene_instances().unwrap().is_empty());
+        assert_hierarchy_closed(&world);
+    }
+
+    #[test]
+    fn a_member_under_a_member_with_a_runtime_between_them_is_removed() {
+        let mut world = World::new();
+        let instance = world
+            .load_scene(|builder| {
+                builder.spawn((Name::new("outer"), Transform::from_xyz(4.0, 0.0, 0.0)));
+                builder.spawn((Name::new("inner"), Transform::from_xyz(1.0, 0.0, 0.0)));
+                Ok(())
+            })
+            .unwrap();
+        let outer = world.scene_entity(instance, 0).unwrap().unwrap();
+        let inner = world.scene_entity(instance, 1).unwrap().unwrap();
+        let runtime = world.spawn((Name::new("between"), Transform::from_xyz(0.0, 2.0, 0.0)));
+        world.set_parent(runtime, outer).unwrap();
+        world.set_parent(inner, runtime).unwrap();
+        world.unload_scene(instance).unwrap();
+        assert!(!world.contains(outer) && !world.contains(inner));
+        assert!(world.contains(runtime));
+        assert!(world.component::<Parent>(runtime).is_err());
+        assert!(world.component::<Children>(runtime).is_err());
+        assert_hierarchy_closed(&world);
+    }
+
+    #[test]
+    fn a_nonuniform_rotated_lift_stores_the_trs_approximation() {
+        let mut world = World::new();
+        let parent_local = Transform::from_scale(Vec3::new(2.0, 0.5, 1.0));
+        let child_local = Transform::IDENTITY.with_rotation(Quat::from_rotation_z(std::f32::consts::FRAC_PI_4));
+        let instance = world
+            .load_scene(|builder| {
+                builder.spawn((Name::new("scaled"), parent_local));
+                Ok(())
+            })
+            .unwrap();
+        let parent = world.scene_entity(instance, 0).unwrap().unwrap();
+        let child = world.spawn((child_local,));
+        world.set_parent(child, parent).unwrap();
+        let exact = parent_local.to_matrix() * child_local.to_matrix();
+        let stored = Transform::from_matrix(&exact);
+        assert!(!stored.to_matrix().approx_eq(&exact, 1e-4), "this pose shears, so TRS cannot store it exactly");
+        world.unload_scene(instance).unwrap();
+        assert!(world.component::<Transform>(child).unwrap().to_matrix().approx_eq(&stored.to_matrix(), 1e-4));
+    }
+
+    #[test]
+    fn stale_and_inconsistent_membership_follow_the_preflight_rules() {
+        let mut world = World::new();
+        let (instance, entity) = one_entity(&mut world, "member");
+        world.remove::<SceneMember>(entity).unwrap();
+        world.unload_scene(instance).unwrap();
+        assert!(world.contains(entity));
+        assert!(world.scene_instances().unwrap().is_empty());
+
+        let (instance, entity) = one_entity(&mut world, "despawned");
+        world.despawn(entity).unwrap();
+        world.unload_scene(instance).unwrap();
+        assert!(world.scene_entity(instance, 0).unwrap().is_none());
+
+        let (instance, entity) = one_entity(&mut world, "forged");
+        let intruder = world.spawn((Name::new("intruder"),));
+        world.insert(intruder, (SceneMember { instance, local: 9 },)).unwrap();
+        assert_eq!(world.unload_scene(instance).unwrap_err(), SceneError::InconsistentMembership { entity: intruder });
+        assert!(world.contains(entity) && world.contains(intruder));
+        assert_eq!(world.scene_instances().unwrap(), vec![instance]);
+
+        let mut world = World::new();
+        let (instance, entity) = one_entity(&mut world, "linked");
+        let child = world.spawn((Name::new("child"),));
+        world.set_parent(child, entity).unwrap();
+        world.entities.get::<&mut Children>(entity).unwrap().0.clear();
+        assert_eq!(world.unload_scene(instance).unwrap_err(), SceneError::InvalidHierarchy { entity: child });
+        assert!(world.contains(entity) && world.contains(child));
+        assert_eq!(world.scene_entity(instance, 0).unwrap(), Some(entity));
+    }
+
+    #[test]
+    fn a_non_finite_lift_refuses_the_unload_and_a_zero_axis_is_stored() {
+        let mut world = World::new();
+        let instance = world
+            .load_scene(|builder| {
+                builder.spawn((Name::new("parent"), Transform::IDENTITY));
+                Ok(())
+            })
+            .unwrap();
+        let parent = world.scene_entity(instance, 0).unwrap().unwrap();
+        let child = world.spawn((Transform { position: Vec3::new(f32::NAN, 0.0, 0.0), ..Transform::IDENTITY },));
+        world.set_parent(child, parent).unwrap();
+        assert_eq!(world.unload_scene(instance).unwrap_err(), SceneError::TransformUnrepresentable { entity: child });
+        assert!(world.contains(parent) && world.contains(child));
+        assert_eq!(world.scene_instances().unwrap(), vec![instance]);
+
+        let mut world = World::new();
+        let instance = world
+            .load_scene(|builder| {
+                builder.spawn((Name::new("flat"), Transform::from_scale(Vec3::new(0.0, 1.0, 1.0))));
+                Ok(())
+            })
+            .unwrap();
+        let parent = world.scene_entity(instance, 0).unwrap().unwrap();
+        let child = world.spawn((Transform::IDENTITY,));
+        world.set_parent(child, parent).unwrap();
+        world.unload_scene(instance).unwrap();
+        assert!(!world.contains(parent));
+        assert_eq!(world.component::<Transform>(child).unwrap().scale, Vec3::new(0.0, 1.0, 1.0));
+    }
+
+    #[test]
+    fn replacement_keeps_the_original_until_the_new_build_succeeds() {
+        let mut world = World::new();
+        let (original, entity) = one_entity(&mut world, "original");
+        let (other, other_entity) = one_entity(&mut world, "other");
+        let runtime = world.spawn((Name::new("keep"), Transform::IDENTITY));
+
+        let before_spawn = world.replace_scene(original, |_| Err(SceneError::BuildRejected)).unwrap_err();
+        assert_eq!(before_spawn, SceneError::BuildRejected);
+        assert_eq!(world.scene_entity(original, 0).unwrap(), Some(entity));
+        assert!(world.scene_instances().unwrap().iter().all(|id| *id != SceneInstanceId(2)));
+
+        let after_spawns = world
+            .replace_scene(original, |builder| {
+                let root = builder.spawn((Name::new("new-root"),));
+                let child = builder.spawn_child(root, (Name::new("new-child"),))?;
+                builder.spawn_child(child, (Name::new("new-leaf"),))?;
+                Err(SceneError::BuildRejected)
+            })
+            .unwrap_err();
+        assert_eq!(after_spawns, SceneError::BuildRejected);
+        assert_eq!(world.entities.len(), 3);
+        assert!(world.contains(entity) && world.contains(other_entity) && world.contains(runtime));
+        assert_eq!(world.scene_instances().unwrap(), vec![original, other]);
+
+        let empty = world.load_scene(|_| Ok(())).unwrap();
+        let replaced_empty = world.replace_scene(empty, |_| Ok(())).unwrap();
+        assert_ne!(replaced_empty, empty);
+        assert!(world.scene_entities(empty).unwrap().is_none());
+        assert_eq!(world.scene_entities(replaced_empty).unwrap(), Some(vec![]));
+
+        let replacement = world
+            .replace_scene(original, |builder| {
+                builder.spawn((Name::new("replacement"), Transform::from_xyz(1.0, 0.0, 0.0)));
+                Ok(())
+            })
+            .unwrap();
+        assert!(!world.contains(entity));
+        assert!(world.scene_entity(original, 0).unwrap().is_none());
+        assert_eq!(world.scene_entities(replacement).unwrap().unwrap().len(), 1);
+        assert_eq!(world.scene_entity(other, 0).unwrap(), Some(other_entity));
+        assert!(world.contains(runtime));
+        assert!(replacement.raw() > original.raw());
+        assert_hierarchy_closed(&world);
+        assert!(world.has_resource::<SceneManager>());
+    }
+
+    #[test]
+    fn a_forged_member_fails_the_replacement_build_and_a_later_unload_keeps_the_new_instance() {
+        let mut world = World::new();
+        let (original, entity) = one_entity(&mut world, "original");
+        let runtime = world.spawn((Name::new("runtime"), Transform::from_xyz(3.0, 0.0, 0.0)));
+        world.set_parent(runtime, entity).unwrap();
+        let world_before = world.preview_lift(runtime).unwrap();
+
+        let forged = world
+            .replace_scene(original, |builder| {
+                builder.spawn((Name::new("forged"), SceneMember { instance: original, local: 9 }));
+                Ok(())
+            })
+            .unwrap_err();
+        assert!(matches!(forged, SceneError::AlreadyMember { instance, .. } if instance == original));
+        assert!(world.contains(entity) && world.contains(runtime));
+        assert_eq!(world.component::<Parent>(runtime).unwrap().0, entity);
+        assert_eq!(world.scene_entity(original, 0).unwrap(), Some(entity));
+        assert_eq!(world.scene_instances().unwrap(), vec![original]);
+        assert!(world.scene_entity(SceneInstanceId(1), 0).unwrap().is_none());
+
+        let replacement = world
+            .replace_scene(original, |builder| {
+                builder.spawn((Name::new("next"), Transform::IDENTITY));
+                Ok(())
+            })
+            .unwrap();
+        assert!(!world.contains(entity));
+        assert!(world.contains(runtime));
+        assert!(world.component::<Parent>(runtime).is_err());
+        assert!(world.component::<Transform>(runtime).unwrap().to_matrix().approx_eq(&world_before.to_matrix(), 1e-4));
+        assert!(world.scene_entity(original, 0).unwrap().is_none());
+        assert_eq!(world.scene_entities(replacement).unwrap().unwrap().len(), 1);
+        assert_eq!(replacement.raw(), 2);
+        assert_hierarchy_closed(&world);
+    }
+
+    #[test]
+    fn a_missing_manager_rejects_unload_and_replace_without_inserting_one() {
+        let mut world = World::new();
+        let manager = world.remove_resource::<SceneManager>().unwrap();
+        let missing = SceneInstanceId(0);
+        assert_eq!(world.unload_scene(missing).unwrap_err(), SceneError::SceneManagerUnavailable);
+        assert_eq!(world.replace_scene(missing, |_| Ok(())).unwrap_err(), SceneError::SceneManagerUnavailable);
+        assert!(!world.has_resource::<SceneManager>());
+        world.insert_resource(manager);
+    }
+
+    #[test]
+    fn a_member_parented_under_a_runtime_entity_leaves_that_parent() {
+        let mut world = World::new();
+        let runtime = world.spawn((Name::new("runtime"), Transform::IDENTITY));
+        let sibling = world.spawn_child(runtime, (Name::new("sibling"), Transform::IDENTITY));
+        let (instance, member) = one_entity(&mut world, "member");
+        world.set_parent(member, runtime).unwrap();
+        world.unload_scene(instance).unwrap();
+        assert!(!world.contains(member));
+        assert_eq!(world.component::<Children>(runtime).unwrap().0, vec![sibling]);
+        assert_hierarchy_closed(&world);
     }
 }

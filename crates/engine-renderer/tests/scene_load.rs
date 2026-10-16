@@ -58,3 +58,48 @@ fn a_scene_sprite_extracts_like_a_directly_spawned_sprite() {
     assert_eq!(loaded_sprite.texture, spawned_sprite.texture);
     assert_eq!(loaded_scene.view.view_proj, spawned_scene.view.view_proj);
 }
+
+#[test]
+fn unloading_a_scene_leaves_shared_and_application_assets_in_place() {
+    let mut assets = AssetManager::in_memory();
+    let texture = assets.insert("shared", Texture::solid(2, 2, [255, 0, 0, 255])).unwrap();
+    let sprite = assets.insert("shared_sprite", SpriteAsset::whole_texture(texture, 2, 2)).unwrap();
+    let application = assets.insert("app_only", Texture::solid(2, 2, [0, 255, 0, 255])).unwrap();
+
+    let mut world = World::new();
+    let first = world
+        .load_scene(|builder| {
+            builder.spawn((Transform::IDENTITY, Sprite::new("shared_sprite")));
+            Ok(())
+        })
+        .unwrap();
+    let second = world
+        .load_scene(|builder| {
+            builder.spawn((Transform::IDENTITY, Sprite::new("shared_sprite")));
+            Ok(())
+        })
+        .unwrap();
+    let runtime = world.spawn((Transform::IDENTITY, Sprite::new("shared_sprite")));
+
+    world.unload_scene(first).unwrap();
+    assert!(assets.get(sprite).is_some());
+    assert!(assets.get(texture).is_some());
+    assert!(assets.get(application).is_some());
+    assert!(world.scene_entity(second, 0).unwrap().is_some());
+
+    world.unload_scene(second).unwrap();
+    assert!(world.contains(runtime));
+    assert!(assets.get(sprite).is_some());
+
+    let again = world
+        .load_scene(|builder| {
+            builder.spawn((Transform::IDENTITY, Sprite::new("shared_sprite")));
+            Ok(())
+        })
+        .unwrap();
+    assert!(assets.get(assets.sprite("shared_sprite")).is_some());
+    world.unload_scene(again).unwrap();
+    assert!(assets.get(application).is_some());
+    assert!(assets.get(sprite).is_some());
+    assert!(assets.get(texture).is_some());
+}

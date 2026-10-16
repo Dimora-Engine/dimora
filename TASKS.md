@@ -24,10 +24,10 @@ is the public-API review recorded below. M3b Phases 1–3 are checkpointed local
 **M4 is in progress.** Phase 1, the component registry and text dumps, is commit `cdb5ec3` and is not
 pushed (ADR-0014). Phase 2, hierarchical visibility, is commit `2c76f71` and is not pushed. Phase 3,
 name and tag lookup, is commit `f9a4aab` and is not pushed. M4-4A, scene instance tracking, is
-commit `302622b` and is not pushed. M4-4B, synchronous scene load, is implemented locally and is not
-committed. Unload, replace, and the `spatial_scene` switch are not started. M4 is not complete.
-Evidence is under "M4 Phase 1 results", "M4 Phase 2 results", "M4 Phase 3 results", "M4-4A results",
-and "M4-4B results".
+commit `302622b` and is not pushed. M4-4B, synchronous scene load, is commit `128c70e` and is not
+pushed. M4-4C, unload and replace, is implemented locally and is not committed. The `spatial_scene`
+switch is not started. M4 is not complete. Evidence is under "M4 Phase 1 results", "M4 Phase 2 results",
+"M4 Phase 3 results", "M4-4A results", "M4-4B results", and "M4-4C results".
 
 ## Completed work
 
@@ -750,7 +750,7 @@ Commit `302622b`. Not pushed. M4 is not complete. Phase 1 is `cdb5ec3`. Phase 2 
 
 ## M4-4B results (2026-10-15)
 
-Implemented locally. Not committed. M4 is not complete. M4-4A is `302622b`.
+Commit `128c70e`. Not pushed. M4 is not complete. M4-4A is `302622b`.
 
 **Behavior.** `World::load_scene` takes the scene manager out, issues a `SceneInstanceId`, and runs `SceneBuilder`. `spawn` records a new entity. `spawn_child` parents it only under an entity this build created. The closure does not receive `&mut World`. On `Ok`, each created entity gets `SceneMember` in spawn order and the instance is inserted. On `Err`, those entities are despawned, an empty `Children` component the build introduced on a surviving entity is removed, and the instance is not inserted. The id is not reused. A nested load while the manager is out returns `SceneManagerUnavailable` and does not insert a replacement. The original manager is put back on `Ok` and on `Err`. A panic is not restored. `create_scene_instance` and `track_scene_entity` stay public and can still build membership outside a load.
 
@@ -763,6 +763,26 @@ Implemented locally. Not committed. M4 is not complete. M4-4A is `302622b`.
 **Repository check.** `scripts/check.sh` on 2026-10-15, macOS 27.0 arm64, `rustc 1.99.0`, exit 0. All 4 steps passed. `cargo test --workspace` with `DIMORA_REQUIRE_GPU=1` reported **328 passed, 0 failed, 0 ignored**. `headless.rs` ran 19 tests. `spatial_scene` `configurations.rs` ran 16.
 
 **Screenshots.** Release, 1280×720, rendered from this working tree and from commit `6dbabb8` (`6dbabb88f10779301115d04720ac1f52000ed03a`), then compared with `cmp -s`. All four byte-identical: `basic_2_5d` 746071 bytes, `basic_2_5d --ortho` 462130, `spatial_scene --camera perspective` 136991, `spatial_scene --camera orthographic` 34046.
+
+## M4-4C results (2026-10-15)
+
+Implemented locally. Not committed. M4 is not complete. M4-4A is `302622b`. M4-4B is `128c70e`.
+
+**Unload.** `unload_scene` preflights, then lifts every non-member whose parent is a validated member, then removes those members with `despawn_one`. `World::despawn` is unchanged and is not used. The instance record is removed. Other instances and runtime entities stay. Assets are not removed. An unknown id returns `NoSuchInstance` and changes nothing. An empty instance succeeds.
+
+**Lift.** The world matrix is the parent chain. `Transform::from_matrix` stores a TRS triple and drops shear. Uniform scale matches that matrix. A zero scale axis that decomposes to a finite TRS is stored, including scale 0. A non-finite result refuses the unload before any removal. The lifted entity's interpolation previous local becomes the new local. Descendants and bystander `GlobalTransform` values are left as they were. No `GlobalTransform` is inserted.
+
+**Preflight.** Stale rows are not members. A forged `SceneMember` for the instance is `InconsistentMembership` and nothing is removed. A broken `Parent`/`Children` pair or a parent cycle is `InvalidHierarchy`. A missing manager is `SceneManagerUnavailable` and is not replaced. These `Result` paths put the manager back. A panic after mutation has started is not undone.
+
+**Replace.** `replace_scene` preflights the old instance, builds the new one with the existing `load_scene` path, and unloads the old one only after that build returns `Ok`. A failed build leaves the old instance published. The new id is consumed either way and is not reused. A bundled `SceneMember` for the old instance fails validation before publish, so the recovery branch that unloads a published replacement is not reached through the public builder. A successful replace that must lift a runtime child keeps the new instance and the lifted entity.
+
+**Low-level methods.** `create_scene_instance` and `track_scene_entity` stay public. Nothing outside `engine-world` tests calls them. The supported lifecycle is `load_scene`, `unload_scene`, and `replace_scene`. They should become `pub(crate)` before a stable public release. This checkpoint does not change their visibility.
+
+**GPU.** `unloading_a_scene_and_removing_its_assets_returns_the_gpu_cache_to_baseline` on Apple M5, Metal. A camera-only world caches 0 textures and 0 meshes. After the scene loads and renders, the cache is 2 textures and 1 mesh. After unload, explicit `AssetManager::remove` of the test-owned assets, and another frame, the cache and the entity count are back to that camera baseline. Renderer pipelines are not counted. Shared assets are covered by `unloading_a_scene_leaves_shared_and_application_assets_in_place`, which does not call `remove`.
+
+**Repository check.** `scripts/check.sh` on 2026-10-15, macOS 27.0 arm64, `rustc 1.99.0`, exit 0. All 4 steps passed: `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` with `DIMORA_REQUIRE_GPU=1` (**341 passed, 0 failed, 0 ignored**), `cargo doc --workspace --no-deps` with `-D warnings`. `headless.rs` ran 20 tests. `spatial_scene` `configurations.rs` ran 16.
+
+**Screenshots.** Release, 1280×720, rendered from this working tree and compared with `cmp -s` to the four PNGs rendered from commit `6dbabb8` (`6dbabb88f10779301115d04720ac1f52000ed03a`). All four byte-identical: `basic_2_5d` 746071 bytes, `basic_2_5d --ortho` 462130, `spatial_scene --camera perspective` 136991, `spatial_scene --camera orthographic` 34046. SHA-256: basic `c3c5874adeea119c98255c6c1d08208c0244224d930d86e8736c280ef88b38fe`, ortho `f2aedc0c4a65e13a33187f391d2a778d073b3befbf1ce207bc6484d961ac980f`, perspective `ec5f6252a88f642b454ae768f9eec8cdd5fba88a5aeb7a424fcefe5fda12275e`, orthographic `3551d84fe2ec1c14fc0729c7a86e2031c068285a6551597ee32d100f76805cde`.
 
 ## Planned systems and their state
 
@@ -781,8 +801,8 @@ in the current scope.
 
 ## Not in scope now
 
-M4-4C, phase 5, and everything after M4. In particular: no scene format, no scene unload or replace, no new rendering features, no collision, no
-editor work, and no work on UI, scripting or any of the three character representations. M4 Phase 1 is commit `cdb5ec3`. Phase 2 is commit `2c76f71`. Phase 3 is commit `f9a4aab`. M4-4A is commit `302622b`. M4-4B (synchronous load) is implemented locally and is not committed. None of M4 is pushed. M4 is not complete. M3b is complete locally and is not pushed. These systems are deliberately
+Phase 5 and everything after M4. In particular: no scene format, no scene switching in `spatial_scene`, no deferred scene commands, no new rendering features, no collision, no
+editor work, and no work on UI, scripting or any of the three character representations. M4 Phase 1 is commit `cdb5ec3`. Phase 2 is commit `2c76f71`. Phase 3 is commit `f9a4aab`. M4-4A is commit `302622b`. M4-4B is commit `128c70e`. M4-4C is implemented locally and is not committed. None of M4 is pushed. M4 is not complete. M3b is complete locally and is not pushed. These systems are deliberately
 not being started together: each has its own milestone, prerequisites and decisions. Decisions that data
 formats or public APIs will bake in are made before their first consumer (see
 [docs/DECISIONS.md](docs/DECISIONS.md#what-to-resolve-first)).

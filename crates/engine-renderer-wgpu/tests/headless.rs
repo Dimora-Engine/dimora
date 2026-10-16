@@ -441,6 +441,55 @@ fn removing_assets_returns_the_gpu_caches_to_the_empty_baseline() {
 }
 
 #[test]
+fn unloading_a_scene_and_removing_its_assets_returns_the_gpu_cache_to_baseline() {
+    let Some((gpu, mut r)) = setup() else { return };
+    let mut assets = AssetManager::in_memory();
+    let mut world = world_with_camera();
+    let baseline_entities = world.entities.len();
+    render(&gpu, &mut r, &mut world, &assets);
+    let baseline_cache = r.cache_stats();
+    assert_eq!(baseline_cache, EMPTY_CACHE, "a camera with no renderables caches nothing");
+
+    insert_cache_test_assets(&mut assets);
+    let instance = world
+        .load_scene(|builder| {
+            builder.spawn((
+                Transform::from_xyz(3.6, 0.0, 6.0),
+                Sprite::new("quad")
+                    .with_size(Vec2::splat(4.0))
+                    .with_anchor(Vec2::splat(0.5))
+                    .with_tint(Color::rgb(1.0, 0.0, 0.0))
+                    .unlit()
+                    .cutout(),
+            ));
+            builder.spawn((
+                Transform::from_xyz(0.0, 0.0, 10.0),
+                Mesh::new("cube").with_material(Material {
+                    lit: false,
+                    base_texture: Some(AssetHandle::from_name("blue")),
+                    ..Material::color(Color::WHITE)
+                }),
+            ));
+            Ok(())
+        })
+        .unwrap();
+    let img = render(&gpu, &mut r, &mut world, &assets);
+    assert!(is_red(px(&img, W / 2 + 25, H / 2)), "scene sprite is drawn");
+    assert!(is_blue(px(&img, W / 2, H / 2)), "scene mesh is drawn");
+    assert_eq!(r.cache_stats(), CacheStats { textures: 2, meshes: 1 });
+    assert!(world.entities.len() > baseline_entities);
+
+    world.unload_scene(instance).unwrap();
+    assert_eq!(world.entities.len(), baseline_entities, "only the camera entity remains");
+    assert!(world.scene_instances().unwrap().is_empty());
+    remove_cache_test_assets(&mut assets);
+    let img = render(&gpu, &mut r, &mut world, &assets);
+    assert_eq!(r.cache_stats(), baseline_cache, "test-owned gpu copies are gone after remove and another frame");
+    assert_eq!(world.entities.len(), baseline_entities);
+    assert_eq!(px(&img, W / 2, H / 2), [0, 0, 0, 255], "the unloaded scene no longer draws");
+}
+
+#[test]
 fn a_removed_texture_is_drawn_as_the_placeholder_never_from_a_stale_copy() {
     let Some((gpu, mut r)) = setup() else { return };
     let mut a = assets();

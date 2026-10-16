@@ -1,6 +1,6 @@
 # ADR-0014: One world, code-defined scenes, and an explicit component registry
 
-* **Status:** Settled for the scene model, the registry shape, M4-4A membership, and M4-4B synchronous load. Unload and replace are accepted in shape and not implemented. The deferred scene-operation result is a recommendation, not a decision. D-16 stays open.
+* **Status:** Settled for the scene model, the registry, membership, synchronous load, unload, and replace. The deferred scene-operation result is a recommendation, not a decision. D-16 stays open. The `spatial_scene` switch is not done.
 * **Date:** 2026-10-15
 * **Backlog id:** D-18
 * **Decided by:** project owner (approved the M4 architecture and the five-phase sequence, with the refinements in this record)
@@ -79,8 +79,8 @@ The feasibility spike's scene-management shape is accepted, with these rules. M4
 9. Scene creation is synchronous. `load_scene` runs the builder and publishes the instance only after that returns `Ok`. `create_scene_instance` still publishes an empty instance immediately.
 10. Scene asset serialization stays in M19.
 11. Scene construction does not insert or remove assets. `SceneBuilder` has no asset or resource methods.
-12. Scene membership does not own referenced assets. Unload, when it exists, will not call `AssetManager::remove` because an entity disappeared.
-13. Unload preserves entities that are not members of that instance. M4-4A does not unload. `track_scene_entity` does not modify any entity except the one named.
+12. Scene membership does not own referenced assets. Unload does not call `AssetManager::remove`.
+13. Unload preserves entities that are not validated members of that instance, including other scenes and runtime entities.
 14. A later unload lifts a non-member child to its world transform by walking that entity's parent chain. It does not run a full `propagate_transforms`, which would insert `GlobalTransform` on unrelated entities. M4-4A does not lift.
 15. `World` hierarchy, transforms, the existing ECS, and extraction stay authoritative. `World::despawn` is unchanged and does not update the scene map.
 16. Deferred scene work, when added, uses the existing command queue. There is no second queue. M4-4A does not enqueue scene commands.
@@ -97,7 +97,19 @@ On `Ok`, members are assigned in spawn order and the instance is inserted. On `E
 
 `create_scene_instance` and `track_scene_entity` stay public. They can publish an empty instance or attach an existing entity outside `load_scene`. Making them `pub(crate)` later would break that surface. Nothing in the examples calls them. The recommendation is to keep them documented as low-level until a later checkpoint, then hide them if no caller needs them. This checkpoint does not change their visibility.
 
-Unload, replace, deferred commands, and `SceneOpId` are not in M4-4B.
+### M4-4C unload and replace (2026-10-15)
+
+`unload_scene` checks the instance, then the live validated members, before it changes anything. A stale map row (dead entity, or a live entity whose `SceneMember` does not match) is not a member and is not despawned. The row disappears with the instance. A live entity that claims the instance while the map names a different entity is `InconsistentMembership`, and the world is unchanged. A parent cycle, a `Parent`/`Children` pair that does not agree, or a lifted transform that is not finite is the same. An unknown or already unloaded id is `NoSuchInstance`.
+
+Destruction uses `despawn_one`, not `World::despawn`, so a non-member child is not removed with a member parent. A non-member whose parent is a member is lifted first. The lift walks that entity's parent chain into a matrix and stores `Transform::from_matrix`. Shear is discarded. Uniform scale, and a zero scale axis that still decomposes to a finite TRS, are stored as that TRS. A non-finite result refuses the unload. Interpolation history on the lifted entity is snapped to the new local. Descendants keep their locals and history. `GlobalTransform` is not written.
+
+`replace_scene` preflights the old instance, then uses the same `load_scene` build path. A failed build leaves the old instance published and does not publish the new one. The new id is consumed. On success the old id is removed and is not reused. `SceneBuilder` cannot modify an entity it did not create. `validate_build` rejects a bundled `SceneMember`, a parent outside the build, or a child link that leaves the build, and it rolls those entities back before publish. After a successful preflight, the original unload therefore completes for engine-maintained state. The guard that would unload a published replacement if that unload returned an error is not reached through the public method. A panic is not undone, and a lift that already happened is not rolled back.
+
+`Transform::from_matrix` stores translation, rotation, and scale. It drops shear. That is the existing decomposition, and unload uses it on purpose. A non-uniform parent scale combined with a rotated child is stored as that TRS and is not the exact world matrix. M4 does not change `Transform`.
+
+`create_scene_instance` and `track_scene_entity` stay public methods on `World`. They can assemble membership outside load, unload, and replace. No example and no crate outside `engine-world`'s own tests calls them. The supported lifecycle is `load_scene`, `unload_scene`, and `replace_scene`. Before a stable public release they should become `pub(crate)`. This checkpoint does not change their visibility, so an external caller written against them still compiles.
+
+Deferred commands and `SceneOpId` are not in M4-4C.
 
 ### Deferred scene-operation results (recommendation, not accepted)
 
@@ -119,7 +131,7 @@ This recommendation is not implemented. Deferred scene commands wait until it is
 
 **Asset ownership.** Accepted: membership does not own assets, and scene code does not call `AssetManager::remove` because an entity disappeared. Shared use by another scene, a runtime entity, or the application stays valid. D-16 is still open. Handles are name hashes, and the manager does not track users, so M4 still cannot prove exclusive ownership of an arbitrary handle. The GPU-baseline test, when unload exists, inserts assets only that test uses, calls `remove` itself after unload, and renders one frame.
 
-**Spawn rollback.** Implemented for `load_scene` in M4-4B, for `Result` errors only. A panic while the manager is out of the world is not restored. Unload and replace are M4-4C and are not implemented.
+**Spawn rollback.** Implemented for `load_scene` and for a failed `replace_scene` build, for `Result` errors only. A panic while the manager is out of the world is not restored. Unload of a consistent instance is preflighted, then it mutates. It is not a panic-safe transaction.
 
 **Identity.** Settled for M4 in "Accepted for M4-4A" above. M19 still chooses which id a file stores. Spawn-order local ids are not that id.
 
@@ -131,7 +143,8 @@ This recommendation is not implemented. Deferred scene commands wait until it is
 * Phase 2 is hierarchical visibility in `extract_scene`, as item 5 describes. It is commit `2c76f71`. Sprites, meshes, tilemaps, and lights share one ancestor walk (`AncestorVisibility::hides`).
 * Phase 3 is name and tag lookup on the same `World`. `find_by_name` and `find_by_tag` scan live entities and return every exact match in `Entity` order. `Tags` stores plain strings, rejects `""`, keeps the first copy of a duplicate, and does not follow `Parent`. It is `Persistence::Persist` in the registry. There is no name index and no tag index. Phase 3 is commit `f9a4aab`.
 * M4-4A is scene identity and membership: `SceneInstanceId`, `SceneMember`, `SceneError`, an internal `SceneManager`, and `World` methods that create an empty instance, track an existing entity, look it up, and sweep stale rows. It is commit `302622b`.
-* M4-4B is `SceneBuilder` and synchronous `load_scene`, including rollback of a failed build. It is implemented locally and is not committed. M4-4C is unload and replace. Phase 5 is the `spatial_scene` switch. Deferred scene commands wait on the result recommendation above.
+* M4-4B is `SceneBuilder` and synchronous `load_scene`, including rollback of a failed build. It is commit `128c70e`.
+* M4-4C is synchronous `unload_scene` and `replace_scene`. It is implemented locally and is not committed. Phase 5 is the `spatial_scene` switch. Deferred scene commands wait on the result recommendation above.
 * M19 still chooses the file encoding, under ADR-0011, after D-16. RON remains a candidate. It is not a dependency.
 * D-16 and D-41 stay open. D-41 may later read the flags this registry stores.
 
@@ -141,6 +154,8 @@ Phase 1 tests cover duplicate names, duplicate types, conflicting metadata, empt
 
 M4-4A tests cover distinct instance ids, repeated local ids on distinct entities, missing instances and local ids, entities with no membership, despawn, a reused hecs slot, a missing or wrong `SceneMember`, ordinary errors restoring the manager, a missing manager not being replaced, registry metadata, and dump text. That checkpoint is commit `302622b`. `scripts/check.sh` then passed with 318 tests.
 
-M4-4B tests cover an empty load, one entity, a parent with children, a deep chain, repeated local ids on distinct entities, lookup, failure before any spawn, failure after one spawn, failure after a nested hierarchy, rejection of an outside parent, a `Parent` bundled onto an outside entity, rollback of entities and links, unchanged bystanders and resources, empty `Children` cleanup, no published instance, the manager remaining available, consumed ids, and a nested load. An extraction test compares a scene sprite with a directly spawned sprite. `scripts/check.sh` on 2026-10-15 passed with 328 tests. The four screenshots match commit `6dbabb8`.
+M4-4B tests cover an empty load, one entity, a parent with children, a deep chain, repeated local ids on distinct entities, lookup, failure before any spawn, failure after one spawn, failure after a nested hierarchy, rejection of an outside parent, a `Parent` bundled onto an outside entity, rollback of entities and links, unchanged bystanders and resources, empty `Children` cleanup, no published instance, the manager remaining available, consumed ids, and a nested load. An extraction test compares a scene sprite with a directly spawned sprite. `scripts/check.sh` on 2026-10-15 passed with 328 tests. The four screenshots match commit `6dbabb8`. That checkpoint is commit `128c70e`.
+
+M4-4C tests cover an empty unload, one entity, a nested hierarchy, siblings, an unknown id, a second unload of the same id, other instances and runtime entities remaining, a runtime child, a deep runtime descendant, a runtime subtree, a member under a runtime parent, a member under a runtime entity that sits under another member, scene B under scene A, several ownership transitions, closed `Parent` and `Children` links, uniform-scale world transforms, the non-uniform-plus-rotation TRS approximation, interpolation snap on the lifted entity, unchanged descendant history, unchanged bystander `GlobalTransform` values, stale rows, a forged `SceneMember`, a broken parent or child link, a non-finite lift, a zero scale axis, replacement of an empty and a populated instance, a failed replacement before any spawn and after nested spawns, consumed ids, and a missing manager. Shared assets used by two instances and by a runtime entity, and an application asset the scene never references, stay after unload. Reloading still resolves the same sprite. The GPU test starts from a camera-only cache of 0 textures and 0 meshes, records 2 textures and 1 mesh after the scene renders, and returns to that camera baseline after unload, an explicit `AssetManager::remove` of the test-owned assets, and another frame. `scripts/check.sh` on 2026-10-16 passed with 341 tests, including the replacement invariant test. The four screenshots match commit `6dbabb8`.
 
 Reopen the settled items only under the rule at the bottom of DECISIONS.md. Revisit asset ownership when some caller can prove an asset is unused by every remaining entity and system. Revisit the deferred scene-operation record if the stored `SceneOpId` cannot be read after flush without holding `SceneManager` across the command queue. Revisit scene-local ids when M19 has a real file and D-16 has settled asset ids.

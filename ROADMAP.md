@@ -63,8 +63,8 @@ first" tiers in [docs/DECISIONS.md](docs/DECISIONS.md#what-to-resolve-first).
   registry and text dumps, ADR-0014) is commit `cdb5ec3` and is not pushed. M4 Phase 2 (hierarchical
   visibility) is commit `2c76f71` and is not pushed. M4 Phase 3 (name and tag lookup) is commit
   `f9a4aab` and is not pushed. M4-4A (scene instance tracking) is commit `302622b` and is not pushed.
-  M4-4B (synchronous scene load) is implemented locally and is not committed. Unload, replace, and
-  the `spatial_scene` switch are not started. M4 is not complete.
+  M4-4B (synchronous scene load) is commit `128c70e` and is not pushed. M4-4C (unload and replace)
+  is implemented locally and is not committed. The `spatial_scene` switch is not started. M4 is not complete.
   M3a was first because
   collision, animation, scenes, UI and scripting all hang off its stages, commands and events, and because
   three high-cost risks (R-5, R-7, R-8) are cheapest to settle before more systems exist.
@@ -406,8 +406,9 @@ orphaning entities, and the world knows its component types by name.
 pushed. Phase 2 (hierarchical visibility in extraction) is commit `2c76f71` and is not pushed.
 Phase 3 (name and tag lookup) is commit `f9a4aab` and is not pushed. M4-4A (empty instances,
 `SceneMember`, and validated lookup) is commit `302622b` and is not pushed. M4-4B (`SceneBuilder` and
-synchronous `load_scene`) is implemented locally and is not committed. M4-4C (unload and replace) is
-not started. Phase 5, the `spatial_scene` switch, is not started. Deferred scene commands wait on the
+synchronous `load_scene`) is commit `128c70e` and is not pushed. M4-4C (`unload_scene` and
+`replace_scene`) is implemented locally and is not committed. Phase 5, the `spatial_scene` switch, is
+not started. Deferred scene commands wait on the
 `SceneOpId` recommendation in ADR-0014. Scene files stay in M19. D-16 stays open.
 
 **Acceptance criteria.**
@@ -420,7 +421,8 @@ not started. Phase 5, the `spatial_scene` switch, is not started. Deferred scene
 - Exact name and tag lookup returns every live match in `Entity` order (test). **Met by Phase 3.**
 - A scene entity is found by instance id and scene-local id only when that entity is alive and its `SceneMember` matches (test). **Met by M4-4A.**
 - Loading a code-defined scene publishes an instance only when the build returns `Ok`, and a failed build leaves no created entities (test). **Met by M4-4B.**
-- Unloading a scene and switching `spatial_scene` are not met.
+- Unloading a scene removes its validated members and leaves a non-member child at a TRS approximation of its world transform (test). **Met by M4-4C.**
+- Switching `spatial_scene` is not met.
 
 **Tests/examples.** Scene lifecycle tests; `spatial_scene` scene-switch demo.
 
