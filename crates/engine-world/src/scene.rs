@@ -62,8 +62,8 @@ impl fmt::Display for SceneOpId {
 /// Membership of one entity in one scene instance.
 ///
 /// An entity has at most one. `local` is unique inside `instance` and may repeat in another
-/// instance. [`World::load_scene`] assigns it in spawn order. [`World::track_scene_entity`] assigns
-/// it in track order. Both start at 0. It is not a persistent file id. A future stable id would be
+/// instance. [`World::load_scene`] assigns it in spawn order, starting at 0. It is not a persistent
+/// file id. A future stable id would be
 /// a separate field.
 ///
 /// [`Persistence`](crate::Persistence) is `Runtime`.
@@ -170,6 +170,8 @@ impl std::error::Error for SceneError {}
 
 #[derive(Clone, Debug)]
 struct InstanceRecord {
+    /// Next scene-local id. Read by [`World::track_scene_entity`], which production code does not call.
+    #[cfg_attr(not(test), allow(dead_code))]
     next_local: u32,
     /// Local id to the runtime [`Entity`] recorded for it. Keys are not reused.
     locals: BTreeMap<u32, Entity>,
@@ -234,9 +236,10 @@ impl World {
     /// The id is new. Ids already issued are not used again.
     ///
     /// This publishes the instance immediately. [`World::load_scene`] is the way to instantiate a
-    /// scene, and it publishes only after the build succeeds. This method stays public so a caller
-    /// that already uses it keeps compiling.
-    pub fn create_scene_instance(&mut self) -> Result<SceneInstanceId, SceneError> {
+    /// scene, and it publishes only after the build succeeds. No example or crate outside
+    /// `engine-world` calls this, so it is crate-private.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn create_scene_instance(&mut self) -> Result<SceneInstanceId, SceneError> {
         self.with_scene_manager(|manager, _| {
             let id = manager.allocate()?;
             manager.instances.insert(id, InstanceRecord { next_local: 0, locals: BTreeMap::new() });
@@ -249,9 +252,10 @@ impl World {
     /// Does not spawn, despawn, or edit any other entity. `entity` must be alive and must not
     /// already have [`SceneMember`].
     ///
-    /// This can attach an entity that [`World::load_scene`] did not create. It stays public so a
-    /// caller that already uses it keeps compiling.
-    pub fn track_scene_entity(&mut self, instance: SceneInstanceId, entity: Entity) -> Result<u32, SceneError> {
+    /// This can attach an entity that [`World::load_scene`] did not create. No example or crate
+    /// outside `engine-world` calls this, so it is crate-private.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn track_scene_entity(&mut self, instance: SceneInstanceId, entity: Entity) -> Result<u32, SceneError> {
         self.with_scene_manager(|manager, entities| {
             let Some(record) = manager.instances.get_mut(&instance) else {
                 return Err(SceneError::NoSuchInstance { instance });

@@ -355,6 +355,11 @@ and is logged when the status becomes `Failed`. An unexpected load stays publish
 unload is left as the engine applied it: the switch logs that it does not own that instance and does
 not unload or rebuild it.
 
+`spawn_lamp` in `examples/spatial_scene/src/prefab.rs` is the code-defined prefab. It is a function
+that receives `&mut World` and returns the lamp-post entity. The light is a child. `place_lamp` is the
+same object built through `SceneBuilder`, for a managed scene. Neither is spawned by environment A or B,
+so the screenshot baselines stay the original scene. There is no prefab asset and no prefab editor.
+
 Controls: `W/S` move in depth, `A/D` strafe, `Space/Shift` move up/down, arrows rotate, `C` selects the next
 configuration, `P` toggles perspective/orthographic on the current pose, `O` cycles the figures' sprite
 orientation, `R` returns to the current configuration, `Tab` switches environment, `Esc` quits.

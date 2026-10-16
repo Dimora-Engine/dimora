@@ -65,8 +65,9 @@ first" tiers in [docs/DECISIONS.md](docs/DECISIONS.md#what-to-resolve-first).
   `f9a4aab` and is not pushed. M4-4A (scene instance tracking) is commit `302622b` and is not pushed.
   M4-4B (synchronous scene load) is commit `128c70e` and is not pushed. M4-4C (unload and replace)
   is commit `e12fb5b` and is not pushed. M4-4D (deferred scene operations) is commit `8398e49` and
-  is not pushed. M4-4E (the `spatial_scene` switch) is implemented locally and is not committed.
-  M4 is not complete.
+  is not pushed. M4-4E (the `spatial_scene` switch) is commit `d58c66b` and is not pushed.
+  M4-5 (the lamp prefab and crate-private low-level scene methods) is committed locally and is not pushed.
+  M4 is complete in this working tree and is not pushed.
   M3a was first because
   collision, animation, scenes, UI and scripting all hang off its stages, commands and events, and because
   three high-cost risks (R-5, R-7, R-8) are cheapest to settle before more systems exist.
@@ -383,7 +384,7 @@ multi-window.
 
 ---
 
-## M4. World and scene management: In progress (not complete; not pushed)
+## M4. World and scene management: Complete locally (not pushed)
 
 **Objective.** A scene is a unit that can be built, switched and unloaded without leaking or
 orphaning entities, and the world knows its component types by name.
@@ -398,7 +399,7 @@ orphaning entities, and the world knows its component types by name.
 - A component registry mapping stable names to component types (no serialization yet); this is the
   groundwork M18, M19 and M20 need. Leave room for a per-component, per-field visibility attribute that
   scripts will use (D-41); no scripting code here.
-- Code-defined prefabs (`fn(&mut World, ...) -> Entity` by convention) and one documented pattern.
+- Code-defined prefabs (`fn(&mut World, ...) -> Entity` by convention) and one documented pattern. **Met by M4-5**, committed locally, not pushed. `spawn_lamp` returns the post. `place_lamp` is the `SceneBuilder` form.
 - Read-only scene and entity inspection: a text dump of the hierarchy and of one entity's registered
   components and fields, built on the registry (first of the inspection tools; no editor code).
 
@@ -411,14 +412,16 @@ Phase 3 (name and tag lookup) is commit `f9a4aab` and is not pushed. M4-4A (empt
 synchronous `load_scene`) is commit `128c70e` and is not pushed. M4-4C (`unload_scene` and
 `replace_scene`) is commit `e12fb5b` and is not pushed. M4-4D queues those operations on the existing
 command queue and is commit `8398e49`. M4-4E switches `spatial_scene` between two code-defined
-environments and is implemented locally, not committed. The documented prefab is still M4-5.
+environments and is commit `d58c66b`. M4-5 documents `spawn_lamp` and makes `create_scene_instance`
+and `track_scene_entity` crate-private. M4-5 is committed locally and is not pushed. M4 is complete in this
+working tree and is not pushed.
 Scene files stay in M19. D-16 stays open.
 
 **Acceptance criteria.**
-- Loading then unloading a scene returns entity count and GPU resource counts to baseline (test).
+- Loading then unloading a scene returns entity count and GPU resource counts to baseline (test). **Met by M4-4C** for the entity count. GPU texture and mesh counts return to the camera baseline after unload plus an explicit `AssetManager::remove` of assets that test owns. Unload itself does not remove assets. D-16 stays open.
 - A hidden parent hides all descendants in the extracted scene (test). **Met by Phase 2.** Cameras still activate from `Camera.active`.
-- Despawning any entity cannot leave a dangling `Parent` (test).
-- `spatial_scene` switches between two scenes at runtime (test). **Met by M4-4E**, local and not committed. The camera and the walker stay. One Tab press queues one replacement.
+- Despawning any entity cannot leave a dangling `Parent` (test). **Met** by `World::despawn` subtree removal and the lamp-root despawn test.
+- `spatial_scene` switches between two scenes at runtime (test). **Met by M4-4E** (`d58c66b`). The camera and the walker stay. One Tab press queues one replacement.
 - The dump of a known world lists each entity's registered components and fields, and a component that is
   not registered is reported as such, not omitted silently (test). **Met by Phase 1.**
 - Exact name and tag lookup returns every live match in `Entity` order (test). **Met by Phase 3.**
