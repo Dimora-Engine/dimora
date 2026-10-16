@@ -39,6 +39,37 @@ fn command_failures_log_once_and_stay_readable() {
 }
 
 #[test]
+fn a_failed_scene_operation_is_logged_once_and_is_not_a_command_failure() {
+    capture::begin();
+    let mut game = Game::new(GameConfig::default());
+    game.world.insert_resource(Option::<SceneOpId>::None);
+    game.add_system("bad_scene", |world| {
+        if world.resource::<Option<SceneOpId>>().is_some() {
+            return;
+        }
+        let id = world.commands().load_scene(|_| Err(SceneError::BuildRejected)).unwrap();
+        *world.resource_mut::<Option<SceneOpId>>() = Some(id);
+    });
+
+    game.step(Duration::from_millis(16));
+    let id = game.world.resource::<Option<SceneOpId>>().unwrap();
+    assert_eq!(game.world.scene_operation(id).unwrap(), SceneOpStatus::Failed { error: SceneError::BuildRejected });
+    assert!(game.world.command_failures().is_empty());
+    assert_eq!(game.world.resource::<Diagnostics>().command_failures, 0);
+    let messages = capture::messages();
+    assert_eq!(messages.len(), 1, "{messages:?}");
+    assert!(messages[0].contains("scene operation"));
+    assert!(messages[0].contains("scene build was rejected"));
+    assert_eq!(capture::records()[0].level, log::Level::Error);
+
+    capture::begin();
+    game.step(Duration::ZERO);
+    assert_eq!(game.world.scene_operation(id).unwrap(), SceneOpStatus::Failed { error: SceneError::BuildRejected });
+    assert!(capture::messages().is_empty(), "a retained scene failure is not logged again");
+    assert!(game.world.command_failures().is_empty());
+}
+
+#[test]
 fn discarded_events_are_counted_and_not_logged() {
     capture::begin();
     let mut game = Game::new(GameConfig::default());

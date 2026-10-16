@@ -73,6 +73,7 @@ pub mod prelude {
     pub use engine_world::{
         Children, CommandError, CommandFailure, CommandWriter, ComponentDesc, ComponentInfo, ComponentRegistry,
         DumpError, Entity, FieldDesc, GlobalTransform, Interpolate, Name, Parent, Persistence, RegistryError,
-        SceneBuilder, SceneError, SceneInstanceId, SceneMember, Schedule, ScheduleError, Tags, Visibility, World,
+        SceneBuilder, SceneError, SceneInstanceId, SceneMember, SceneOpId, SceneOpStatus, Schedule, ScheduleError,
+        Tags, Visibility, World,
     };
 }

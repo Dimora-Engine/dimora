@@ -7,7 +7,9 @@
 //!
 //! [`World::load_scene`] instantiates a code-defined scene through [`SceneBuilder`].
 //! [`World::unload_scene`] and [`World::replace_scene`] remove an instance synchronously.
-//! Deferred scene commands are a later checkpoint.
+//! [`CommandWriter`](crate::CommandWriter) queues those same three operations. The queue runs them
+//! at the next flush. Each queued call returns a [`SceneOpId`] immediately. The outcome stays on
+//! the scene manager until the caller dismisses it. A scene failure is not a [`CommandError`](crate::CommandError).
 
 use std::collections::{BTreeMap, HashSet};
 use std::fmt;
@@ -32,6 +34,26 @@ impl SceneInstanceId {
 }
 
 impl fmt::Display for SceneInstanceId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+/// Runtime id of one deferred scene operation.
+///
+/// Issued in increasing order, starting at 0, when the operation is queued. An id is never issued
+/// twice. It is not a [`SceneInstanceId`] and it is not a file id. The operation stays
+/// [`SceneOpStatus::Pending`] until the command queue runs it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct SceneOpId(u64);
+
+impl SceneOpId {
+    pub const fn raw(self) -> u64 {
+        self.0
+    }
+}
+
+impl fmt::Display for SceneOpId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0)
     }
@@ -81,6 +103,12 @@ pub enum SceneError {
     InconsistentMembership { entity: Entity },
     /// Lifting `entity` out of a scene would store a non-finite transform. Nothing was removed.
     TransformUnrepresentable { entity: Entity },
+    /// `operation` was never queued, or its result was already dismissed.
+    NoSuchOperation { operation: SceneOpId },
+    /// `operation` is still queued. Its result cannot be dismissed yet.
+    OperationPending { operation: SceneOpId },
+    /// Every `u64` operation id has been issued.
+    OperationIdsExhausted,
 }
 
 impl fmt::Display for SceneError {
@@ -111,8 +139,31 @@ impl fmt::Display for SceneError {
             SceneError::TransformUnrepresentable { entity } => {
                 write!(f, "lifting {entity:?} would store a non-finite transform")
             }
+            SceneError::NoSuchOperation { operation } => write!(f, "scene operation {operation} does not exist"),
+            SceneError::OperationPending { operation } => write!(f, "scene operation {operation} has not run yet"),
+            SceneError::OperationIdsExhausted => f.write_str("every scene operation id has been issued"),
         }
     }
+}
+
+/// Outcome of one deferred scene operation.
+///
+/// [`World::scene_operation`] copies this out and leaves it stored. [`World::dismiss_scene_operation`]
+/// removes one completed outcome. [`World::clear_scene_operations`] removes every completed outcome
+/// and leaves pending ones. Completed outcomes stay until one of those calls. The frame loop does
+/// not drop them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SceneOpStatus {
+    /// Queued. The flush has not run this operation.
+    Pending,
+    /// [`World::load_scene`] published `instance`.
+    Loaded { instance: SceneInstanceId },
+    /// [`World::unload_scene`] removed `instance`.
+    Unloaded { instance: SceneInstanceId },
+    /// [`World::replace_scene`] removed `old` and published `new`.
+    Replaced { old: SceneInstanceId, new: SceneInstanceId },
+    /// The synchronous operation returned `error`. A failed load or replace published nothing from that attempt.
+    Failed { error: SceneError },
 }
 
 impl std::error::Error for SceneError {}
@@ -132,6 +183,8 @@ struct InstanceRecord {
 pub(crate) struct SceneManager {
     next_instance: u64,
     instances: BTreeMap<SceneInstanceId, InstanceRecord>,
+    next_operation: u64,
+    operations: BTreeMap<SceneOpId, SceneOpStatus>,
 }
 
 impl SceneManager {
@@ -141,6 +194,16 @@ impl SceneManager {
         };
         let id = SceneInstanceId(self.next_instance);
         self.next_instance = next;
+        Ok(id)
+    }
+
+    fn allocate_operation(&mut self) -> Result<SceneOpId, SceneError> {
+        let Some(next) = self.next_operation.checked_add(1) else {
+            return Err(SceneError::OperationIdsExhausted);
+        };
+        let id = SceneOpId(self.next_operation);
+        self.next_operation = next;
+        self.operations.insert(id, SceneOpStatus::Pending);
         Ok(id)
     }
 }
@@ -286,6 +349,79 @@ impl World {
                     record.locals.remove(&local);
                     removed += 1;
                 }
+            }
+            Ok(removed)
+        })
+    }
+
+    /// Records a pending deferred scene operation and returns its id.
+    ///
+    /// The id is consumed even though the operation has not run. A missing or borrowed manager
+    /// returns [`SceneError::SceneManagerUnavailable`] and does not issue an id.
+    pub(crate) fn begin_scene_operation(&self) -> Result<SceneOpId, SceneError> {
+        let mut manager = match self.try_resource_mut::<SceneManager>() {
+            Ok(Some(manager)) => manager,
+            Ok(None) | Err(()) => return Err(SceneError::SceneManagerUnavailable),
+        };
+        manager.allocate_operation()
+    }
+
+    /// Stores the outcome of a deferred operation that was [`SceneOpStatus::Pending`].
+    ///
+    /// A missing record is left alone. Dismissing a pending operation is refused, so the record
+    /// is still here when the flush runs.
+    pub(crate) fn complete_scene_op(&self, id: SceneOpId, status: SceneOpStatus) {
+        let Ok(Some(mut manager)) = self.try_resource_mut::<SceneManager>() else {
+            return;
+        };
+        if let Some(slot) = manager.operations.get_mut(&id) {
+            if matches!(*slot, SceneOpStatus::Pending) {
+                if let SceneOpStatus::Failed { error } = status {
+                    log::error!("scene operation {id} failed: {error}");
+                }
+                *slot = status;
+            }
+        }
+    }
+
+    /// The stored outcome of `operation`.
+    ///
+    /// This copies the status and leaves it stored. [`SceneError::NoSuchOperation`] means the id
+    /// was never issued or the outcome was dismissed. A queued operation that has not flushed is
+    /// [`SceneOpStatus::Pending`].
+    pub fn scene_operation(&self, operation: SceneOpId) -> Result<SceneOpStatus, SceneError> {
+        self.scene_manager()?.operations.get(&operation).copied().ok_or(SceneError::NoSuchOperation { operation })
+    }
+
+    /// Removes one completed outcome and returns it.
+    ///
+    /// A pending operation stays queued and returns [`SceneError::OperationPending`].
+    pub fn dismiss_scene_operation(&mut self, operation: SceneOpId) -> Result<SceneOpStatus, SceneError> {
+        self.with_scene_manager(|manager, _| match manager.operations.get(&operation).copied() {
+            None => Err(SceneError::NoSuchOperation { operation }),
+            Some(SceneOpStatus::Pending) => Err(SceneError::OperationPending { operation }),
+            Some(status) => {
+                manager.operations.remove(&operation);
+                Ok(status)
+            }
+        })
+    }
+
+    /// Removes every completed outcome. Pending operations stay. Returns how many were removed.
+    ///
+    /// Completed results accumulate until this call or [`World::dismiss_scene_operation`]. The
+    /// frame loop does not clear them.
+    pub fn clear_scene_operations(&mut self) -> Result<usize, SceneError> {
+        self.with_scene_manager(|manager, _| {
+            let done: Vec<SceneOpId> = manager
+                .operations
+                .iter()
+                .filter(|(_, status)| !matches!(status, SceneOpStatus::Pending))
+                .map(|(&id, _)| id)
+                .collect();
+            let removed = done.len();
+            for id in done {
+                manager.operations.remove(&id);
             }
             Ok(removed)
         })
@@ -1452,5 +1588,131 @@ mod tests {
         assert!(!world.contains(member));
         assert_eq!(world.component::<Children>(runtime).unwrap().0, vec![sibling]);
         assert_hierarchy_closed(&world);
+    }
+
+    #[test]
+    fn deferred_operations_stay_pending_until_flush_and_completed_results_stay_until_cleared() {
+        let mut world = World::new();
+        let (original, entity) = one_entity(&mut world, "original");
+        let (other, other_entity) = one_entity(&mut world, "other");
+        let runtime = world.spawn((Name::new("runtime"), Transform::from_xyz(1.0, 0.0, 0.0)));
+        world.set_parent(runtime, entity).unwrap();
+
+        let load = world
+            .commands()
+            .load_scene(|builder| {
+                builder.spawn((Name::new("later"),));
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(world.scene_operation(load).unwrap(), SceneOpStatus::Pending);
+        assert_eq!(world.scene_operation(load).unwrap(), SceneOpStatus::Pending);
+        assert_eq!(world.dismiss_scene_operation(load).unwrap_err(), SceneError::OperationPending { operation: load });
+        assert_eq!(
+            world.scene_operation(SceneOpId(9)).unwrap_err(),
+            SceneError::NoSuchOperation { operation: SceneOpId(9) }
+        );
+        assert!(world.find_by_name("later").is_empty());
+
+        let failed_load = world
+            .commands()
+            .load_scene(|builder| {
+                let root = builder.spawn((Name::new("doomed"),));
+                builder.spawn_child(root, (Name::new("doomed-child"),))?;
+                Err(SceneError::BuildRejected)
+            })
+            .unwrap();
+        let bad_unload = world.commands().unload_scene(SceneInstanceId(50)).unwrap();
+        let failed_replace = world
+            .commands()
+            .replace_scene(other, |builder| {
+                let root = builder.spawn((Name::new("nope"),));
+                builder.spawn_child(root, (Name::new("nope-child"),))?;
+                Err(SceneError::BuildRejected)
+            })
+            .unwrap();
+        let unload = world.commands().unload_scene(original).unwrap();
+        let replace = world
+            .commands()
+            .replace_scene(other, |builder| {
+                builder.spawn((Name::new("replacement"),));
+                Ok(())
+            })
+            .unwrap();
+        world.commands().spawn((Name::new("after"),));
+        assert!(load.raw() < failed_load.raw() && failed_load.raw() < bad_unload.raw());
+        assert!(bad_unload.raw() < failed_replace.raw() && failed_replace.raw() < unload.raw());
+        assert!(unload.raw() < replace.raw());
+
+        world.flush_commands();
+
+        let SceneOpStatus::Loaded { instance: loaded } = world.scene_operation(load).unwrap() else {
+            panic!("load should publish");
+        };
+        assert_eq!(
+            *world.component::<Name>(world.scene_entity(loaded, 0).unwrap().unwrap()).unwrap(),
+            Name::new("later")
+        );
+        assert_eq!(
+            world.scene_operation(failed_load).unwrap(),
+            SceneOpStatus::Failed { error: SceneError::BuildRejected }
+        );
+        assert!(world.find_by_name("doomed").is_empty());
+        assert!(world.find_by_name("doomed-child").is_empty());
+        assert_eq!(
+            world.scene_operation(bad_unload).unwrap(),
+            SceneOpStatus::Failed { error: SceneError::NoSuchInstance { instance: SceneInstanceId(50) } }
+        );
+        assert_eq!(
+            world.scene_operation(failed_replace).unwrap(),
+            SceneOpStatus::Failed { error: SceneError::BuildRejected }
+        );
+        assert!(world.find_by_name("nope").is_empty());
+        assert_eq!(world.scene_operation(unload).unwrap(), SceneOpStatus::Unloaded { instance: original });
+        assert!(!world.contains(entity));
+        assert!(world.contains(runtime));
+        assert!(world.component::<Parent>(runtime).is_err());
+        let SceneOpStatus::Replaced { old, new } = world.scene_operation(replace).unwrap() else {
+            panic!("replace should publish a new instance");
+        };
+        assert_eq!(old, other);
+        assert!(!world.contains(other_entity));
+        assert_eq!(world.scene_entities(new).unwrap().unwrap().len(), 1);
+        assert!(world.scene_entity(original, 0).unwrap().is_none());
+        assert_eq!(world.find_by_name("after").len(), 1);
+        assert!(world.command_failures().is_empty());
+        assert!(world.has_resource::<SceneManager>());
+        assert_hierarchy_closed(&world);
+
+        assert_eq!(world.clear_scene_operations().unwrap(), 6);
+        assert_eq!(world.scene_operation(load).unwrap_err(), SceneError::NoSuchOperation { operation: load });
+        let still = world
+            .commands()
+            .load_scene(|builder| {
+                builder.spawn((Name::new("kept-pending"),));
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(world.clear_scene_operations().unwrap(), 0);
+        assert_eq!(world.scene_operation(still).unwrap(), SceneOpStatus::Pending);
+        world.flush_commands();
+        let status = world.dismiss_scene_operation(still).unwrap();
+        assert!(matches!(status, SceneOpStatus::Loaded { .. }));
+        assert_eq!(world.scene_operation(still).unwrap_err(), SceneError::NoSuchOperation { operation: still });
+        assert_eq!(
+            world.dismiss_scene_operation(SceneOpId(40)).unwrap_err(),
+            SceneError::NoSuchOperation { operation: SceneOpId(40) }
+        );
+    }
+
+    #[test]
+    fn a_missing_manager_rejects_a_queued_scene_operation_without_inserting_one() {
+        let mut world = World::new();
+        let manager = world.remove_resource::<SceneManager>().unwrap();
+        assert_eq!(world.commands().load_scene(|_| Ok(())).unwrap_err(), SceneError::SceneManagerUnavailable);
+        assert_eq!(world.commands().unload_scene(SceneInstanceId(0)).unwrap_err(), SceneError::SceneManagerUnavailable);
+        assert!(!world.has_resource::<SceneManager>());
+        assert!(world.command_failures().is_empty());
+        world.insert_resource(manager);
     }
 }

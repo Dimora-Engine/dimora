@@ -10,3 +10,4 @@ publish.workspace = true
 [dependencies]
 engine-math.workspace = true
 hecs = "0.10"
+log.workspace = true

@@ -1,6 +1,6 @@
 # ADR-0014: One world, code-defined scenes, and an explicit component registry
 
-* **Status:** Settled for the scene model, the registry, membership, synchronous load, unload, and replace. The deferred scene-operation result is a recommendation, not a decision. D-16 stays open. The `spatial_scene` switch is not done.
+* **Status:** Settled for the scene model, the registry, membership, synchronous load, unload, and replace, and for deferred scene operations on the existing command queue. D-16 stays open. The `spatial_scene` switch is not done.
 * **Date:** 2026-10-15
 * **Backlog id:** D-18
 * **Decided by:** project owner (approved the M4 architecture and the five-phase sequence, with the refinements in this record)
@@ -111,21 +111,17 @@ Destruction uses `despawn_one`, not `World::despawn`, so a non-member child is n
 
 Deferred commands and `SceneOpId` are not in M4-4C.
 
-### Deferred scene-operation results (recommendation, not accepted)
+### M4-4D deferred scene operations (2026-10-16)
 
-A later command can roll a scene back and still return `Ok` from the command closure. That `Ok` means the closure finished and left no partial scene. It does not mean an instance was published. Do not store that outcome in `CommandError`. `CommandError` remains dispatch: the queue could not run the command, or an existing spawn, despawn, or parent command failed.
+`CommandWriter::load_scene`, `unload_scene`, and `replace_scene` append to the existing command queue. There is no second queue and no async runtime. The flush still takes `Commands` out of the world, so those closures call the synchronous scene methods and do not enqueue another command.
 
-The smallest record is a `SceneOpId` allocated when the operation is queued, with the result stored on `SceneManager`:
+Each call that is accepted returns a `SceneOpId` before the flush. The id is not a `SceneInstanceId` and it is not stored in a file. Issuing it stores `SceneOpStatus::Pending` on `SceneManager`. A missing manager returns `SceneError::SceneManagerUnavailable` and issues no id. A missing `Commands` resource is still the existing panic. This path does not add one.
 
-* `Pending` until flush runs the closure.
-* `Succeeded { instance }` when the instance is published. This is the only place the new `SceneInstanceId` is handed out.
-* `RolledBack { error }` when creation failed, the created entities are gone, and no instance was published. An id consumed by that attempt is not reused and is not returned here as a live instance.
+`World::scene_operation` copies the status and leaves it stored. `Pending` means the flush has not run it. After the flush the status is `Loaded`, `Unloaded`, `Replaced`, or `Failed { error }`. `Failed` uses `SceneError`. A failed load or replace publishes nothing from that attempt. The command closure still returns `Ok` to the queue, so `CommandError` and `command_failures` stay dispatch records. `Diagnostics.command_failures` does not count a scene failure. Later commands in the same flush still run. The failure is logged once, through the `log` crate, when the status becomes `Failed`. A later step does not log that same record again. Completed results still accumulate until dismiss or clear.
 
-The caller receives `SceneOpId` immediately, the same way `CommandWriter::spawn` returns an `Entity` before flush. After flush, `World::scene_operation(id)` reads the stored result. A dispatch failure never writes that result: the writer returns `Err` before a `SceneOpId` exists, or an unrelated command records a `CommandFailure`.
+`dismiss_scene_operation` removes one completed status and returns it. A pending id returns `OperationPending` and stays queued. `clear_scene_operations` removes every completed status and leaves pending ones. `Game::step` does not clear them. Unclaimed results stay until one of those calls. An unknown id is `NoSuchOperation`.
 
-The existing event queues are cleared at the end of `step`, so they are a poor place for the result the caller reads after `step` returns. A later stage in the same step can read the stored result. An event can notify. It is not the record. This adds no queue and no async runtime.
-
-This recommendation is not implemented. Deferred scene commands wait until it is approved.
+The operation runs at the existing flush: after the stage's systems, and between fixed iterations. A later system in the same stage still sees `Pending`. The next stage, and the next fixed iteration, sees the completed status. `spatial_scene` does not switch scenes in this checkpoint.
 
 ### Follow-ups that stay open
 
@@ -144,7 +140,8 @@ This recommendation is not implemented. Deferred scene commands wait until it is
 * Phase 3 is name and tag lookup on the same `World`. `find_by_name` and `find_by_tag` scan live entities and return every exact match in `Entity` order. `Tags` stores plain strings, rejects `""`, keeps the first copy of a duplicate, and does not follow `Parent`. It is `Persistence::Persist` in the registry. There is no name index and no tag index. Phase 3 is commit `f9a4aab`.
 * M4-4A is scene identity and membership: `SceneInstanceId`, `SceneMember`, `SceneError`, an internal `SceneManager`, and `World` methods that create an empty instance, track an existing entity, look it up, and sweep stale rows. It is commit `302622b`.
 * M4-4B is `SceneBuilder` and synchronous `load_scene`, including rollback of a failed build. It is commit `128c70e`.
-* M4-4C is synchronous `unload_scene` and `replace_scene`. It is implemented locally and is not committed. Phase 5 is the `spatial_scene` switch. Deferred scene commands wait on the result recommendation above.
+* M4-4C is synchronous `unload_scene` and `replace_scene`. It is commit `e12fb5b`.
+* M4-4D queues load, unload, and replace on the existing command queue and stores a `SceneOpStatus` until the caller clears it. It is implemented locally and is not committed. The `spatial_scene` switch is the next checkpoint.
 * M19 still chooses the file encoding, under ADR-0011, after D-16. RON remains a candidate. It is not a dependency.
 * D-16 and D-41 stay open. D-41 may later read the flags this registry stores.
 
@@ -156,6 +153,8 @@ M4-4A tests cover distinct instance ids, repeated local ids on distinct entities
 
 M4-4B tests cover an empty load, one entity, a parent with children, a deep chain, repeated local ids on distinct entities, lookup, failure before any spawn, failure after one spawn, failure after a nested hierarchy, rejection of an outside parent, a `Parent` bundled onto an outside entity, rollback of entities and links, unchanged bystanders and resources, empty `Children` cleanup, no published instance, the manager remaining available, consumed ids, and a nested load. An extraction test compares a scene sprite with a directly spawned sprite. `scripts/check.sh` on 2026-10-15 passed with 328 tests. The four screenshots match commit `6dbabb8`. That checkpoint is commit `128c70e`.
 
-M4-4C tests cover an empty unload, one entity, a nested hierarchy, siblings, an unknown id, a second unload of the same id, other instances and runtime entities remaining, a runtime child, a deep runtime descendant, a runtime subtree, a member under a runtime parent, a member under a runtime entity that sits under another member, scene B under scene A, several ownership transitions, closed `Parent` and `Children` links, uniform-scale world transforms, the non-uniform-plus-rotation TRS approximation, interpolation snap on the lifted entity, unchanged descendant history, unchanged bystander `GlobalTransform` values, stale rows, a forged `SceneMember`, a broken parent or child link, a non-finite lift, a zero scale axis, replacement of an empty and a populated instance, a failed replacement before any spawn and after nested spawns, consumed ids, and a missing manager. Shared assets used by two instances and by a runtime entity, and an application asset the scene never references, stay after unload. Reloading still resolves the same sprite. The GPU test starts from a camera-only cache of 0 textures and 0 meshes, records 2 textures and 1 mesh after the scene renders, and returns to that camera baseline after unload, an explicit `AssetManager::remove` of the test-owned assets, and another frame. `scripts/check.sh` on 2026-10-16 passed with 341 tests, including the replacement invariant test. The four screenshots match commit `6dbabb8`.
+M4-4C tests cover an empty unload, one entity, a nested hierarchy, siblings, an unknown id, a second unload of the same id, other instances and runtime entities remaining, a runtime child, a deep runtime descendant, a runtime subtree, a member under a runtime parent, a member under a runtime entity that sits under another member, scene B under scene A, several ownership transitions, closed `Parent` and `Children` links, uniform-scale world transforms, the non-uniform-plus-rotation TRS approximation, interpolation snap on the lifted entity, unchanged descendant history, unchanged bystander `GlobalTransform` values, stale rows, a forged `SceneMember`, a broken parent or child link, a non-finite lift, a zero scale axis, replacement of an empty and a populated instance, a failed replacement before any spawn and after nested spawns, consumed ids, and a missing manager. Shared assets used by two instances and by a runtime entity, and an application asset the scene never references, stay after unload. Reloading still resolves the same sprite. The GPU test starts from a camera-only cache of 0 textures and 0 meshes, records 2 textures and 1 mesh after the scene renders, and returns to that camera baseline after unload, an explicit `AssetManager::remove` of the test-owned assets, and another frame. `scripts/check.sh` on 2026-10-16 passed with 341 tests, including the replacement invariant test. The four screenshots match commit `6dbabb8`. That checkpoint is commit `e12fb5b`.
+
+M4-4D tests cover a pending operation, a query that does not consume the status, refusal to dismiss a pending id, clearing completed results while a pending one stays, an unknown operation id, a missing manager at queue time, a failed load before and after nested spawns, a failed unload, a failed replacement that keeps the original, a successful unload that lifts a runtime entity, a successful replacement, FIFO instance ids, a later spawn command after a scene failure, and separation from `command_failures`. `Game::step` tests cover same-stage invisibility, visibility in `post_update`, and a flush between fixed iterations. `scripts/check.sh` on 2026-10-16 passed with 348 tests, including the one-time scene-failure log. The four screenshots match commit `6dbabb8`.
 
 Reopen the settled items only under the rule at the bottom of DECISIONS.md. Revisit asset ownership when some caller can prove an asset is unused by every remaining entity and system. Revisit the deferred scene-operation record if the stored `SceneOpId` cannot be read after flush without holding `SceneManager` across the command queue. Revisit scene-local ids when M19 has a real file and D-16 has settled asset ids.

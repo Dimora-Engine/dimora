@@ -487,6 +487,7 @@ version = "0.1.0"
 dependencies = [
  "engine-math",
  "hecs",
+ "log",
 ]
 
 [[package]]

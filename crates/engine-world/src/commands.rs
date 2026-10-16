@@ -1,5 +1,9 @@
 //! Deferred structural changes. Systems append here while a query is open; [`World::flush_commands`]
 //! applies the queue in order through the existing world methods.
+//!
+//! Scene load, unload, and replace use this same queue. Their outcome is a [`crate::SceneOpStatus`],
+//! not a [`CommandError`]. The flush takes this queue out of the world, so a command closure must
+//! not call [`World::commands`]. The scene closures call the synchronous scene methods only.
 
 use std::any::type_name;
 
@@ -160,6 +164,74 @@ impl CommandWriter<'_> {
         self.push(Box::new(move |world| {
             world.detach_children(parent).map_err(|NoSuchEntity| CommandError::NoSuchEntity { entity: parent })
         }));
+    }
+
+    /// Queues [`World::load_scene`].
+    ///
+    /// The returned [`crate::SceneOpId`] is [`crate::SceneOpStatus::Pending`] until the flush.
+    /// The flush calls the synchronous load. Success stores [`crate::SceneOpStatus::Loaded`].
+    /// Failure stores [`crate::SceneOpStatus::Failed`] and publishes nothing from that attempt.
+    /// Either way this command returns `Ok` to the queue, so a scene failure is not a
+    /// [`CommandError`] and later commands still run.
+    ///
+    /// The closure runs the synchronous lifecycle. It does not receive [`CommandWriter`] and this
+    /// method does not enqueue anything while the queue is flushing.
+    pub fn load_scene(
+        &mut self,
+        build: impl for<'a> FnOnce(&mut crate::SceneBuilder<'a>) -> Result<(), crate::SceneError> + Send + 'static,
+    ) -> Result<crate::SceneOpId, crate::SceneError> {
+        let id = self.world.begin_scene_operation()?;
+        self.push(Box::new(move |world| {
+            let status = match world.load_scene(build) {
+                Ok(instance) => crate::SceneOpStatus::Loaded { instance },
+                Err(error) => crate::SceneOpStatus::Failed { error },
+            };
+            world.complete_scene_op(id, status);
+            Ok(())
+        }));
+        Ok(id)
+    }
+
+    /// Queues [`World::unload_scene`].
+    ///
+    /// Success stores [`crate::SceneOpStatus::Unloaded`]. An unknown or inconsistent instance
+    /// stores [`crate::SceneOpStatus::Failed`] and leaves other instances where they were.
+    /// The command itself returns `Ok` to the queue.
+    pub fn unload_scene(&mut self, instance: crate::SceneInstanceId) -> Result<crate::SceneOpId, crate::SceneError> {
+        let id = self.world.begin_scene_operation()?;
+        self.push(Box::new(move |world| {
+            let status = match world.unload_scene(instance) {
+                Ok(()) => crate::SceneOpStatus::Unloaded { instance },
+                Err(error) => crate::SceneOpStatus::Failed { error },
+            };
+            world.complete_scene_op(id, status);
+            Ok(())
+        }));
+        Ok(id)
+    }
+
+    /// Queues [`World::replace_scene`].
+    ///
+    /// Success stores [`crate::SceneOpStatus::Replaced`]. A failed build stores
+    /// [`crate::SceneOpStatus::Failed`], leaves `instance` published, and does not leave the
+    /// replacement published. The command itself returns `Ok` to the queue.
+    ///
+    /// The closure does not receive [`CommandWriter`].
+    pub fn replace_scene(
+        &mut self,
+        instance: crate::SceneInstanceId,
+        build: impl for<'a> FnOnce(&mut crate::SceneBuilder<'a>) -> Result<(), crate::SceneError> + Send + 'static,
+    ) -> Result<crate::SceneOpId, crate::SceneError> {
+        let id = self.world.begin_scene_operation()?;
+        self.push(Box::new(move |world| {
+            let status = match world.replace_scene(instance, build) {
+                Ok(new_id) => crate::SceneOpStatus::Replaced { old: instance, new: new_id },
+                Err(error) => crate::SceneOpStatus::Failed { error },
+            };
+            world.complete_scene_op(id, status);
+            Ok(())
+        }));
+        Ok(id)
     }
 
     fn push(&self, command: CommandFn) {

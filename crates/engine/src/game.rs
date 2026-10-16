@@ -367,7 +367,9 @@ impl Game {
     /// counts them until the next call. Command failures stay readable until the next call, each
     /// tagged with the stage that flushed it. Each of those failures is logged once, at the end of
     /// this call. The next call clears the list before any system runs, so an old failure is not
-    /// logged again.
+    /// logged again. A deferred scene operation that fails is logged once when its
+    /// [`engine_world::SceneOpStatus`] becomes `Failed`. That log is not a command failure, and
+    /// this call does not clear the scene-operation record.
     ///
     /// [`Diagnostics`] records `dt` as [`Diagnostics::frame`] and the CPU time of each stage
     /// separately. `dt` is simulation time. It is not how long the call took. The fixed-update
