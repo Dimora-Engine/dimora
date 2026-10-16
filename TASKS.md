@@ -24,9 +24,10 @@ is the public-API review recorded below. M3b Phases 1–3 are checkpointed local
 **M4 is in progress.** Phase 1, the component registry and text dumps, is commit `cdb5ec3` and is not
 pushed (ADR-0014). Phase 2, hierarchical visibility, is commit `2c76f71` and is not pushed. Phase 3,
 name and tag lookup, is commit `f9a4aab` and is not pushed. M4-4A, scene instance tracking, is
-implemented locally and is not committed. Load, unload, replace, and the `spatial_scene` switch are
-not started. M4 is not complete. Evidence is under "M4 Phase 1 results", "M4 Phase 2 results",
-"M4 Phase 3 results", and "M4-4A results".
+commit `302622b` and is not pushed. M4-4B, synchronous scene load, is implemented locally and is not
+committed. Unload, replace, and the `spatial_scene` switch are not started. M4 is not complete.
+Evidence is under "M4 Phase 1 results", "M4 Phase 2 results", "M4 Phase 3 results", "M4-4A results",
+and "M4-4B results".
 
 ## Completed work
 
@@ -731,7 +732,7 @@ Checkpointed locally with this record. Not pushed. M4 is not complete. Phase 1 i
 
 ## M4-4A results (2026-10-15)
 
-Implemented locally. Not committed. M4 is not complete. Phase 1 is `cdb5ec3`. Phase 2 is `2c76f71`. Phase 3 is `f9a4aab`.
+Commit `302622b`. Not pushed. M4 is not complete. Phase 1 is `cdb5ec3`. Phase 2 is `2c76f71`. Phase 3 is `f9a4aab`.
 
 **Behavior.** `World::new` inserts an internal scene manager. `create_scene_instance` opens an empty instance and returns a new `SceneInstanceId`. Ids start at 0 and increase. An issued id is not issued again. `track_scene_entity` records one live entity that does not already have `SceneMember`, inserts that component, and assigns the next scene-local `u32` in that instance, starting at 0. It does not spawn and does not edit any other entity. The same local id may exist in another instance. `scene_entity` returns the recorded entity only when it is alive and its `SceneMember` names that instance and local id. Otherwise it returns `Ok(None)`. A stale row stays until `sweep_scene_mappings`, which drops dead or mismatched rows and does not reuse the local id. Empty instances stay. `World::despawn` is unchanged.
 
@@ -746,6 +747,22 @@ Implemented locally. Not committed. M4 is not complete. Phase 1 is `cdb5ec3`. Ph
 **Repository check.** `scripts/check.sh` on 2026-10-15, macOS 27.0 arm64, `rustc 1.99.0`, exit 0. All 4 steps passed. `cargo test --workspace` with `DIMORA_REQUIRE_GPU=1` reported **318 passed, 0 failed, 0 ignored**. `headless.rs` ran 19 tests. `spatial_scene` `configurations.rs` ran 16. Clippy `--all-targets` compiled `basic_2_5d` and `spatial_scene`.
 
 **Screenshots.** Not re-rendered. `extract_scene` queries sprites, meshes, tilemaps, lights, cameras, `Visibility`, and `Parent`. It does not read `SceneMember` or the scene manager. This change does not alter extraction or the examples.
+
+## M4-4B results (2026-10-15)
+
+Implemented locally. Not committed. M4 is not complete. M4-4A is `302622b`.
+
+**Behavior.** `World::load_scene` takes the scene manager out, issues a `SceneInstanceId`, and runs `SceneBuilder`. `spawn` records a new entity. `spawn_child` parents it only under an entity this build created. The closure does not receive `&mut World`. On `Ok`, each created entity gets `SceneMember` in spawn order and the instance is inserted. On `Err`, those entities are despawned, an empty `Children` component the build introduced on a surviving entity is removed, and the instance is not inserted. The id is not reused. A nested load while the manager is out returns `SceneManagerUnavailable` and does not insert a replacement. The original manager is put back on `Ok` and on `Err`. A panic is not restored. `create_scene_instance` and `track_scene_entity` stay public and can still build membership outside a load.
+
+**Rendering.** Extraction is unchanged. A sprite created by `load_scene` produces the same `SpriteInstance` as the same sprite spawned directly (`engine-renderer` `tests/scene_load.rs`).
+
+**Not in this change.** Unload, replace, deferred scene commands, `SceneOpId`, scene files, prefab assets, asset deletion, and the `spatial_scene` switch.
+
+**Tests.** Nine new tests in `engine-world` `scene::tests`: empty load, one entity, a parent with children plus a deep chain, two instances, failed loads before and after spawns, an outside parent and a `Parent` in a bundle, empty `Children` cleanup, a nested load, and a missing manager. One extraction test compares a scene sprite with a spawned sprite.
+
+**Repository check.** `scripts/check.sh` on 2026-10-15, macOS 27.0 arm64, `rustc 1.99.0`, exit 0. All 4 steps passed. `cargo test --workspace` with `DIMORA_REQUIRE_GPU=1` reported **328 passed, 0 failed, 0 ignored**. `headless.rs` ran 19 tests. `spatial_scene` `configurations.rs` ran 16.
+
+**Screenshots.** Release, 1280×720, rendered from this working tree and from commit `6dbabb8` (`6dbabb88f10779301115d04720ac1f52000ed03a`), then compared with `cmp -s`. All four byte-identical: `basic_2_5d` 746071 bytes, `basic_2_5d --ortho` 462130, `spatial_scene --camera perspective` 136991, `spatial_scene --camera orthographic` 34046.
 
 ## Planned systems and their state
 
@@ -764,8 +781,8 @@ in the current scope.
 
 ## Not in scope now
 
-M4-4B, phase 5, and everything after M4. In particular: no scene format, no scene load or unload, no new rendering features, no collision, no
-editor work, and no work on UI, scripting or any of the three character representations. M4 Phase 1 is commit `cdb5ec3`. Phase 2 is commit `2c76f71`. Phase 3 is commit `f9a4aab`. M4-4A (instance tracking) is implemented locally and is not committed. None of M4 is pushed. M4 is not complete. M3b is complete locally and is not pushed. These systems are deliberately
+M4-4C, phase 5, and everything after M4. In particular: no scene format, no scene unload or replace, no new rendering features, no collision, no
+editor work, and no work on UI, scripting or any of the three character representations. M4 Phase 1 is commit `cdb5ec3`. Phase 2 is commit `2c76f71`. Phase 3 is commit `f9a4aab`. M4-4A is commit `302622b`. M4-4B (synchronous load) is implemented locally and is not committed. None of M4 is pushed. M4 is not complete. M3b is complete locally and is not pushed. These systems are deliberately
 not being started together: each has its own milestone, prerequisites and decisions. Decisions that data
 formats or public APIs will bake in are made before their first consumer (see
 [docs/DECISIONS.md](docs/DECISIONS.md#what-to-resolve-first)).

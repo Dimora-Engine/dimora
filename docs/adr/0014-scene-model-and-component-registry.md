@@ -1,6 +1,6 @@
 # ADR-0014: One world, code-defined scenes, and an explicit component registry
 
-* **Status:** Settled for the scene model, the registry shape, and the M4-4A membership rules below. Synchronous load, unload, and replace are accepted in shape and not implemented. The deferred scene-operation result is a recommendation, not a decision. D-16 stays open.
+* **Status:** Settled for the scene model, the registry shape, M4-4A membership, and M4-4B synchronous load. Unload and replace are accepted in shape and not implemented. The deferred scene-operation result is a recommendation, not a decision. D-16 stays open.
 * **Date:** 2026-10-15
 * **Backlog id:** D-18
 * **Decided by:** project owner (approved the M4 architecture and the five-phase sequence, with the refinements in this record)
@@ -62,7 +62,7 @@ The registry is a resource inserted by `World::new`. Dumps borrow that resource 
 
 Debug text is deterministic for an unchanged world: roots follow `Entity`'s `Ord`, children follow the `Children` list, registered names are alphabetical, and unregistered `TypeId`s are ordered by their `Debug` text. An entity that cannot be reached from a root is listed under `unreached`. A cycle prints `(already listed)` once and stops. `dump_entity` on a dead or unknown id returns `DumpError::NoSuchEntity`. The printed entity token is `Entity`'s `Debug` form (`{id}v{generation}`), which is the runtime id, not a persistent id.
 
-These types are contract (ADR-0010): `ComponentRegistry`, `ComponentDesc`, `ComponentInfo`, `FieldDesc`, `Persistence`, `RegistryError`, `DumpError`, `register_builtin_components`, and, from M4-4A, `SceneInstanceId`, `SceneMember`, and `SceneError`. They are in the prelude. `SceneManager` is not. No new `hecs` type is re-exported.
+These types are contract (ADR-0010): `ComponentRegistry`, `ComponentDesc`, `ComponentInfo`, `FieldDesc`, `Persistence`, `RegistryError`, `DumpError`, `register_builtin_components`, `SceneInstanceId`, `SceneMember`, `SceneError`, and, from M4-4B, `SceneBuilder`. They are in the prelude. `SceneManager` is not. No new `hecs` type is re-exported.
 
 ### Accepted for M4-4A (2026-10-15)
 
@@ -71,14 +71,14 @@ The feasibility spike's scene-management shape is accepted, with these rules. M4
 1. One existing `World` holds runtime entities and multiple scene instances.
 2. `SceneManager` is an internal `World` resource, inserted by `World::new`.
 3. Public scene operations are `World` methods, so a `SceneManager` guard is not held across `spawn`.
-4. `SceneBuilder`, when M4-4B adds it, is the only way a scene closure creates entities. It does not hand out `&mut World`.
+4. `SceneBuilder` is how a scene closure creates entities. It does not hand out `&mut World`. `create_scene_instance` and `track_scene_entity` remain public low-level operations and can still build membership outside a load.
 5. An entity belongs to at most one scene instance.
 6. `SceneInstanceId` is a runtime id. Issued ids start at 0 and increase. An id is not issued twice, including after a failed creation that consumed one.
-7. Scene-local `u32`s are unique inside one instance, may repeat in another, and are not file ids. M4-4A assigns them in track order. A future stable id can be a separate field. Spawn order is not that field.
+7. Scene-local `u32`s are unique inside one instance, may repeat in another, and are not file ids. `load_scene` assigns them in spawn order. `track_scene_entity` assigns them in track order. A future stable id can be a separate field. Spawn order is not that field.
 8. `SceneMember` is `Persistence::Runtime`.
-9. Scene creation is synchronous. M4-4A's `create_scene_instance` only opens an empty instance. It does not run a scene definition.
+9. Scene creation is synchronous. `load_scene` runs the builder and publishes the instance only after that returns `Ok`. `create_scene_instance` still publishes an empty instance immediately.
 10. Scene asset serialization stays in M19.
-11. Scene construction does not insert or remove assets. M4-4A has no scene constructor that touches `AssetManager`.
+11. Scene construction does not insert or remove assets. `SceneBuilder` has no asset or resource methods.
 12. Scene membership does not own referenced assets. Unload, when it exists, will not call `AssetManager::remove` because an entity disappeared.
 13. Unload preserves entities that are not members of that instance. M4-4A does not unload. `track_scene_entity` does not modify any entity except the one named.
 14. A later unload lifts a non-member child to its world transform by walking that entity's parent chain. It does not run a full `propagate_transforms`, which would insert `GlobalTransform` on unrelated entities. M4-4A does not lift.
@@ -88,6 +88,16 @@ The feasibility spike's scene-management shape is accepted, with these rules. M4
 Borrowing. A scene method takes `SceneManager` out of the resource map and inserts that same value before it returns `Ok` or `Err`. An ordinary error does not leave the manager missing. A nested call while the manager is out returns `SceneError::SceneManagerUnavailable` and does not insert a replacement. A panic inside the method is not a transaction: the insert does not run. No `unsafe` is used.
 
 Stale rows. `scene_entity` returns a recorded entity only when it is alive and its `SceneMember` names that instance and local id. A dead id, a reused hecs slot, a removed component, or a component that names a different id does not resolve. The row stays until `sweep_scene_mappings`. Sweep drops those rows and does not reuse the local id or the instance id. Empty instances remain.
+
+### M4-4B load and rollback (2026-10-15)
+
+`World::load_scene` takes the manager out, issues a `SceneInstanceId`, and runs `SceneBuilder`. The builder can `spawn` and `spawn_child`. `spawn_child` accepts only a parent this build created. A `Parent` component aimed at any other entity fails validation. The closure does not receive `&mut World`, `CommandWriter`, or `AssetManager`.
+
+On `Ok`, members are assigned in spawn order and the instance is inserted. On `Err`, created entities are despawned, an empty `Children` component this build introduced on a surviving entity is removed, and the instance is not inserted. The id stays consumed. Unrelated entities and resources are left as they were. Ordinary `Result` paths put the same manager value back. A panic does not. A nested scene operation while the manager is out returns `SceneManagerUnavailable` and does not insert a replacement.
+
+`create_scene_instance` and `track_scene_entity` stay public. They can publish an empty instance or attach an existing entity outside `load_scene`. Making them `pub(crate)` later would break that surface. Nothing in the examples calls them. The recommendation is to keep them documented as low-level until a later checkpoint, then hide them if no caller needs them. This checkpoint does not change their visibility.
+
+Unload, replace, deferred commands, and `SceneOpId` are not in M4-4B.
 
 ### Deferred scene-operation results (recommendation, not accepted)
 
@@ -109,7 +119,7 @@ This recommendation is not implemented. Deferred scene commands wait until it is
 
 **Asset ownership.** Accepted: membership does not own assets, and scene code does not call `AssetManager::remove` because an entity disappeared. Shared use by another scene, a runtime entity, or the application stays valid. D-16 is still open. Handles are name hashes, and the manager does not track users, so M4 still cannot prove exclusive ownership of an arbitrary handle. The GPU-baseline test, when unload exists, inserts assets only that test uses, calls `remove` itself after unload, and renders one frame.
 
-**Spawn rollback.** The spike is done. A constrained builder is the accepted way to create scene entities. Full atomicity is not claimed. A panic while `SceneManager` is out of the resource map is not restored. M4-4B implements the builder, rollback, unload, and replace. M4-4A does not.
+**Spawn rollback.** Implemented for `load_scene` in M4-4B, for `Result` errors only. A panic while the manager is out of the world is not restored. Unload and replace are M4-4C and are not implemented.
 
 **Identity.** Settled for M4 in "Accepted for M4-4A" above. M19 still chooses which id a file stores. Spawn-order local ids are not that id.
 
@@ -120,7 +130,8 @@ This recommendation is not implemented. Deferred scene commands wait until it is
 * Phase 1 is the registry, built-in registration, and the text dumps. It is commit `cdb5ec3`, local, not pushed.
 * Phase 2 is hierarchical visibility in `extract_scene`, as item 5 describes. It is commit `2c76f71`. Sprites, meshes, tilemaps, and lights share one ancestor walk (`AncestorVisibility::hides`).
 * Phase 3 is name and tag lookup on the same `World`. `find_by_name` and `find_by_tag` scan live entities and return every exact match in `Entity` order. `Tags` stores plain strings, rejects `""`, keeps the first copy of a duplicate, and does not follow `Parent`. It is `Persistence::Persist` in the registry. There is no name index and no tag index. Phase 3 is commit `f9a4aab`.
-* M4-4A is scene identity and membership: `SceneInstanceId`, `SceneMember`, `SceneError`, an internal `SceneManager`, and `World` methods that create an empty instance, track an existing entity, look it up, and sweep stale rows. It is implemented locally and is not committed. M4-4B is the constrained builder, rollback, unload, and replace. Phase 5 is the `spatial_scene` switch. Deferred scene commands wait on the result recommendation above.
+* M4-4A is scene identity and membership: `SceneInstanceId`, `SceneMember`, `SceneError`, an internal `SceneManager`, and `World` methods that create an empty instance, track an existing entity, look it up, and sweep stale rows. It is commit `302622b`.
+* M4-4B is `SceneBuilder` and synchronous `load_scene`, including rollback of a failed build. It is implemented locally and is not committed. M4-4C is unload and replace. Phase 5 is the `spatial_scene` switch. Deferred scene commands wait on the result recommendation above.
 * M19 still chooses the file encoding, under ADR-0011, after D-16. RON remains a candidate. It is not a dependency.
 * D-16 and D-41 stay open. D-41 may later read the flags this registry stores.
 
@@ -128,6 +139,8 @@ This recommendation is not implemented. Deferred scene commands wait until it is
 
 Phase 1 tests cover duplicate names, duplicate types, conflicting metadata, empty and repeated field names, declared fields, a missing formatter, a formatter length mismatch, unregistered `TypeId`s, hierarchy order, empty worlds, missing names, cycles, unreached entities, and dead entities. `Game::new` registers the built-ins. A second `register_builtin_components` on that world returns `Ok` and keeps the first formatters. A name already used by a different type is still `DuplicateName`.
 
-M4-4A tests cover distinct instance ids, repeated local ids on distinct entities, missing instances and local ids, entities with no membership, despawn, a reused hecs slot, a missing or wrong `SceneMember`, ordinary errors restoring the manager, a missing manager not being replaced, registry metadata, and dump text. `scripts/check.sh` on 2026-10-15 passed with 318 tests. Extraction was not modified, so the four screenshot baselines were not re-rendered.
+M4-4A tests cover distinct instance ids, repeated local ids on distinct entities, missing instances and local ids, entities with no membership, despawn, a reused hecs slot, a missing or wrong `SceneMember`, ordinary errors restoring the manager, a missing manager not being replaced, registry metadata, and dump text. That checkpoint is commit `302622b`. `scripts/check.sh` then passed with 318 tests.
+
+M4-4B tests cover an empty load, one entity, a parent with children, a deep chain, repeated local ids on distinct entities, lookup, failure before any spawn, failure after one spawn, failure after a nested hierarchy, rejection of an outside parent, a `Parent` bundled onto an outside entity, rollback of entities and links, unchanged bystanders and resources, empty `Children` cleanup, no published instance, the manager remaining available, consumed ids, and a nested load. An extraction test compares a scene sprite with a directly spawned sprite. `scripts/check.sh` on 2026-10-15 passed with 328 tests. The four screenshots match commit `6dbabb8`.
 
 Reopen the settled items only under the rule at the bottom of DECISIONS.md. Revisit asset ownership when some caller can prove an asset is unused by every remaining entity and system. Revisit the deferred scene-operation record if the stored `SceneOpId` cannot be read after flush without holding `SceneManager` across the command queue. Revisit scene-local ids when M19 has a real file and D-16 has settled asset ids.

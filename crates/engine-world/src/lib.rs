@@ -38,6 +38,6 @@ pub use interpolate::{snapshot_interpolation, Interpolate};
 pub use lookup::Tags;
 pub use registry::{ComponentDesc, ComponentInfo, ComponentRegistry, FieldDesc, Persistence, RegistryError};
 pub use resources::Resources;
-pub use scene::{SceneError, SceneInstanceId, SceneMember};
+pub use scene::{SceneBuilder, SceneError, SceneInstanceId, SceneMember};
 pub use schedule::{Schedule, ScheduleError};
 pub use world::{Name, Visibility, World};
