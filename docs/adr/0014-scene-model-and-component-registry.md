@@ -46,7 +46,7 @@ A, with the refinements below. The trade-off is hand-written metadata in exchang
 2. A scene definition is code. A scene instance is runtime state in that same world.
 3. Scene-owned entities will carry `SceneMember`. Phase 4 adds the component. Phase 1 does not.
 4. Components are registered explicitly with a stable name, a `TypeId`, a declared field list, a debug formatter, a persistence class, and script visibility flags.
-5. Hierarchical visibility will be resolved while extracting. Phase 2 does that. It does not write a cached visibility component. Absence of `Visibility` still means visible.
+5. Hierarchical visibility is resolved while extracting. It does not write a cached visibility component. Absence of `Visibility` means that entity is locally visible. An entity is omitted when it or any ancestor in its `Parent` chain has `Visibility::Hidden`. Local components are left as written. The walk stops on a repeated entity id and on a parent id that has no further `Parent`, including a stale id. Sprites, meshes, tilemaps, and lights use that rule. `Camera.active` and `order` still choose the camera; `Visibility` does not activate or deactivate one. A renderable parented under a hidden camera is still omitted. `AmbientLight` and `Fog` are resources and are not part of the chain. Depth testing and `RenderOrder` are unchanged.
 6. Registry types live in `engine-world`. `engine` registers world, renderer, and animation components. `Game::new` does that once.
 7. A code-defined prefab is a function that instantiates entities into the existing `World`. It is not a second object model. Phase 4 documents one such function. Phase 1 does not add it.
 8. M4 writes no scene file.
@@ -80,8 +80,8 @@ An asset that is exclusively owned may be released when that exclusive ownership
 
 ## Consequences and follow-up
 
-* Phase 1 (this record's code) is the registry, built-in registration, and the text dumps. Rendering is unchanged.
-* Phase 2 is hierarchical visibility in extraction. Phase 3 is name and tag lookup. Phase 4 is instances, membership, and the code-defined spawn function, after the feasibility spike. Phase 5 is the `spatial_scene` switch. None of those are in this change.
+* Phase 1 is the registry, built-in registration, and the text dumps. It is commit `cdb5ec3`, local, not pushed.
+* Phase 2 is hierarchical visibility in `extract_scene`, as item 5 describes. It is checkpointed locally with this record. Sprites, meshes, tilemaps, and lights share one ancestor walk (`AncestorVisibility::hides`). Phase 3 is name and tag lookup. Phase 4 is instances, membership, and the code-defined spawn function, after the feasibility spike. Phase 5 is the `spatial_scene` switch.
 * M19 still chooses the file encoding, under ADR-0011, after D-16. RON remains a candidate. It is not a dependency.
 * D-16 and D-41 stay open. D-41 may later read the flags this registry stores.
 

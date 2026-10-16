@@ -21,9 +21,10 @@ Lifecycle anchors are `ecf4fa1`. M3a-3 is `cd802f0`. M3a-4 is `5c4fd97`. M3a-5 i
 is the public-API review recorded below. M3b Phases 1–3 are checkpointed locally (`57dbc4a`,
 `83286a9`, `9c99edf`). Phase 4 is checkpointed locally as `cfdf358`. None of M3b is pushed. The rendering regression baseline is commit `6dbabb8`.
 
-**M4 is in progress for Phase 1 only.** The component registry and text dumps are implemented locally
-and are not pushed (ADR-0014). Phases 2–5 are not started. M4 is not complete. Evidence is under
-"M4 Phase 1 results".
+**M4 is in progress.** Phase 1, the component registry and text dumps, is commit `cdb5ec3` and is not
+pushed (ADR-0014). Phase 2, hierarchical visibility, is checkpointed locally with this record.
+Phases 3–5 are not started. M4 is not complete. Evidence is under "M4 Phase 1 results" and
+"M4 Phase 2 results".
 
 ## Completed work
 
@@ -183,7 +184,7 @@ yet reproduced.
 | KI-15 | ~~Input has 47 keys and no F-keys~~ Phase 1 maps F1–F12, punctuation, navigation, and the keypad, and mouse release is a one-frame edge. Phase 2 adds `Actions` and the fixed-step latch. Phase 4 adds cursor visibility, grab (locked, then confined), and focus-loss release of held input. Still open: gamepad, touch, and text. Device motion is winit's units, not unaccelerated HID. Relative motion and OS focus-loss were not observed on a window; the unit tests cover them | Done for M3b (gamepad, touch, and text stay deferred) | M3b (text and UI scale policy: M10, D-39) |
 | KI-16 | ~~Two rustdoc warnings: unresolved `World` and `Schedule` links in `crates/engine/src/lib.rs`~~ **Fixed by T1** (commit `e08033e`); `cargo doc` with `-D warnings` is clean | Verified | M2 |
 | KI-17 | `Cargo.toml` declares `MIT OR Apache-2.0` but no licence files exist. The licence is **proposed, not owner-confirmed** (OD-3); copyright holder unknown. Audit and the list of files that would change: "Licence audit" below | Verified (repository listing, `cargo metadata --locked`) | Owner decision, then M24 notices |
-| KI-18 | `Visibility::Hidden` applies to the entity only; it does not hide children | Read (`extract.rs`) | M4 |
+| KI-18 | ~~`Visibility::Hidden` applies to the entity only; it does not hide children~~ Extraction omits a sprite, mesh, tilemap, or light when it or any ancestor is `Hidden`. Local components are unchanged. Cameras still use `Camera.active` | Done (M4 Phase 2 checkpoint) | M4 |
 | KI-19 | Performance is unmeasured: extraction is O(renderables) every frame, tilemaps expand per tile per frame, instance buffers are fully rewritten; the only timings available come from a software rasterizer | Read | M6 |
 | KI-20 | ~~Platform: single window, `ControlFlow::Poll`, default present mode; no fullscreen/vsync configuration~~ Phase 4 adds borderless fullscreen, a vsync request with a surface-capability fallback, and an optional `WaitUntil` frame cap. Still one window. Uncapped frames still poll. Exclusive fullscreen and a frame pacer are not built. macOS showed Fifo with vsync on and Immediate with vsync off | Done for M3b | M3 |
 | KI-21 | A sprite's natural size comes from the whole `SpriteAsset`, not from `Sprite.region`, so showing a sheet frame without also setting `size` stretches it to the asset's size | Read (`extract.rs`: `sprite.size.unwrap_or_else(|| asset.world_size())`) | M8 |
@@ -695,6 +696,20 @@ Implemented locally. Not pushed. M4 is not complete.
 **Still open (ADR-0014).** Asset ownership: scene membership does not own assets, and `SceneManager` will not delete from a retain count. Spawn rollback: a constrained builder and a feasibility spike come before Phase 4 code; full atomicity is not claimed. Persistent ids: spawn-order `u32`s are a future runtime map only. M19 is not required to store them. Direct despawn outside `SceneManager` is specified for Phase 4 (alive entity plus matching `SceneMember`) and is not implemented. `dump_entity` already returns `DumpError::NoSuchEntity` for a despawned id. D-16 and D-41 stay open.
 
 **Repository check.** `scripts/check.sh` on 2026-10-15, macOS arm64, `rustc 1.99.0`, exit 0, after the registration review. All 4 steps: `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings` (includes `basic_2_5d` and `spatial_scene`), `cargo test --workspace` with `DIMORA_REQUIRE_GPU=1` (**294 passed, 0 failed, 0 ignored**), `cargo doc --workspace --no-deps` with `-D warnings`. The 18 tests in `engine-renderer-wgpu` `tests/headless.rs` and the 16 in `spatial_scene` `tests/configurations.rs` ran. New tests: 14 in `engine-world` `dump::tests`, 2 in `engine` `tests/registry.rs`. Existing hierarchy and world tests still pass. No screenshot compare was run; extraction was not modified.
+
+## M4 Phase 2 results (2026-10-15)
+
+Checkpointed locally with this record. M4 is not complete. Phase 1 remains commit `cdb5ec3`.
+
+**Behavior.** `extract_scene` reads `Visibility` and `Parent`. A sprite, mesh, tilemap, or light is omitted when that entity or any ancestor has `Visibility::Hidden`. An entity with no `Visibility` is locally visible. The components are not written, and no inherited visibility component is stored. Transforms, parent links, depth testing, and `RenderOrder` are unchanged. The walk records entity ids it has already seen and stops, so a cycle ends. A parent id with no further `Parent`, including a despawned id, ends the walk. Gameplay systems are not told to skip hidden entities.
+
+**Cameras and lights.** `Camera.active` and `order` still choose the camera. `Visibility` on a camera does not turn it off. A renderable parented under a hidden camera is omitted with the other renderables. A light uses the same ancestor rule as a sprite, including a light's own `Visibility::Hidden`. `AmbientLight` and `Fog` stay resources and are unaffected.
+
+**Tests.** Eight extraction tests in `engine-renderer` `tests/visibility.rs`: hidden parent, nested ancestors, a hidden child under a visible parent, a transform-less hidden parent, a missing `Visibility`, restore by removing `Hidden`, reparent and detach, a stale parent, a cycle, meshes, tilemaps, lights, and a hidden active camera. One GPU test, `a_hidden_parent_keeps_its_sprite_off_the_framebuffer`, renders the clear color while the parent is hidden and the red child after `Hidden` is removed. Adapter: Apple M5, Metal.
+
+**Repository check.** `scripts/check.sh` on 2026-10-15, macOS arm64, `rustc 1.99.0`, exit 0. All 4 steps passed. `cargo test --workspace` with `DIMORA_REQUIRE_GPU=1` reported **303 passed, 0 failed, 0 ignored**. `headless.rs` ran 19 tests. `spatial_scene` `configurations.rs` ran 16. Existing hierarchy tests still pass.
+
+**Screenshots.** Release, 1280×720, rendered from this working tree and from commit `6dbabb8` (`6dbabb88f10779301115d04720ac1f52000ed03a`), then compared with `cmp -s`. All four byte-identical: `basic_2_5d` 746071 bytes, `basic_2_5d --ortho` 462130, `spatial_scene --camera perspective` 136991, `spatial_scene --camera orthographic` 34046. KI-18 is closed by the extraction tests and this comparison.
 
 ## Planned systems and their state
 

@@ -10,15 +10,15 @@ modifiers (ADR-0013, `57dbc4a`). Phase 2 adds the fixed-step input latch and `Ac
 checkpointed locally as `83286a9`. Phase 3, physical and logical `Viewport` plus the display scale, is
 checkpointed locally as `9c99edf`. Phase 4, borderless fullscreen, vsync, an optional frame cap,
 cursor grab, and focus-loss cleanup, is checkpointed locally as `cfdf358`. M3b is complete
-locally and is not pushed. M4 Phase 1, the component registry and text dumps, is implemented
-locally and is not pushed (ADR-0014). Scene instances, hierarchical visibility, and name/tag lookup
-are accepted and not built. M4 is not complete.
+locally and is not pushed. M4 Phase 1, the component registry and text dumps, is commit `cdb5ec3`
+(ADR-0014) and is not pushed. M4 Phase 2 resolves hierarchical visibility during extraction and is
+checkpointed locally with this record. Scene instances and name/tag lookup are accepted and not built. M4 is not complete.
 Profiling is not in the code. The M2 audit
 date was 2026-10-13 at `4857158`.
 Everything outside the sections "Proposed future architecture" and "Proposed boundaries" exists in the
 repository today, except that "Cross-system requirements and risks" mixes requirements (what must hold) with
 verified current state; each item says which is which. Those two sections are not implemented, except the
-M4 Phase 1 registry and text dumps named in the scene bullet. A decision
+M4 Phase 1 registry and text dumps, and the M4 Phase 2 visibility rule, named in the scene bullet. A decision
 recorded there is still not code. Sections that describe
 weaknesses are as important as sections that describe strengths; the roadmap
 ([ROADMAP.md](../ROADMAP.md)) is ordered around them.
@@ -462,7 +462,7 @@ These are settled; revisit only with a concrete problem.
 | Assets | Typed handles holding a name hash; manager owns data; sources behind a trait | Components can reference assets before they load |
 | Despawn (D-03) | `despawn` removes the whole subtree; `detach_children` keeps children as roots with their world transform | Bones and attachments are owned by their parent, so orphans are never wanted. Cost: a caller who wants children to survive must say so |
 | GPU cache lifetime (D-04) | Evict a cached texture or mesh when its asset is removed, and when unused for N frames (configurable) | Removed assets are freed promptly and off-screen assets are not re-uploaded every frame. Cost: an asset unused for N frames is re-uploaded when it returns |
-| Scene model and registry (D-18) | One world; code-defined scenes; explicit registration; no scene file in M4 | ADR-0014. Phase 1 is the registry and text dumps. Asset ownership, spawn rollback, and persistent entity ids stay open. Scene files stay in M19 |
+| Scene model and registry (D-18) | One world; code-defined scenes; explicit registration; hierarchical visibility at extract; no scene file in M4 | ADR-0014. Phase 1 is `cdb5ec3`. Phase 2 is checkpointed locally with this record. Asset ownership, spawn rollback, and persistent entity ids stay open. Scene files stay in M19 |
 
 ## Proposed future architecture (NOT implemented)
 
@@ -470,9 +470,9 @@ Direction only; none of this exists in the code. Where an ADR is cited, the deci
 implementation is still a later task. Each item is a roadmap milestone with its own acceptance
 criteria. Open decisions stay in [DECISIONS.md](DECISIONS.md).
 
-* **Scenes as units** (M4): the registry and text dumps exist (Phase 1, ADR-0014). Scene membership,
-  load/unload, hierarchical visibility, and name/tag lookup are accepted and not built. Serialization
-  stays in M19.
+* **Scenes as units** (M4): the registry and text dumps exist (Phase 1, `cdb5ec3`, ADR-0014). Extraction
+  omits a sprite, mesh, tilemap, or light whose ancestor chain contains `Visibility::Hidden` (Phase 2).
+  Scene membership, load/unload, and name/tag lookup are accepted and not built. Serialization stays in M19.
 * **Material assets and sampler/colour-space-aware textures, sub-rectangle texture updates** (M5).
 * **A list of camera passes** instead of one `RenderScene` camera, plus render-to-texture (M6).
 * **A collision world** as a resource rebuilt in the fixed stage, with spatial 3D queries (M7).

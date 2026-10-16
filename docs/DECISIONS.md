@@ -81,7 +81,7 @@ the risk register). **Prototype where the answer depends on a measurement; do no
 | D-02 | Change detection | M3 | M3, M4 (dirty transforms), M23 | Provisional, [ADR-0009](adr/0009-no-change-detection-until-measured.md) (2026-10-14): none until a profile |
 | D-10 | Events and deferred commands | M3 | M3, M4, M7, M8, M18 | Decided, [ADR-0008](adr/0008-commands-and-per-frame-events.md) (2026-10-14). Implemented in M3a-3 |
 | D-49 | Input actions, fixed-step one-shots, viewport scale, window controls | M3b | M3b, M10 | Decided, [ADR-0013](adr/0013-input-actions-and-window-controls.md) (2026-10-15). Phases 1–4 are checkpointed locally (`57dbc4a`, `83286a9`, `9c99edf`, `cfdf358`) and are not pushed. M3b's acceptance criteria are met |
-| D-18 | Scene format, serde, component registry | M4 (registry shape), M19 | M4, M18, M19, M22 | Decided in part, [ADR-0014](adr/0014-scene-model-and-component-registry.md) (2026-10-15). Registry shape and scene model are settled. Phase 1 is implemented locally and is not pushed. Asset ownership, spawn rollback, and persistent entity ids stay open. No scene file in M4. D-16 stays open |
+| D-18 | Scene format, serde, component registry | M4 (registry shape), M19 | M4, M18, M19, M22 | Decided in part, [ADR-0014](adr/0014-scene-model-and-component-registry.md) (2026-10-15). Registry shape and scene model are settled. Phase 1 is `cdb5ec3`, not pushed. Phase 2 is checkpointed locally with this record. Asset ownership, spawn rollback, and persistent entity ids stay open. No scene file in M4. D-16 stays open |
 | D-27 | Units and pixels per unit | M5 | M5, M8, M9, M13 | Open |
 | D-05 | Materials, alpha modes, blended meshes | M5 | M5, M14 | Open |
 | D-06 | Pixel-art filtering, texel snapping, MSAA: policies at the level of each technique, **not a default or a foundation** | M6 (after D-25 and D-08) | M6, M8, M9, M13 | Principles accepted (ADR-0004); API ownership and defaults **deferred pending a rendering prototype** |
@@ -216,7 +216,8 @@ code-defined scenes, `SceneMember` for scene-owned entities, and an explicit reg
 and hand-written field metadata. Hierarchical visibility is an extract-time walk. Registry types live in
 `engine-world`; `engine` registers built-ins. Code-defined prefabs are functions that spawn into that
 world. M4 has no scene file and no `serde`, RON, or JSON dependency. Phase 1 (registry and text dumps)
-is implemented locally and is not pushed.
+is commit `cdb5ec3` and is not pushed. Phase 2 (hierarchical visibility in extraction) is
+checkpointed locally with this record. `Camera.active` still selects the camera.
 
 Still open, inside the same ADR: asset ownership (no retain-count deletion), how a failed spawn rolls
 back, and which id M19 will persist. Spawn-order `u32`s are an M4 runtime map only. D-16 stays open.

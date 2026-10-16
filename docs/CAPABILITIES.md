@@ -121,12 +121,14 @@ Missing from the original category list and now tracked: **save games** (34), **
 * **Now.** `World` wraps `hecs` plus typed resources; `Parent`/`Children`; `GlobalTransform` via a full
   `propagate_transforms` pass; `despawn` removes the subtree and `detach_children` keeps children (D-03);
   transform-less entities are identity (T3). M4 Phase 1 adds `ComponentRegistry` and text dumps of the
-  hierarchy and of one entity (ADR-0014). **Weak point:** `World.entities` is a public
+  hierarchy and of one entity (ADR-0014, `cdb5ec3`). M4 Phase 2 omits a sprite, mesh, tilemap, or light
+  from `extract_scene` when it or any ancestor has `Visibility::Hidden`. The local component is unchanged
+  and no inherited visibility is stored. **Weak point:** `World.entities` is a public
   `hecs::World`, and `get`/`query` return hecs types, so storage is *not* swappable despite the earlier
   claim (R-7).
 * **Required.** Safe hierarchy, deterministic iteration, entity references that survive serialization
   and scripting (generation-checked).
-* **Planned.** Hierarchical visibility (KI-18), name/tag lookup, scene membership (M4 phases 2–4). Dirty
+* **Planned.** Name/tag lookup and scene membership (M4 phases 3–4). Dirty
   transforms only if profiling asks (D-02).
 * **Depends on.** Math. **Integration.** Everything is an entity; extraction, animation, UI anchors,
   colliders, scripts and the editor all read it.
@@ -554,9 +556,9 @@ Missing from the original category list and now tracked: **save games** (34), **
 ## Scenes, tools, production
 
 ### 32. Scenes and lifecycle
-* **Now.** No scene unit. Entities are still created in code. `Visibility::Hidden` does not hide children (KI-18). The component registry and text dumps exist (M4 Phase 1, ADR-0014). There is no load/unload and no code-defined prefab function yet.
-* **Planned.** The rest of M4: scene membership and manager (applied at a stage boundary), hierarchical
-  visibility, name/tag lookup, and one code-defined prefab function. **Depends on.** M2, M3, ADR-0014. Asset ownership and spawn rollback are still open in that ADR.
+* **Now.** No scene unit. Entities are still created in code. `Visibility::Hidden` on an entity or any ancestor omits that entity's sprite, mesh, tilemap, or light during extraction (M4 Phase 2, ADR-0014). Cameras still activate from `Camera.active`. The component registry and text dumps exist (M4 Phase 1, `cdb5ec3`). There is no load/unload and no code-defined prefab function yet.
+* **Planned.** The rest of M4: scene membership and manager (applied at a stage boundary), name/tag lookup,
+  and one code-defined prefab function. **Depends on.** M2, M3, ADR-0014. Asset ownership and spawn rollback are still open in that ADR.
 * **Tests/examples.** Phase 1: registry and dump tests. Still to come: load/unload returns entity count to baseline, with GPU counts returned by an explicit `AssetManager::remove` in the test; `spatial_scene` switches scenes.
 * **Not initially.** Async/streamed scenes, multiple worlds, nested prefab variants, scene files.
 

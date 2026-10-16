@@ -10,7 +10,7 @@ use engine_core::Color;
 use engine_math::{Quat, Transform, Vec2, Vec3};
 use engine_renderer::*;
 use engine_renderer_wgpu::{GpuContext, RenderError, SceneRenderer};
-use engine_world::{propagate_transforms, World};
+use engine_world::{propagate_transforms, Visibility, World};
 
 const W: u32 = 128;
 const H: u32 = 128;
@@ -176,6 +176,32 @@ fn spawn_scene(w: &mut World, cube_z: f32) {
         Transform::from_xyz(0.0, 0.0, cube_z),
         Mesh::new("cube").with_material(Material { lit: false, ..Material::color(Color::rgb(0.0, 0.0, 1.0)) }),
     ));
+}
+
+#[test]
+fn a_hidden_parent_keeps_its_sprite_off_the_framebuffer() {
+    let Some((gpu, mut renderer)) = setup() else { return };
+    let assets = assets();
+    let mut world = world_with_camera();
+    let parent = world.spawn((Transform::IDENTITY, Visibility::Hidden));
+    world.spawn_child(
+        parent,
+        (
+            Transform::from_xyz(0.0, 0.0, 10.0),
+            Sprite::new("quad")
+                .with_size(Vec2::splat(12.0))
+                .with_anchor(Vec2::splat(0.5))
+                .with_tint(Color::rgb(1.0, 0.0, 0.0))
+                .unlit()
+                .cutout(),
+        ),
+    );
+    let hidden = render(&gpu, &mut renderer, &mut world, &assets);
+    assert_eq!(px(&hidden, W / 2, H / 2), [0, 0, 0, 255], "hidden subtree is the clear color");
+
+    world.remove::<Visibility>(parent).unwrap();
+    let shown = render(&gpu, &mut renderer, &mut world, &assets);
+    assert!(is_red(px(&shown, W / 2, H / 2)), "removing Hidden draws the child: {:?}", px(&shown, W / 2, H / 2));
 }
 
 #[test]

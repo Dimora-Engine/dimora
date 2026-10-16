@@ -60,8 +60,8 @@ first" tiers in [docs/DECISIONS.md](docs/DECISIONS.md#what-to-resolve-first).
 * **Now: M3a and M3b are complete locally and are not pushed** (see M3 below). Named stages, commands
   and events, logging, opt-in interpolation, and the public-API review are done. M3b's four phases
   (keys, actions, viewport scale, window controls) are checkpointed locally. M4 Phase 1 (component
-  registry and text dumps, ADR-0014) is implemented locally and is not pushed. The rest of M4 is not
-  started. M4 is not complete.
+  registry and text dumps, ADR-0014) is commit `cdb5ec3` and is not pushed. M4 Phase 2 (hierarchical
+  visibility) is checkpointed locally with this record. Phases 3–5 are not started. M4 is not complete.
   M3a was first because
   collision, animation, scenes, UI and scripting all hang off its stages, commands and events, and because
   three high-cost risks (R-5, R-7, R-8) are cheapest to settle before more systems exist.
@@ -399,14 +399,15 @@ orphaning entities, and the world knows its component types by name.
 
 **Dependencies.** D-03, D-10, D-18 (registry shape, [ADR-0014](docs/adr/0014-scene-model-and-component-registry.md)).
 
-**Phase status.** Phase 1 (registry, built-in registration, text dumps) is implemented locally and is not
-pushed. Phases 2–5 are not started: hierarchical visibility, name/tag lookup, scene instances and
-code-defined prefabs (after a spawn-rollback feasibility spike), then the `spatial_scene` switch.
-Asset ownership and persistent entity ids stay open in ADR-0014. Scene files stay in M19.
+**Phase status.** Phase 1 (registry, built-in registration, text dumps) is commit `cdb5ec3`, local, not
+pushed. Phase 2 (hierarchical visibility in extraction) is checkpointed locally with this record.
+Phases 3–5 are not started: name/tag lookup, scene instances and code-defined prefabs (after a
+spawn-rollback feasibility spike), then the `spatial_scene` switch. Asset ownership and persistent
+entity ids stay open in ADR-0014. Scene files stay in M19.
 
 **Acceptance criteria.**
 - Loading then unloading a scene returns entity count and GPU resource counts to baseline (test).
-- A hidden parent hides all descendants in the extracted scene (test).
+- A hidden parent hides all descendants in the extracted scene (test). **Met by Phase 2.** Cameras still activate from `Camera.active`.
 - Despawning any entity cannot leave a dangling `Parent` (test).
 - `spatial_scene` switches between two scenes at runtime.
 - The dump of a known world lists each entity's registered components and fields, and a component that is

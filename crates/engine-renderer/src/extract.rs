@@ -1,6 +1,8 @@
+use std::collections::{HashMap, HashSet};
+
 use engine_assets::{AssetManager, Texture};
 use engine_math::{Mat3, Mat4, Quat, Rect, Vec2, Vec3};
-use engine_world::{Entity, GlobalTransform, Visibility, World};
+use engine_world::{Entity, GlobalTransform, Parent, Visibility, World};
 
 use crate::camera::{Camera, CameraView};
 use crate::components::{
@@ -24,7 +26,12 @@ use crate::scene::*;
 /// render matrix blended toward its current local. That blend is not written to `Transform` or
 /// `GlobalTransform`. Sprites, meshes, tilemaps, lights, and the active camera share it. With no
 /// stored previous local anywhere, every matrix is that entity's `GlobalTransform`.
+///
+/// A sprite, mesh, tilemap, or light is omitted when it or any ancestor has
+/// [`Visibility::Hidden`]. Absence of `Visibility` means visible. The components are only read.
+/// [`Camera::active`] still decides which camera renders; `Visibility` does not.
 pub fn extract_scene(world: &World, assets: &AssetManager, target_size: Vec2) -> Option<RenderScene> {
+    let hidden = AncestorVisibility::read(world);
     let poses = render_poses(world);
     let (camera, view) = active_camera(world, target_size, &poses)?;
     let frustum = Frustum::from_view_proj(&view.view_proj);
@@ -33,17 +40,15 @@ pub fn extract_scene(world: &World, assets: &AssetManager, target_size: Vec2) ->
     let ambient = world.try_resource::<AmbientLight>().map_or(AmbientLight::default(), |a| *a);
     let ambient = [ambient.color.r, ambient.color.g, ambient.color.b].map(|c| c * ambient.intensity);
     let fog = world.try_resource::<Fog>().map_or(Fog::default(), |f| *f);
-    let lights = extract_lights(world, &view, &poses);
+    let lights = extract_lights(world, &view, &poses, &hidden);
     stats.lights = lights.len() as u32;
 
     let mut cutout: Vec<SpriteInstance> = Vec::new();
     let mut blended: Vec<(SortKey, SpriteInstance)> = Vec::new();
     let mut watch = world.try_resource::<MissingAssetWarnings>().is_some_and(|warnings| !warnings.is_empty());
 
-    for (entity, (sprite, global, vis, order)) in
-        world.query::<(&Sprite, &GlobalTransform, Option<&Visibility>, Option<&RenderOrder>)>().iter()
-    {
-        if matches!(vis, Some(Visibility::Hidden)) {
+    for (entity, (sprite, global, order)) in world.query::<(&Sprite, &GlobalTransform, Option<&RenderOrder>)>().iter() {
+        if hidden.hides(entity) {
             continue;
         }
         let Some(asset) = resolve(world, assets, sprite.asset, "sprite", &mut watch, &mut stats) else {
@@ -75,8 +80,8 @@ pub fn extract_scene(world: &World, assets: &AssetManager, target_size: Vec2) ->
         }
     }
 
-    for (entity, (map, global, vis)) in world.query::<(&TileMap, &GlobalTransform, Option<&Visibility>)>().iter() {
-        if matches!(vis, Some(Visibility::Hidden)) {
+    for (entity, (map, global)) in world.query::<(&TileMap, &GlobalTransform)>().iter() {
+        if hidden.hides(entity) {
             continue;
         }
         let Some(texture) = resolve(world, assets, map.texture, "tilemap", &mut watch, &mut stats) else {
@@ -86,8 +91,8 @@ pub fn extract_scene(world: &World, assets: &AssetManager, target_size: Vec2) ->
     }
 
     let mut meshes = Vec::new();
-    for (entity, (mesh, global, vis)) in world.query::<(&Mesh, &GlobalTransform, Option<&Visibility>)>().iter() {
-        if matches!(vis, Some(Visibility::Hidden)) {
+    for (entity, (mesh, global)) in world.query::<(&Mesh, &GlobalTransform)>().iter() {
+        if hidden.hides(entity) {
             continue;
         }
         let Some(data) = resolve(world, assets, mesh.asset, "mesh", &mut watch, &mut stats) else {
@@ -139,8 +144,52 @@ struct SortKey {
     order: i32,
 }
 
+/// Parent links and local [`Visibility::Hidden`] bits, copied out so extraction can walk
+/// ancestors without borrowing the world again.
+///
+/// Sprites, meshes, tilemaps, and lights all call [`Self::hides`]. That is the only visibility
+/// walk. A later optimization can replace this type. It does not add a cached component.
+///
+/// The walk stops when a parent id was already seen, or when an id has no [`Parent`]. A stale
+/// parent id is not alive and is not in `parents`, so the walk ends there.
+struct AncestorVisibility {
+    locally_hidden: HashSet<Entity>,
+    parents: HashMap<Entity, Entity>,
+}
+
+impl AncestorVisibility {
+    fn read(world: &World) -> Self {
+        let locally_hidden = world
+            .query::<&Visibility>()
+            .iter()
+            .filter(|(_, visibility)| **visibility == Visibility::Hidden)
+            .map(|(entity, _)| entity)
+            .collect();
+        let parents = world.query::<&Parent>().iter().map(|(entity, parent)| (entity, parent.0)).collect();
+        Self { locally_hidden, parents }
+    }
+
+    fn hides(&self, mut entity: Entity) -> bool {
+        let mut seen = Vec::new();
+        loop {
+            if seen.contains(&entity) {
+                return false;
+            }
+            seen.push(entity);
+            if self.locally_hidden.contains(&entity) {
+                return true;
+            }
+            match self.parents.get(&entity) {
+                Some(parent) => entity = *parent,
+                None => return false,
+            }
+        }
+    }
+}
+
 fn active_camera(world: &World, target_size: Vec2, poses: &RenderPoses) -> Option<(Camera, CameraView)> {
     let mut best: Option<(Entity, Camera, GlobalTransform)> = None;
+    // `Visibility` is not an activation flag. `Camera.active` and `order` are.
     for (e, (camera, global)) in world.query::<(&Camera, &GlobalTransform)>().iter() {
         let better = match &best {
             None => true,
@@ -155,10 +204,16 @@ fn active_camera(world: &World, target_size: Vec2, poses: &RenderPoses) -> Optio
     Some((camera, CameraView::new(&camera, &placed, target_size)))
 }
 
-fn extract_lights(world: &World, view: &CameraView, poses: &RenderPoses) -> Vec<LightData> {
+fn extract_lights(
+    world: &World,
+    view: &CameraView,
+    poses: &RenderPoses,
+    hidden: &AncestorVisibility,
+) -> Vec<LightData> {
     let mut lights: Vec<LightData> = world
         .query::<(&Light, &GlobalTransform)>()
         .iter()
+        .filter(|(entity, _)| !hidden.hides(*entity))
         .map(|(entity, (light, global))| {
             let c = light.color;
             let placed = GlobalTransform { matrix: poses.matrix(entity, global) };
