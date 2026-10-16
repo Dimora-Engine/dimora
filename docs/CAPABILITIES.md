@@ -22,7 +22,12 @@ its row in the same commit.
 `KI-n` is [TASKS.md](../TASKS.md); `D-n` is [DECISIONS.md](DECISIONS.md); `Mn` is [ROADMAP.md](../ROADMAP.md);
 `R-n` is [ARCHITECTURE.md](ARCHITECTURE.md#cross-system-requirements-and-risks).
 
-## Verification record (2026-10-13)
+## Verification record (2026-10-13, historical)
+
+This table is the audit at commit `4857158`. It is not the current test count. Later evidence is in
+[TASKS.md](../TASKS.md), including the M4-5 check. The sentence below that logging was absent was true
+on that date. Logging exists now (M3a-4). Scenes, actions, and diagnostics exist now. This planning
+change did not re-run `scripts/check.sh`.
 
 | Check | Result |
 |---|---|
@@ -33,8 +38,8 @@ its row in the same commit.
 | Windows | Built and tested for the first time in CI: `scripts/check.sh` passes (138 tests, none skipped) on the WARP software adapter, both examples render headless. Windowed path, real GPUs and DPI are unverified |
 | CI | GitHub Actions on the pull-request branch ([run 38475229601](https://github.com/Dimora-Engine/dimora/actions/runs/38475229601)): Linux, macOS, Windows `check` and `msrv` jobs all green. Software or paravirtual adapters only. Active on `main` once merged (ADR-0005, Provisional) |
 
-Code size: about 8,000 lines of Rust in nine library crates and two examples. `unsafe`: none in the
-repository. Logging: none (no `log`/`tracing`, no `println!` in library code).
+Code size on that date: about 8,000 lines of Rust in nine library crates and two examples. `unsafe`:
+none in the repository. Logging on that date: none. Logging has since landed (M3a-4).
 
 ## Summary
 
@@ -357,7 +362,7 @@ Missing from the original category list and now tracked: **save games** (34), **
   against blended sprites (R-1).
 * **Required.** One documented rule for opaque, cutout and blended content from sprites, meshes, tiles,
   particles and skinned characters; defined behaviour when blended objects intersect.
-* **Planned.** Alpha modes (M5, D-05), reverse-Z only if an artefact is shown (D-07). **Depends on.** D-05.
+* **Planned.** Alpha classes from ADR-0015 (M5, not implemented). A blended mesh sorts by the camera-space Z of its world-space bounding-sphere centre, an object-level approximation that needs GPU tests when that phase exists. Reverse-Z only if an artefact is shown (D-07). **Depends on.** The M5 material phase. The three coplanar conflicts stay M6/D-48.
 * **Integration.** Shadows, particles and skinned meshes all pick a class; UI is outside this model.
 * **Tests/examples.** A blended mesh in front of and behind a blended sprite (GPU test).
 * **Not initially.** Order-independent transparency, per-pixel sorting.
@@ -366,8 +371,9 @@ Missing from the original category list and now tracked: **save games** (34), **
 * **Now.** `MeshData` (position, normal, uv, `u32` indices), `Mesh` + `Material` component (colour, one
   albedo texture, `lit`), `cuboid` and `cone` generators, back-face culled, instanced. Code-built only;
   no loader. `Material` is a component field, not an asset.
-* **Required.** Material assets with alpha modes and a normal-map slot, more generators, tangents, a
-  loader, skin data later. **Planned.** M5, M12. **Depends on.** D-05, D-36, D-17.
+* **Required.** `MaterialAsset` as specified in ADR-0015, more generators, tangents, a loader, skin data
+  later. **Planned.** M5 (not started), M12. **Depends on.** ADR-0015, D-36, D-17. The inline `Material`
+  remains the implemented type.
 * **Integration.** Sprites and meshes should share a material concept where sensible but need not share
   a pipeline (D-05, D-13).
 * **Tests/examples.** Pixel tests per alpha mode; glTF fixtures (M12).
@@ -376,8 +382,12 @@ Missing from the original category list and now tracked: **save games** (34), **
 ### 12. Textures and atlases
 * **Now.** PNG decode via `image`; nearest or linear; clamp; no mipmaps; always sRGB; any change
   re-uploads the whole texture (KI-6, KI-25).
-* **Required.** Mipmaps, wrap/filter/anisotropy, colour-space flag, sub-region update, runtime atlas
-  packer with padding. **Planned.** M5. **Depends on.** D-27, D-06.
+* **Required.** The texture contract in ADR-0017: mipmaps, wrap, separate filters, anisotropy normalized
+  before sampler creation (linear filters required above 1; no power-of-two rule), per-texture colour
+  space, separate GPU image and sampler caches, sub-region updates that follow the operation they call
+  (`write_texture` keeps a tight row stride), and a texel shelf packer. The padding-to-mip formula is a
+  provisional estimate until the atlas GPU tests exist. **Planned.** M5, not implemented. **Depends on.**
+  ADR-0016. D-06 (snapping) stays M6.
 * **Integration.** The glyph atlas (M10), sheets (M8), normal maps (M14), render targets (M6).
 * **Tests/examples.** GPU tests in M5's acceptance list.
 * **Not initially.** Texture streaming, compression, virtual textures.

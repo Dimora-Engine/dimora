@@ -1,6 +1,6 @@
 # ADR-0014: One world, code-defined scenes, and an explicit component registry
 
-* **Status:** Settled for the scene model, the registry, membership, synchronous load, unload, and replace, deferred scene operations, the `spatial_scene` switch, and one code-defined prefab. `create_scene_instance` and `track_scene_entity` are crate-private. D-16 stays open. Scene files stay in M19. M4 is complete in this working tree. M4-5 is committed locally and is not pushed. Nothing in M4 is pushed.
+* **Status:** Settled for the scene model, the registry, membership, synchronous load, unload, and replace, deferred scene operations, the `spatial_scene` switch, and one code-defined prefab. `create_scene_instance` and `track_scene_entity` are crate-private. D-16 stays open. Scene files stay in M19. M4 is complete in this working tree. M4-5 is commit `2b79806` and is not pushed. Nothing in M4 is pushed.
 * **Date:** 2026-10-15
 * **Backlog id:** D-18
 * **Decided by:** project owner (approved the M4 architecture and the five-phase sequence, with the refinements in this record)
@@ -145,7 +145,7 @@ A later `update` system still sees the old members and `Pending`. `animate` sees
 
 `create_scene_instance` and `track_scene_entity` are `pub(crate)`. Inspection stays public: `scene_entity`, `scene_entities`, `scene_instances`, `scene_membership`, `scene_operation`, `dismiss_scene_operation`, and `clear_scene_operations`. `SceneManager` stays internal. No new `hecs` type is public.
 
-This checkpoint is committed locally and is not pushed. It does not add prefab assets, a prefab manager, or a scene file.
+This checkpoint is commit `2b79806` and is not pushed. It does not add prefab assets, a prefab manager, or a scene file.
 
 ### Follow-ups that stay open
 
@@ -167,7 +167,7 @@ This checkpoint is committed locally and is not pushed. It does not add prefab a
 * M4-4C is synchronous `unload_scene` and `replace_scene`. It is commit `e12fb5b`.
 * M4-4D queues load, unload, and replace on the existing command queue and stores a `SceneOpStatus` until the caller clears it. It is commit `8398e49`.
 * M4-4E switches `spatial_scene` between two code-defined environments through that queue. The camera and the walker are not scene members. It is commit `d58c66b`.
-* M4-5 documents `spawn_lamp` as the code-defined prefab and makes `create_scene_instance` and `track_scene_entity` crate-private. It is committed locally and is not pushed. M4 is complete in this working tree and is not pushed.
+* M4-5 documents `spawn_lamp` as the code-defined prefab and makes `create_scene_instance` and `track_scene_entity` crate-private. It is commit `2b79806` and is not pushed. M4 is complete in this working tree and is not pushed.
 * M19 still chooses the file encoding, under ADR-0011, after D-16. RON remains a candidate. It is not a dependency.
 * D-16 and D-41 stay open. D-41 may later read the flags this registry stores.
 
@@ -185,6 +185,6 @@ M4-4D tests cover a pending operation, a query that does not consume the status,
 
 M4-4E tests in `examples/spatial_scene/tests/switching.rs` cover the initial environment, a pending replacement, dismissal, A to B and back, a repeated round trip, membership, no leftover members, the camera and walker surviving, extraction under every named camera, shared asset revisions, a rejected replacement, one queue entry for two request calls in one press, a held Tab, an unexpected load left published, and an unexpected unload left as the engine applied it. Perspective and orthographic renders of B differ from A and report one light. The check recorded before the unexpected-unload test reported 359 tests; that commit includes the twelfth switching test. The four original screenshots still match commit `6dbabb8`. Environment B's hashes are recorded in TASKS.md and do not replace those baselines. This checkpoint is commit `d58c66b` and is not pushed.
 
-M4-5 tests in `examples/spatial_scene/tests/prefab.rs` cover one lamp, two distinct hierarchies, the post and light transforms, extraction through the existing scene, despawn of the root, scene membership through `place_lamp`, and rollback of a failed build. `scripts/check.sh` on 2026-10-16 passed with 365 tests, 0 failed, 0 ignored. `headless.rs` ran 20 tests on Apple M5, Metal. The four original screenshots still match commit `6dbabb8`. Environment B's perspective and orthographic hashes are unchanged from M4-4E. This checkpoint is committed locally and is not pushed.
+M4-5 tests in `examples/spatial_scene/tests/prefab.rs` cover one lamp, two distinct hierarchies, the post and light transforms, extraction through the existing scene, despawn of the root, scene membership through `place_lamp`, and rollback of a failed build. `scripts/check.sh` on 2026-10-16 passed with 365 tests, 0 failed, 0 ignored. `headless.rs` ran 20 tests on Apple M5, Metal. The four original screenshots still match commit `6dbabb8`. Environment B's perspective and orthographic hashes are unchanged from M4-4E. This checkpoint is commit `2b79806` and is not pushed.
 
 Reopen the settled items only under the rule at the bottom of DECISIONS.md. Revisit asset ownership when some caller can prove an asset is unused by every remaining entity and system. Revisit the deferred scene-operation record if the stored `SceneOpId` cannot be read after flush without holding `SceneManager` across the command queue. Revisit scene-local ids when M19 has a real file and D-16 has settled asset ids.

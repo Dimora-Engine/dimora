@@ -24,26 +24,40 @@ implemented later").
 
 This roadmap was audited and re-ordered on 2026-10-13 against commit `4857158` (after M2 tasks T1 to T3).
 It had been expanded earlier that day to plan three character representations, a UI runtime and gameplay
-scripting.
+scripting. That audit's snapshot (about 138 tests, and no scenes, actions, or logging) is historical.
+The current state is the list below. Evidence for each claim is in [TASKS.md](TASKS.md).
 
 Status values used below: **Done** (evidence cited), **In progress**, **Not started**. Nothing is marked in
-progress or partially done unless TASKS.md shows commits for it. No milestone after M1 is complete. Planning
-a system here does not mean it exists: [docs/CAPABILITIES.md](docs/CAPABILITIES.md) is the record of what does.
+progress or partially done unless TASKS.md shows commits for it. Planning a system here does not mean it
+exists: [docs/CAPABILITIES.md](docs/CAPABILITIES.md) is the record of what does.
 
 ## 1. Where the project stands
 
-**Implemented and tested:** math and conventions, a thin ECS world with a transform hierarchy, spatial
-sprite and mesh rendering through one camera and one depth buffer (orthographic and perspective),
-forward lighting and fog, an asset manager with revisions, GPU cache eviction and an id-collision guard,
-a winit platform loop, a reproducible toolchain and one verification command (`scripts/check.sh`, 138
-tests on Linux and, per TASKS.md, on macOS).
+**Complete locally, not pushed.** M0 and M1. M2's numbered tasks T1 to T3, with licence files (KI-17) and
+the owner's confirmation of GitHub as host still carried. M3a and M3b. M4, through the lamp prefab and the
+crate-private scene helpers, at commit `2b79806`.
 
-**Partial:** tilemaps (no chunking), skeletal animation (a data model with one player), input (keys and
-mouse, no actions), assets (PNG only, synchronous), materials and textures (placeholders).
+**In progress.** M6 has one verified piece: the `spatial_scene` camera-configuration prototype (commit
+`6dbabb8`, tests in `examples/spatial_scene/tests/configurations.rs`). Custom projection, multiple
+viewports, camera-to-texture, tilemap chunking, and the performance baseline are not done. M6 is not
+pulled into M5.
 
-**Absent:** scenes, collision, sprite-sheet animation, 3D
-characters, UI, audio, particles, shadows, scripting, serialization, importers, bundles, debug tools, an
-editor, CI, packaging, logging.
+**Next implementation.** M5, materials and textures. M5-1 records the decisions (ADR-0015, ADR-0016,
+ADR-0017). No M5 renderer, texture, material, sampler, or atlas code exists yet.
+
+**Implemented and tested, beyond the 2026-10-13 audit.** Named stages, commands and events, the `log`
+crate and `Diagnostics`, actions and window controls, scene load/unload/replace on the command flush,
+hierarchical visibility, name and tag lookup, the component registry and text dumps, and one code-defined
+prefab. The last recorded workspace check is in TASKS.md under M4-5 (365 tests). This introduction does
+not add a new test run.
+
+**Still partial.** Tilemaps have no chunking. Skeletal animation is a data model and one player. Assets
+are PNG and synchronous. Materials are an inline colour, one albedo, and a lit flag. Textures are RGBA8,
+sRGB, clamp, and nearest or linear, with no mipmaps.
+
+**Still absent.** Collision, sprite-sheet animation, 3D characters, UI, audio, particles, shadows,
+scripting, serialization, a general importer, bundles, an editor, and packaging. CI exists as a workflow
+(ADR-0005); the host confirmation is still the carried M2 item.
 
 Per-system status, evidence and limits are in [docs/CAPABILITIES.md](docs/CAPABILITIES.md). The audit that
 produced this order found that the largest long-term risks are not missing features but a few
@@ -54,26 +68,26 @@ first" tiers in [docs/DECISIONS.md](docs/DECISIONS.md#what-to-resolve-first).
 
 ### Current milestone and immediate scope
 
-* **Now: close M2.** All numbered tasks are done (T1 to T3). Two items remain, both blocked on the owner
-  rather than on code: licence files (KI-17, waiting for the owner to confirm a licence) and owner confirmation of GitHub as host (CI itself is done on the PR branch, see TASKS.md). Neither blocks
-  M3, so M2 is closed for planning purposes once they are listed as carried items in TASKS.md.
-* **Now: M3a and M3b are complete locally and are not pushed** (see M3 below). Named stages, commands
-  and events, logging, opt-in interpolation, and the public-API review are done. M3b's four phases
-  (keys, actions, viewport scale, window controls) are checkpointed locally. M4 Phase 1 (component
-  registry and text dumps, ADR-0014) is commit `cdb5ec3` and is not pushed. M4 Phase 2 (hierarchical
-  visibility) is commit `2c76f71` and is not pushed. M4 Phase 3 (name and tag lookup) is commit
-  `f9a4aab` and is not pushed. M4-4A (scene instance tracking) is commit `302622b` and is not pushed.
-  M4-4B (synchronous scene load) is commit `128c70e` and is not pushed. M4-4C (unload and replace)
-  is commit `e12fb5b` and is not pushed. M4-4D (deferred scene operations) is commit `8398e49` and
-  is not pushed. M4-4E (the `spatial_scene` switch) is commit `d58c66b` and is not pushed.
-  M4-5 (the lamp prefab and crate-private low-level scene methods) is committed locally and is not pushed.
-  M4 is complete in this working tree and is not pushed.
-  M3a was first because
-  collision, animation, scenes, UI and scripting all hang off its stages, commands and events, and because
-  three high-cost risks (R-5, R-7, R-8) are cheapest to settle before more systems exist.
-* **Then, in order:** M4 scenes and the registry shape; M5 materials and textures;
-  M6 renderer stabilisation. M7 (collision) and M8 (sprite sheets) can proceed in parallel after M3a, M4,
-  M5 and M6 as stated below; M9 is the first point where APIs freeze.
+* **M2 is closed for planning.** T1 to T3 are done. Two items remain, both blocked on the owner rather
+  than on code: licence files (KI-17) and confirmation of GitHub as host. CI itself exists (ADR-0005).
+  Neither item blocks later milestones.
+* **M3a and M3b are complete locally and are not pushed.** Named stages, commands and events, logging,
+  opt-in interpolation, and the public-API review are done. M3b's four phases are checkpointed locally
+  (`57dbc4a`, `83286a9`, `9c99edf`, `cfdf358`).
+* **M4 is complete locally at `2b79806` and is not pushed.** The registry and dumps are `cdb5ec3`.
+  Hierarchical visibility is `2c76f71`. Name and tag lookup is `f9a4aab`. Scene identity is `302622b`.
+  Synchronous load is `128c70e`. Unload and replace are `e12fb5b`. Deferred scene operations are
+  `8398e49`. The `spatial_scene` switch is `d58c66b`. The lamp prefab and the crate-private scene helpers
+  are `2b79806`. Scene files stay in M19. D-16 stays open.
+* **Now: M5, materials and textures.** Decisions are recorded (ADR-0015, ADR-0016, ADR-0017) and corrected
+  in the M5-1 final review. Implementation has not started. M5 stays not started: the roadmap marks a
+  milestone in progress only when TASKS.md shows implementation commits. M5-2, texture parameters and
+  mipmaps, is specified in TASKS.md and is not started. M5-2A, CPU texture descriptors, is specified
+  there and is not started.
+* **M6 stays after M5.** The camera-configuration prototype is verified. The rest of M6 is not started.
+  M7 and M8 can proceed in parallel after M3a, M4, M5, and M6 as stated below. M9 freezes the foundational
+  gameplay, scene, and component-integration contracts. Later milestones may add public APIs through a
+  recorded decision. That freeze does not forbid every future public type.
 * **Considered now, built later:** see "Considered now, implemented later" after the dependency graph.
 
 ## 2. Ordering rules
@@ -127,7 +141,7 @@ world and the same depth buffer.
 | 12 Scene serialization and developer tools | M19, M20 | |
 | 13 Editor (first usable version) | M22 | A core product goal; its foundations are designed in from M3 |
 | 14 Production readiness | M23, M24 | |
-| Not in the list | M13 tilemaps | Independent; can run any time after M7 |
+| Not in the list | M13 tilemaps | After M6's chunking and M7. Reuses that chunking; it does not start a second one |
 
 The earlier 17-stage list is covered as follows: stages 1 to 6 as above; 7 skeletal animation is M11;
 8 tilemaps M13; 9 lighting and shadows M14; 10 particles M15; 11 asset management M17; 12 compiler M21;
@@ -169,10 +183,11 @@ M2 hardening/CI
         │   may start after M6)           │
         │      │                          ▼
         └──────┴───────────────►  M14 lighting+shadows   M15 particles   M16 audio   (parallel)
-M4 + M8 + M11 + M12 + M13 ─► M17 assets/importers (hot reload)
+M5 + D-16 ─► M17 core identity and loading
+M17 importers follow their content: M8 sheets, M10 fonts, M11 clips, M12 glTF (generalised, not a second parser), M13 tilemaps, M16 audio
 M3 + M4 + M9 + M10 + M16 + M17 ─► M18 gameplay scripting
 M4 + M17 + M18 ─► M19 scene serialization ─► M21 compiler/bundles
-M6 + M19 ─► M20 debug tools ─► M22 editor (also M10, M19)
+M4 registry + M6 debug draw + M10 + M19 serialization ─► M20 debug tools ─► M22 editor
 M21 + M22 ─► M23 perf/stability ─► M24 packaging/release
 ```
 
@@ -399,7 +414,7 @@ orphaning entities, and the world knows its component types by name.
 - A component registry mapping stable names to component types (no serialization yet); this is the
   groundwork M18, M19 and M20 need. Leave room for a per-component, per-field visibility attribute that
   scripts will use (D-41); no scripting code here.
-- Code-defined prefabs (`fn(&mut World, ...) -> Entity` by convention) and one documented pattern. **Met by M4-5**, committed locally, not pushed. `spawn_lamp` returns the post. `place_lamp` is the `SceneBuilder` form.
+- Code-defined prefabs (`fn(&mut World, ...) -> Entity` by convention) and one documented pattern. **Met by M4-5** (`2b79806`), not pushed. `spawn_lamp` returns the post. `place_lamp` is the `SceneBuilder` form.
 - Read-only scene and entity inspection: a text dump of the hierarchy and of one entity's registered
   components and fields, built on the registry (first of the inspection tools; no editor code).
 
@@ -413,8 +428,8 @@ synchronous `load_scene`) is commit `128c70e` and is not pushed. M4-4C (`unload_
 `replace_scene`) is commit `e12fb5b` and is not pushed. M4-4D queues those operations on the existing
 command queue and is commit `8398e49`. M4-4E switches `spatial_scene` between two code-defined
 environments and is commit `d58c66b`. M4-5 documents `spawn_lamp` and makes `create_scene_instance`
-and `track_scene_entity` crate-private. M4-5 is committed locally and is not pushed. M4 is complete in this
-working tree and is not pushed.
+and `track_scene_entity` crate-private. M4-5 is `2b79806` and is not pushed. M4 is complete locally
+at that commit and is not pushed.
 Scene files stay in M19. D-16 stays open.
 
 **Acceptance criteria.**
@@ -436,7 +451,7 @@ Scene files stay in M19. D-16 stays open.
 
 ---
 
-## M5. Materials and textures: Not started
+## M5. Materials and textures: Not started (decisions recorded)
 
 **Objective.** A small but real material and texture model that normal maps, shadows and the asset
 pipeline can build on without rewriting the renderer. It serves every camera configuration and visual
@@ -460,23 +475,48 @@ filtering are equal first-class choices, and nothing here is specific to pixel a
 - Asset validation, first slice: texture and atlas loads report size beyond device limits, a missing
   texture and a zero-sized region with the asset name (logging from M3a; see "Incremental developer tooling").
 
-**Dependencies.** D-05, D-27.
+**Dependencies.** D-05 ([ADR-0015](docs/adr/0015-material-alpha-classes.md), settled, not implemented;
+blended-mesh depth is the camera-space Z of the world-space bounding-sphere centre), D-27
+([ADR-0016](docs/adr/0016-per-sprite-pixels-per-unit.md)). Texture sampling, colour space, partial
+updates, and atlas mip limits are
+[ADR-0017](docs/adr/0017-texture-sampling-colour-space-and-atlases.md), including the corrected
+anisotropy fallback, `write_texture` alignment, split texture and sampler caches, and the provisional
+atlas estimate. M5-1 is documentation only. M5-2 is not started.
 
 **Acceptance criteria.**
-- GPU test: a minified high-frequency texture averages to its mean colour with mipmaps, and aliases
+- GPU test: a minified high-frequency texture approaches its mean colour with mipmaps, and aliases
   without them.
-- GPU test: a linear-format texture reaches the shader with exact values.
-- Atlas packer unit tests: no overlap, padding respected, deterministic.
-- GPU test: writing one sub-rectangle of a texture changes only that rectangle and uploads only its bytes.
-- 1,000 sprites sharing a material remain one draw call.
-- Alpha modes (opaque, mask, blend) and the blended-mesh policy give the same occlusion order under a
-  perspective camera and under an orthographic camera rotated to an isometric orientation (GPU pixel tests).
-- Mipmap and filtering tests include an orthographic camera whose scale changes with zoom, not only a
-  perspective camera that changes it with distance.
+- The mipmap and filtering tests also run under an orthographic camera whose scale changes with zoom.
+  Perspective minification is not the only case.
+- GPU test: a linear-format texture reaches the shader without sRGB decoding. Tolerances are stated with
+  the test. Colour space is per texture. Linear `Color` is not converted a second time.
+- Atlas packer unit tests: no overlap, padding and edge extrusion respected, deterministic UVs, a
+  zero-sized region named as an error. Packing is in texels and does not set world size. GPU acceptance
+  for the atlas covers adjacent regions of strongly contrasting colour, nearest and linear filtering,
+  several mip levels, padding and extrusion widths, the returned UV boundaries, and no neighbour sample
+  inside the mip range those tests declare supported. The `floor(log2(padding))` note in ADR-0017 is a
+  design estimate. It does not reject a pack and it is not a guarantee. Whole-atlas mip generation can
+  mix regions at coarse levels because each level halves the padding.
+- GPU test: a sub-rectangle update changes only those base-level pixels and uploads only that region's
+  base-level bytes, plus the mip levels that rectangle affects. Mip maintenance is required and is not
+  counted as a full-image upload. Bytes outside the rectangle stay.
+- 1,000 sprites that are compatible render in one instanced draw. Compatible means the same pipeline
+  configuration, material identity and revision, texture and sampler bindings, geometry, and instance-data
+  layout, and a submission order that the depth and transparency rules do not split. Sharing a material
+  alone is not enough. Blended objects are not reordered to form the batch.
+- Alpha classes and the blended sort use one policy under a perspective camera and under an orthographic
+  camera rotated to an isometric orientation. Each camera has its own expected pixels. The pictures may
+  differ because the view direction changes depth order. Neither test may depend on a projection-specific
+  branch. These tests do not replace the four screenshot baselines, and they do not retune the three
+  coplanar conflicts recorded for M6.
+- The four release screenshots against commit `6dbabb8` stay byte-identical. Baselines are not replaced
+  to make a test pass.
 
-**Tests/examples.** Above.
+**Tests/examples.** Above. M5-2's texture tests are specified in TASKS.md and are not written yet.
 
-**Deferred.** PBR, custom shaders, texture compression, texture streaming, normal-map shading (M14).
+**Deferred.** PBR, material graphs, custom shader authoring, a shader compiler, texture compression,
+texture streaming, normal-map shading (M14), a second renderer, a second world. Pixel snapping stays in
+M6 (D-06). Coplanar ordering stays in M6 (D-48).
 
 ---
 
@@ -508,7 +548,9 @@ baseline. Camera projection stays separate from gameplay orientation and visual 
   **Still to decide, and not chosen here:** the coplanar ordering mechanism, and whether `Upright` should keep
   that steep-view behaviour (D-26). Gameplay-orientation components wait for M7 and M8 requirements. Decide
   the first two before M7 and M8 build on them.
-- Tilemap chunking with cached instances.
+- Tilemap chunking, the rendering foundation only: chunk-based extraction, cached render instances,
+  dirty-chunk invalidation, and an update that touches the affected chunks. Production tile APIs stay in
+  M13, which reuses this chunking and does not build a second one.
 - Render debugging, first slice: debug draw (lines, boxes, spheres, rays, camera frusta; depth-tested) and a
   depth-visualisation view, as the minimal debugging primitives for M7.
 - Depth convention (D-07). Pixel-art policies (D-06): texture-level filtering, and texel snapping at whichever
@@ -522,7 +564,8 @@ baseline. Camera projection stays separate from gameplay orientation and visual 
 - Two cameras with different viewports render into one target (GPU pixel test).
 - A camera rendered to a texture and sampled by a sprite appears correctly (GPU test).
 - Changing one tile re-extracts one chunk (test); a 1000x1000 map's per-frame extraction cost is
-  recorded and bounded by chunk count rather than tile count.
+  recorded and bounded by chunk count rather than tile count. This is the chunking foundation. Flip,
+  animation, collision, and layers are M13 acceptance, on top of these chunks.
 - `docs/PERFORMANCE.md` contains baseline numbers with the machine they were measured on.
 - The configuration test scene renders under each named configuration (perspective, orthographic, isometric,
   top-down, side view, a custom projection) with headless GPU assertions that hold in all of them: a nearer
@@ -654,9 +697,11 @@ shader effects, sprite-sheet packing tools, UI 9-slice.
 
 ## M9. Character and scene API, and a playable vertical slice: Not started
 
-**Objective.** Fix the character and scene APIs that UI, the other character representations and
-scripting will build on, and prove them with one complete playable game. "Stable" here means: documented,
-covered by tests, used by a real consumer, and changed afterwards only by a recorded decision.
+**Objective.** Freeze the foundational gameplay, scene, and component-integration contracts that UI, the
+other character representations, and scripting build on, and prove them with one complete playable game.
+"Stable" here means: documented, covered by tests, used by a real consumer, and changed afterwards only
+by a recorded decision. The freeze does not forbid later milestones from adding public APIs. An addition
+is allowed when an ADR records it. It is not a second copy of a contract M9 already froze.
 
 **Prerequisites.** M3, M4, M7, M8.
 
@@ -893,22 +938,25 @@ compression, skinned crowds through vertex-animation textures, glTF extensions, 
 
 ## M13. Tilemaps: Not started
 
-**Objective.** Tilemaps that scale and integrate with collision, built on the existing instanced path.
+**Objective.** Production tilemap APIs on the chunking foundation M6 provides. M13 does not implement a
+second chunk extractor.
 
-**Prerequisites.** M6 (chunking), M7 (collision layer hook), M5 (atlas). Independent of the character
-and UI milestones; may run any time after M7.
+**Prerequisites.** M6 (chunk extraction, cached instances, dirty chunks), M7 (collision layer hook), M5
+(atlas). Independent of the character and UI milestones. It does not start before M6's chunking exists.
 
 **Tasks.**
-- Chunked tilemap storage and extraction; per-tile flip/rotate flags; multiple layers at distinct Z.
-- Animated tiles; per-tile properties; collision layer feeding M7.
-- Tileset asset (atlas reference + metadata) and an in-code builder.
+- Reuse M6 chunks. Do not add another extraction path.
+- Tileset asset: atlas reference plus tile metadata and properties. In-code builder.
+- Per-tile flip and rotation. Animated tiles. Multiple layers at distinct Z.
+- Collision integration with M7.
 - Vertical (wall) tilemaps through the same orientation model.
 
 **Dependencies.** D-25 if oblique projection is wanted for tilemaps; D-48.
 
 **Acceptance criteria.**
-- A 1000x1000 map renders with per-frame CPU cost proportional to visible chunks (benchmark, recorded).
-- `set_tile` touches one chunk (test).
+- The M6 chunk benchmark still holds after the production APIs are added: a 1000x1000 map's per-frame
+  cost stays proportional to visible chunks, and `set_tile` still touches one chunk. M13 does not
+  replace those tests with a second chunker.
 - A tile collision layer blocks the character controller (test).
 - Animated tiles advance with time (test).
 - One map, placed once as a wall (side view) and once laid on the ground (top-down), extracts with the same
@@ -929,8 +977,11 @@ sprites, under every supported camera configuration. Lighting and shadow code mu
 one projection or one light direction relative to the camera; fog and stylised lighting remain optional
 scene properties and are not prerequisites.
 
-**Prerequisites.** M5 (normal-map slot, linear textures), M6 (render targets and multiple passes), D-13.
-Placed after M8, M11 and M12 because shadow casting must handle all three character representations.
+**Prerequisites.** M5 (material classes, the reserved normal slot, linear textures; ADR-0015 and
+ADR-0017), M6 (render targets and multiple passes), D-13. Shadow casters are explicit: an animated
+sprite-sheet frame needs M8, a skeletal 2D character needs M11, and a skinned mesh needs M12. The
+milestone stays after all three, because its acceptance includes those casters. A representation that
+does not exist yet is not given a stand-in shadow test.
 
 **Tasks.**
 - Shadow maps for directional and spot lights; alpha-tested sprite casters (using the current sprite-sheet
@@ -1019,17 +1070,19 @@ integration.
 
 **Objective.** Real content workflows: files on disk, async loading, hot reload, stable ids.
 
-**Prerequisites.** M5, and the data shapes from M8 (sprite sheets), M10 (fonts), M11 (skeletons and
-clips), M12 (models) and M13 (tilemaps); decisions D-16 to D-18. M12 already contains a minimal glTF
-importer; this milestone generalises it.
+**Prerequisites.** Core identity and loading need M5's texture and material assets and D-16. Individual
+importers wait for the content they import: sprite sheets (M8), fonts (M10), skeletons and clips (M11),
+the M12 glTF path, tilemaps (M13), and audio (M16). D-17 and D-18 still apply. PNG decoding already
+exists and is not written again.
 
 **Tasks.**
-- Stable asset identity and dependency graph with cascading reload/unload (D-16).
-- Worker-pool async loading with main-thread apply.
-- File-watcher hot reload.
-- Importers: PNG (exists), glTF (generalising M12's: async, dependency tracking, reload), sprite-sheet
-  descriptors (grid and Aseprite-style JSON) for M8, fonts for M10, audio for M16, Tiled tilemaps, and a
-  skeleton and clip format for M11.
+- Core, separate from any one content type: stable asset identity and a dependency graph with cascading
+  reload and unload (D-16). Worker-pool async loading with main-thread apply. File-watcher hot reload.
+- Importers, each only when its content milestone exists, and none as a second copy of a loader that
+  milestone already shipped: PNG stays the existing decoder; glTF generalises M12's minimal importer
+  (async, dependency tracking, reload) and does not add a second parser beside it; sprite-sheet
+  descriptors (grid and Aseprite-style JSON) for M8; fonts for M10; audio for M16; Tiled tilemaps for
+  M13; a skeleton and clip format for M11.
 - Script files as assets with reload notifications (consumed by M18).
 - Loading errors surface as logged errors plus the existing magenta placeholder.
 
@@ -1144,8 +1197,9 @@ until the runtime has proved stable).
 (logging and diagnostics M3a, inspection M4, debug draw M6, overlay M10) into one set with an edit-capable
 inspector; it is not where tooling starts.
 
-**Prerequisites.** M6 (debug draw), M10 (UI runtime for the overlay), M19 (component registry for
-reflection).
+**Prerequisites.** M4 (the component registry and field metadata; M20 does not build another), M6 (debug
+draw), M10 (UI runtime for the overlay), M19 (scene serialization). Inspection reads the M4 registry.
+Editing a saved scene uses M19. Neither tool re-implements those foundations.
 
 **Tasks.** Overlay (frame graph, counters), entity inspector (read first, edit second), logging and
 profiling scopes (D-21), screenshot and replay tooling promoted from M9, asset/hot-reload

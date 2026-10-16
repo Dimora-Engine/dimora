@@ -193,6 +193,16 @@ Rules that follow:
 These four ideas (spatial depth, transparency sorting, render layers or queues, explicit order) are kept
 distinct on purpose ([ADR-0004](adr/0004-one-spatial-world-many-camera-configurations.md), decision 4). Today
 `RenderOrder` reaches blended sprites only. The depth point used for sorting is the quad centre.
+
+**Decided for a later milestone, not implemented (ADR-0015, 2026-10-16).** Opaque, Mask, and Blend are
+material classes. Blended meshes join this same sort, using the same key as blended sprites. The sprite
+key and the quad-centre depth stay. `RenderOrder` stays inside the blended class. Opaque and masked
+objects keep spatial depth. The three coplanar conflicts below are unchanged and remain M6 (D-48). The
+depth used for a blended mesh is the camera-space Z of its world-space bounding-sphere centre. That is
+an object-level approximation: intersecting transparent meshes, cyclic overlaps, an overlap whose centre
+misses the overlapping region, and a mesh that spans several depth ranges are outside what that point
+decides. GPU tests are required when blended meshes are implemented. No shader or extraction code
+changed with the decision.
 Configurable sort or occlusion policies for isometric styles are left room for and not built. No mechanism
 was chosen from the cases below (D-48).
 

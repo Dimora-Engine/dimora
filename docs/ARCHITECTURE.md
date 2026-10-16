@@ -17,8 +17,9 @@ pushed. M4-4A, scene instance tracking, is commit `302622b` and is not pushed. M
 synchronous `load_scene`, is commit `128c70e` and is not pushed. M4-4C, unload and replace, is
 commit `e12fb5b` and is not pushed. M4-4D, deferred scene operations, is commit `8398e49` and is
 not pushed. M4-4E, the `spatial_scene` switch, is commit `d58c66b` and is not pushed. M4-5,
-the lamp prefab and crate-private low-level scene methods, is committed locally and is not pushed. M4 is
-complete in this working tree and is not pushed.
+the lamp prefab and crate-private low-level scene methods, is commit `2b79806` and is not pushed. M4 is
+complete locally at `2b79806` and is not pushed. M5 decisions are ADR-0015, ADR-0016, and ADR-0017,
+corrected in the M5-1 final review. No M5 renderer code exists. M5-2 has not started.
 Profiling is not in the code. The M2 audit
 date was 2026-10-13 at `4857158`.
 Everything outside the sections "Proposed future architecture" and "Proposed boundaries" exists in the
@@ -425,7 +426,7 @@ systems they touch. Each cites evidence from this audit.
 
 | Id | Risk | Evidence | Cost if found late | Response |
 |---|---|---|---|---|
-| R-1 | **`RenderScene` is partitioned by primitive type** (meshes, cutout sprites, blended sprites), not by transparency class. A blended mesh, particle or skinned character has no place to sort against blended sprites | `scene.rs`; the pass order in `scene_renderer.rs`; meshes have no blend mode | Moderate to high: extraction, backend passes and tests for all renderables | Decide transparency classes in D-05 at the start of M5, before particles or blended meshes exist |
+| R-1 | **`RenderScene` is partitioned by primitive type** (meshes, cutout sprites, blended sprites), not by transparency class. A blended mesh, particle or skinned character has no place to sort against blended sprites | `scene.rs`; the pass order in `scene_renderer.rs`; meshes have no blend mode | Moderate to high: extraction, backend passes and tests for all renderables | D-05 is settled in ADR-0015 and is not implemented. The code split remains until the M5 material phase |
 | R-2 | **One camera, one target per frame**; `RenderScene` holds a single view | `extract.rs::active_camera`; KI-5 | High: shadows, editor viewports, render-to-texture and minimaps need a list of views | D-08 in M6 turns the scene into a list of camera passes; do not add features that assume one view |
 | R-3 | **No transform timeline beyond one previous local.** `Transform` is current simulation state. `Interpolate` stores one previous local for opt-in extract interpolation. There is still no dirty tracking, propagation is still a full pass, and camera-dependent animation still has a one-frame latency rule | `interpolate.rs`, `hierarchy.rs`; KI-9, KI-10, D-02 | Moderate if a later system starts reading the render matrix as simulation | M3a-5 stores the previous local and blends only at extract. Dirty tracking stays out (ADR-0009) until a profile |
 | R-4 | **Asset identity and retention.** Handles are name hashes with no recoverable name, no reference counting, ids change on rename, and the collision guard is per type | `handle.rs`, `manager.rs`; D-16 | High once scene files, sheets or bundles exist | Decide D-16 before any persisted format (sheet descriptors in M8 are the first); keep names in the manager so handles can be serialized by name or id |
@@ -471,7 +472,10 @@ These are settled; revisit only with a concrete problem.
 | Assets | Typed handles holding a name hash; manager owns data; sources behind a trait | Components can reference assets before they load |
 | Despawn (D-03) | `despawn` removes the whole subtree; `detach_children` keeps children as roots with their world transform | Bones and attachments are owned by their parent, so orphans are never wanted. Cost: a caller who wants children to survive must say so |
 | GPU cache lifetime (D-04) | Evict a cached texture or mesh when its asset is removed, and when unused for N frames (configurable) | Removed assets are freed promptly and off-screen assets are not re-uploaded every frame. Cost: an asset unused for N frames is re-uploaded when it returns |
-| Scene model and registry (D-18) | One world; internal `SceneManager`; `SceneBuilder` without `&mut World`; load publishes only on success; unload lifts non-members and does not remove assets; deferred scene ops use the command queue and store `SceneOpStatus`; `spatial_scene` replaces one environment at the stage flush; a prefab is `fn(&mut World) -> Entity` | ADR-0014. Phase 1 is `cdb5ec3`. Phase 2 is `2c76f71`. Phase 3 is `f9a4aab`. M4-4A is `302622b`. M4-4B is `128c70e`. M4-4C is `e12fb5b`. M4-4D is `8398e49`. M4-4E is `d58c66b`. M4-5 is committed locally and is not pushed. Scene files stay in M19. D-16 stays open |
+| Scene model and registry (D-18) | One world; internal `SceneManager`; `SceneBuilder` without `&mut World`; load publishes only on success; unload lifts non-members and does not remove assets; deferred scene ops use the command queue and store `SceneOpStatus`; `spatial_scene` replaces one environment at the stage flush; a prefab is `fn(&mut World) -> Entity` | ADR-0014. Phase 1 is `cdb5ec3`. Phase 2 is `2c76f71`. Phase 3 is `f9a4aab`. M4-4A is `302622b`. M4-4B is `128c70e`. M4-4C is `e12fb5b`. M4-4D is `8398e49`. M4-4E is `d58c66b`. M4-5 is `2b79806`. Scene files stay in M19. D-16 stays open |
+| Material alpha classes (D-05) | Opaque, Mask, and Blend. Blended sprites and meshes share one sort. A blended mesh uses the camera-space Z of its world-space bounding-sphere centre. `RenderOrder` on blended sprites is unchanged. Coplanar conflicts stay with D-48 | ADR-0015. Settled, not implemented |
+| Sprite units (D-27) | Per-sprite `pixels_per_unit`, default 16. No global constant. Atlases are in texels | ADR-0016. The field already exists. M5-1 does not change it |
+| Texture sampling (M5) | Per-texture sRGB or linear. GPU image storage and samplers are separate caches. `write_texture` keeps a tight row stride. Atlas padding versus mips is a provisional estimate until GPU tests | ADR-0017. Settled as a contract. Not implemented |
 
 ## Proposed future architecture (NOT implemented)
 
@@ -487,8 +491,10 @@ criteria. Open decisions stay in [DECISIONS.md](DECISIONS.md).
   those operations on the command queue (`8398e49`). M4-4E uses that queue to switch `spatial_scene`
   between two code-defined environments (`d58c66b`). The camera and the walker are not scene members.
   M4-5 adds `spawn_lamp` as the code-defined prefab and makes the empty-instance helpers crate-private.
-  That change is committed locally and is not pushed. Serialization stays in M19.
-* **Material assets and sampler/colour-space-aware textures, sub-rectangle texture updates** (M5).
+  That change is commit `2b79806` and is not pushed. Serialization stays in M19.
+* **Material assets and sampler/colour-space-aware textures, sub-rectangle texture updates** (M5). The
+  contract is ADR-0015 and ADR-0017. It is not in the renderer. M5-2A, the CPU texture descriptors, is
+  specified in TASKS.md and is not started.
 * **A list of camera passes** instead of one `RenderScene` camera, plus render-to-texture (M6).
 * **A collision world** as a resource rebuilt in the fixed stage, with spatial 3D queries (M7).
 * **Sprite-sheet animation** (M8), **a character gameplay layer with an API surface list** (M9), **a UI

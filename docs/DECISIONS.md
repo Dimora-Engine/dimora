@@ -63,7 +63,7 @@ the risk register). **Prototype where the answer depends on a measurement; do no
 | Tier | Decisions | Why now | How to resolve |
 |---|---|---|---|
 | **1. Before M3 code** | D-44 threading, D-01 scheduling, D-10 events and commands, D-02 change detection, D-45 public API tiers, D-47 format versioning, D-21 (logging half) | Every later system is written against the frame, mutation and threading model; R-5, R-7, R-8 get more expensive with every system added | **Decided 2026-10-14** (ADR-0006 through ADR-0012). D-02 is Provisional ("none until profiled"). Stages (D-01), commands and events (D-10), logging (D-21), and interpolation (D-01, M3a-5, committed locally, not pushed) are implemented. Change detection is not. Profiling is not |
-| **2. Before M4/M5** | D-18 (registry shape, decided in part), D-16 (asset identity), D-05 (alpha classes and materials), D-27 (units) | Persisted data, render model and sprite sizing hang on them; R-1, R-4 | D-18's scene model and registry shape are ADR-0014. D-16 stays open. D-05 with a GPU test of a blended mesh against a blended sprite |
+| **2. Before M4/M5** | D-18 (registry shape, decided in part), D-16 (asset identity), D-05 (alpha classes and materials), D-27 (units) | Persisted data, render model and sprite sizing hang on them; R-1, R-4 | D-18's scene model and registry shape are ADR-0014. D-16 stays open. D-05 is ADR-0015 (settled, not implemented), including the blended-mesh depth point. D-27 is ADR-0016 (per-sprite `pixels_per_unit`) |
 | **3. Before M6** | D-25 projection and D-08 multi-camera and targets first, D-48 camera configurations, D-07 depth, then D-06 pixel policy (opt-in, lowest of these) | Shape of `RenderScene` and the pass list; R-2 | Prototype two cameras into one target |
 | **4. Before M9** | D-28, D-29 (vocabulary), D-30, D-31, D-11 (record) | Define the character and scene API that M10 to M18 depend on | Built against M8's sprite-sheet implementation and the second consumer |
 | **5. Only at their milestone, after a spike** | D-40 scripting runtime, D-09 physics library, D-24 UI model, D-12, D-14, D-15, D-33, D-35, D-36 | They need measurements or a working neighbour; deciding early would be invention | Each milestone's first task is the spike |
@@ -81,9 +81,9 @@ the risk register). **Prototype where the answer depends on a measurement; do no
 | D-02 | Change detection | M3 | M3, M4 (dirty transforms), M23 | Provisional, [ADR-0009](adr/0009-no-change-detection-until-measured.md) (2026-10-14): none until a profile |
 | D-10 | Events and deferred commands | M3 | M3, M4, M7, M8, M18 | Decided, [ADR-0008](adr/0008-commands-and-per-frame-events.md) (2026-10-14). Implemented in M3a-3 |
 | D-49 | Input actions, fixed-step one-shots, viewport scale, window controls | M3b | M3b, M10 | Decided, [ADR-0013](adr/0013-input-actions-and-window-controls.md) (2026-10-15). Phases 1–4 are checkpointed locally (`57dbc4a`, `83286a9`, `9c99edf`, `cfdf358`) and are not pushed. M3b's acceptance criteria are met |
-| D-18 | Scene format, serde, component registry | M4 (registry shape), M19 | M4, M18, M19, M22 | Decided in part, [ADR-0014](adr/0014-scene-model-and-component-registry.md) (2026-10-16). Registry, scene model, membership, load, unload, replace, deferred scene operations, the `spatial_scene` switch, and one code-defined prefab are settled for M4. Phase 1 is `cdb5ec3`. Phase 2 is `2c76f71`. Phase 3 is `f9a4aab`. M4-4A is `302622b`. M4-4B is `128c70e`. M4-4C is `e12fb5b`. M4-4D is `8398e49`. M4-4E is `d58c66b`. None is pushed. M4-5 is committed locally and is not pushed. No scene file in M4. D-16 stays open |
-| D-27 | Units and pixels per unit | M5 | M5, M8, M9, M13 | Open |
-| D-05 | Materials, alpha modes, blended meshes | M5 | M5, M14 | Open |
+| D-18 | Scene format, serde, component registry | M4 (registry shape), M19 | M4, M18, M19, M22 | Decided in part, [ADR-0014](adr/0014-scene-model-and-component-registry.md) (2026-10-16). Registry, scene model, membership, load, unload, replace, deferred scene operations, the `spatial_scene` switch, and one code-defined prefab are settled for M4. Phase 1 is `cdb5ec3`. Phase 2 is `2c76f71`. Phase 3 is `f9a4aab`. M4-4A is `302622b`. M4-4B is `128c70e`. M4-4C is `e12fb5b`. M4-4D is `8398e49`. M4-4E is `d58c66b`. M4-5 is `2b79806`. None is pushed. No scene file in M4. D-16 stays open |
+| D-27 | Units and pixels per unit | M5 | M5, M8, M9, M13 | Decided, [ADR-0016](adr/0016-per-sprite-pixels-per-unit.md) (2026-10-16). Per-sprite `pixels_per_unit`, default 16. Not a code change |
+| D-05 | Materials, alpha modes, blended meshes | M5 | M5, M14 | Decided, [ADR-0015](adr/0015-material-alpha-classes.md) (2026-10-16). Three classes, one blended sort, and the bounding-sphere-centre depth for a blended mesh. Not implemented |
 | D-06 | Pixel-art filtering, texel snapping, MSAA: policies at the level of each technique, **not a default or a foundation** | M6 (after D-25 and D-08) | M6, M8, M9, M13 | Principles accepted (ADR-0004); API ownership and defaults **deferred pending a rendering prototype** |
 | D-07 | Depth convention (reverse-Z) | M6 | M6, M14 shadows | Open |
 | D-08 | Multi-camera and render targets | M6 | M6, M14, M22 | Open |
@@ -230,7 +230,7 @@ M4-4D is commit `8398e49`. It queues load, unload, and replace on the existing c
 
 M4-4E is commit `d58c66b`. It switches `spatial_scene` between environment A and environment B with that queue. Tab is the `switch_environment` action. The camera and the walker are not members of either environment. The example dismisses a completed result in `post_update`. A failed replacement leaves the current environment published. An unexpected load stays published, and an unexpected unload is left as the engine applied it, because that switch does not own the instance.
 
-M4-5, committed locally and not pushed, adds `spawn_lamp` as the code-defined prefab (`fn(&mut World, ...) -> Entity`) and `place_lamp` for `SceneBuilder`. `create_scene_instance` and `track_scene_entity` are `pub(crate)`.
+M4-5, commit `2b79806` and not pushed, adds `spawn_lamp` as the code-defined prefab (`fn(&mut World, ...) -> Entity`) and `place_lamp` for `SceneBuilder`. `create_scene_instance` and `track_scene_entity` are `pub(crate)`.
 
 Still open: which id M19 will persist. D-16 stays open. The file encoding, including whether to take `serde`, is M19's decision. Script flags are stored and unused (D-41). Membership does not own assets. `Transform::from_matrix` drops shear; a non-uniform parent scale with a rotated child is a TRS approximation.
 
@@ -238,20 +238,11 @@ Still open: which id M19 will persist. D-16 stays open. The file encoding, inclu
 
 ### D-27 Units and pixels per unit
 
-* **Problem.** World units are unitless. Sprites map texture pixels to world units through the
-  sprite's size, with no engine-wide convention.
-* **Options.** A global pixels-per-unit constant; a per-asset or per-sprite value; keep it
-  per-sprite and document it.
-* **Needed by.** M5 (texture import), at the latest M8 (sprite sheets). **Blocks.** Consistent sizing for the example
-  game and tilemaps (M13).
+Decided in [ADR-0016](adr/0016-per-sprite-pixels-per-unit.md). The per-sprite `pixels_per_unit` stays, default 16. M5 does not add a global constant. The atlas packer works in texels. No code change in M5-1.
 
 ### D-05 Materials, alpha modes, blended meshes
 
-* **Problem.** `Material` is a flat colour plus optional texture. Alpha handling for meshes is limited
-  and blended meshes are not sorted with blended sprites (KI-6, KI-14).
-* **Options.** Explicit alpha modes (opaque, cutout, blended); whether blended meshes join the sprite
-  sort or get their own pass; the material extension path for normal maps (D-13).
-* **Needed by.** M5. **Blocks.** M5, M14.
+Decided in [ADR-0015](adr/0015-material-alpha-classes.md). Opaque, Mask, and Blend are material classes. Blended sprites and blended meshes share one sort. The existing sprite key is unchanged. A blended mesh uses the camera-space Z of its world-space bounding-sphere centre. That point is an object-level approximation and is not implemented. Texture sampling, including the corrected anisotropy, upload alignment, split caches, and the provisional atlas mip estimate, is [ADR-0017](adr/0017-texture-sampling-colour-space-and-atlases.md). None of this is implemented.
 
 ### D-06 Pixel-art policy
 
