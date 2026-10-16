@@ -81,7 +81,7 @@ the risk register). **Prototype where the answer depends on a measurement; do no
 | D-02 | Change detection | M3 | M3, M4 (dirty transforms), M23 | Provisional, [ADR-0009](adr/0009-no-change-detection-until-measured.md) (2026-10-14): none until a profile |
 | D-10 | Events and deferred commands | M3 | M3, M4, M7, M8, M18 | Decided, [ADR-0008](adr/0008-commands-and-per-frame-events.md) (2026-10-14). Implemented in M3a-3 |
 | D-49 | Input actions, fixed-step one-shots, viewport scale, window controls | M3b | M3b, M10 | Decided, [ADR-0013](adr/0013-input-actions-and-window-controls.md) (2026-10-15). Phases 1–4 are checkpointed locally (`57dbc4a`, `83286a9`, `9c99edf`, `cfdf358`) and are not pushed. M3b's acceptance criteria are met |
-| D-18 | Scene format, serde, component registry | M4 (registry shape), M19 | M4, M18, M19, M22 | Decided in part, [ADR-0014](adr/0014-scene-model-and-component-registry.md) (2026-10-15). Registry shape and scene model are settled. Phase 1 is `cdb5ec3`. Phase 2 is `2c76f71`. Neither is pushed. Phase 3 (name and tag lookup) is checkpointed locally with this record. Asset ownership, spawn rollback, and persistent entity ids stay open. No scene file in M4. D-16 stays open |
+| D-18 | Scene format, serde, component registry | M4 (registry shape), M19 | M4, M18, M19, M22 | Decided in part, [ADR-0014](adr/0014-scene-model-and-component-registry.md) (2026-10-15). Registry, scene model, and M4-4A membership rules are settled. Phase 1 is `cdb5ec3`. Phase 2 is `2c76f71`. Phase 3 is `f9a4aab`. None is pushed. M4-4A (instance tracking) is local and not committed. Load, unload, and replace are not implemented. Deferred scene results are a recommendation. No scene file in M4. D-16 stays open |
 | D-27 | Units and pixels per unit | M5 | M5, M8, M9, M13 | Open |
 | D-05 | Materials, alpha modes, blended meshes | M5 | M5, M14 | Open |
 | D-06 | Pixel-art filtering, texel snapping, MSAA: policies at the level of each technique, **not a default or a foundation** | M6 (after D-25 and D-08) | M6, M8, M9, M13 | Principles accepted (ADR-0004); API ownership and defaults **deferred pending a rendering prototype** |
@@ -218,11 +218,11 @@ and hand-written field metadata. Hierarchical visibility is an extract-time walk
 world. M4 has no scene file and no `serde`, RON, or JSON dependency. Phase 1 (registry and text dumps)
 is commit `cdb5ec3` and is not pushed. Phase 2 (hierarchical visibility in extraction) is commit
 `2c76f71` and is not pushed. `Camera.active` still selects the camera. Phase 3 looks up `Name` and
-`Tags` by scanning live entities. It is checkpointed locally with this record.
+`Tags` by scanning live entities. It is commit `f9a4aab` and is not pushed.
 
-Still open, inside the same ADR: asset ownership (no retain-count deletion), how a failed spawn rolls
-back, and which id M19 will persist. Spawn-order `u32`s are an M4 runtime map only. D-16 stays open.
-The file encoding, including whether to take `serde`, is M19's decision. Script flags are stored and unused (D-41).
+M4-4A, accepted 2026-10-15 and implemented locally, tracks empty scene instances and `SceneMember` on existing entities. `SceneManager` is an internal resource. Public operations are `World` methods. `SceneInstanceId` and scene-local `u32`s are runtime ids and are not reused. `SceneMember` is `Persistence::Runtime`. One entity is in at most one instance. Lookup checks the live `Entity`, the component, the instance id, and the local id. `World::despawn` does not update the map. Stale rows fail lookup and stay until `sweep_scene_mappings`. Ordinary `Result` errors put the manager back. A panic while it is taken out does not. Load, unload, replace, the constrained builder, and deferred scene commands are not in M4-4A.
+
+Still open: the stored `SceneOpId` result for a deferred scene command (a recommendation in ADR-0014, not accepted), the M4-4B builder and lifecycle, and which id M19 will persist. D-16 stays open. The file encoding, including whether to take `serde`, is M19's decision. Script flags are stored and unused (D-41). Membership does not own assets, and scene code will not remove them.
 
 ## Needed during M5-M6 (materials, renderer)
 

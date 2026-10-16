@@ -61,8 +61,9 @@ first" tiers in [docs/DECISIONS.md](docs/DECISIONS.md#what-to-resolve-first).
   and events, logging, opt-in interpolation, and the public-API review are done. M3b's four phases
   (keys, actions, viewport scale, window controls) are checkpointed locally. M4 Phase 1 (component
   registry and text dumps, ADR-0014) is commit `cdb5ec3` and is not pushed. M4 Phase 2 (hierarchical
-  visibility) is commit `2c76f71` and is not pushed. M4 Phase 3 (name and tag lookup) is checkpointed
-  locally with this record. Phases 4–5 are not started. M4 is not complete.
+  visibility) is commit `2c76f71` and is not pushed. M4 Phase 3 (name and tag lookup) is commit
+  `f9a4aab` and is not pushed. M4-4A (scene instance tracking) is implemented locally and is not
+  committed. Load, unload, replace, and the `spatial_scene` switch are not started. M4 is not complete.
   M3a was first because
   collision, animation, scenes, UI and scripting all hang off its stages, commands and events, and because
   three high-cost risks (R-5, R-7, R-8) are cheapest to settle before more systems exist.
@@ -402,10 +403,10 @@ orphaning entities, and the world knows its component types by name.
 
 **Phase status.** Phase 1 (registry, built-in registration, text dumps) is commit `cdb5ec3`, local, not
 pushed. Phase 2 (hierarchical visibility in extraction) is commit `2c76f71` and is not pushed.
-Phase 3 (name and tag lookup) is checkpointed locally with this record. Phases 4–5 are not started:
-scene instances and code-defined prefabs, after a spawn-rollback feasibility spike, then the
-`spatial_scene` switch. Asset ownership and persistent
-entity ids stay open in ADR-0014. Scene files stay in M19.
+Phase 3 (name and tag lookup) is commit `f9a4aab` and is not pushed. M4-4A (empty instances,
+`SceneMember`, and validated lookup) is implemented locally and is not committed. M4-4B (constrained
+builder, rollback, unload, replace) is not started. Phase 5, the `spatial_scene` switch, is not
+started. Deferred scene commands wait on the `SceneOpId` recommendation in ADR-0014. Scene files stay in M19. D-16 stays open.
 
 **Acceptance criteria.**
 - Loading then unloading a scene returns entity count and GPU resource counts to baseline (test).
@@ -415,7 +416,8 @@ entity ids stay open in ADR-0014. Scene files stay in M19.
 - The dump of a known world lists each entity's registered components and fields, and a component that is
   not registered is reported as such, not omitted silently (test). **Met by Phase 1.**
 - Exact name and tag lookup returns every live match in `Entity` order (test). **Met by Phase 3.**
-  Loading a scene, unloading it, and switching `spatial_scene` are not met.
+- A scene entity is found by instance id and scene-local id only when that entity is alive and its `SceneMember` matches (test). **Met by M4-4A.**
+- Loading a scene, unloading it, and switching `spatial_scene` are not met.
 
 **Tests/examples.** Scene lifecycle tests; `spatial_scene` scene-switch demo.
 

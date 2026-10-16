@@ -48,6 +48,7 @@ impl World {
         world.insert_resource(crate::commands::Commands::default());
         world.insert_resource(crate::events::EventQueues::default());
         world.insert_resource(crate::registry::ComponentRegistry::default());
+        world.insert_resource(crate::scene::SceneManager::default());
         world
     }
 

@@ -6,6 +6,7 @@ use crate::hierarchy::{Children, GlobalTransform, Parent};
 use crate::interpolate::Interpolate;
 use crate::lookup::Tags;
 use crate::registry::{ComponentDesc, ComponentRegistry, FieldDesc, Persistence};
+use crate::scene::SceneMember;
 use crate::world::{Name, Visibility};
 use crate::Transform;
 
@@ -14,14 +15,16 @@ const TAG_FIELDS: &[FieldDesc] = &[FieldDesc::new("values", "Vec<String>")];
 const TRANSFORM_FIELDS: &[FieldDesc] =
     &[FieldDesc::new("position", "Vec3"), FieldDesc::new("rotation", "Quat"), FieldDesc::new("scale", "Vec3")];
 const VISIBILITY_FIELDS: &[FieldDesc] = &[FieldDesc::new("state", "Visibility")];
+const SCENE_MEMBER_FIELDS: &[FieldDesc] =
+    &[FieldDesc::new("instance", "SceneInstanceId"), FieldDesc::new("local", "u32")];
 const PARENT_FIELDS: &[FieldDesc] = &[FieldDesc::new("entity", "Entity")];
 const CHILDREN_FIELDS: &[FieldDesc] = &[FieldDesc::new("entities", "Vec<Entity>")];
 const GLOBAL_FIELDS: &[FieldDesc] = &[FieldDesc::new("matrix", "Mat4")];
 const INTERPOLATE_FIELDS: &[FieldDesc] = &[FieldDesc::new("previous", "Option<Transform>")];
 
-/// Registers `Name`, `Tags`, `Transform`, `Visibility`, and the hierarchy and interpolation components.
+/// Registers `Name`, `Tags`, `Transform`, `Visibility`, `SceneMember`, and the hierarchy and interpolation components.
 ///
-/// `Parent`, `Children`, `GlobalTransform`, and `Interpolate` are [`Persistence::Runtime`].
+/// `SceneMember`, `Parent`, `Children`, `GlobalTransform`, and `Interpolate` are [`Persistence::Runtime`].
 /// Their values hold derived data or runtime entity ids.
 ///
 /// An identical registration already stored for one of these types is left in place.
@@ -40,6 +43,12 @@ pub fn register_world_components(registry: &mut ComponentRegistry) -> Result<(),
         VISIBILITY_FIELDS,
         Persistence::Persist,
         Some(visibility_values),
+    ))?;
+    registry.register_idempotent(ComponentDesc::new(
+        "SceneMember",
+        SCENE_MEMBER_FIELDS,
+        Persistence::Runtime,
+        Some(scene_member_values),
     ))?;
     registry.register_idempotent(ComponentDesc::new(
         "Parent",
@@ -90,6 +99,10 @@ fn visibility_values(visibility: &Visibility) -> Vec<String> {
         Visibility::Visible => "Visible".to_string(),
         Visibility::Hidden => "Hidden".to_string(),
     }]
+}
+
+fn scene_member_values(member: &SceneMember) -> Vec<String> {
+    vec![member.instance.raw().to_string(), member.local.to_string()]
 }
 
 fn parent_values(parent: &Parent) -> Vec<String> {

@@ -1,6 +1,6 @@
 # ADR-0014: One world, code-defined scenes, and an explicit component registry
 
-* **Status:** Settled for the scene model and the registry shape. Asset ownership, failed-spawn rollback, and persistent entity ids stay open (Follow-ups).
+* **Status:** Settled for the scene model, the registry shape, and the M4-4A membership rules below. Synchronous load, unload, and replace are accepted in shape and not implemented. The deferred scene-operation result is a recommendation, not a decision. D-16 stays open.
 * **Date:** 2026-10-15
 * **Backlog id:** D-18
 * **Decided by:** project owner (approved the M4 architecture and the five-phase sequence, with the refinements in this record)
@@ -44,7 +44,7 @@ A, with the refinements below. The trade-off is hand-written metadata in exchang
 
 1. One `World` holds runtime entities and, when Phase 4 exists, multiple scene instances.
 2. A scene definition is code. A scene instance is runtime state in that same world.
-3. Scene-owned entities will carry `SceneMember`. Phase 4 adds the component. Phase 1 does not.
+3. Scene-owned entities carry `SceneMember`. M4-4A adds the component, `SceneInstanceId`, and the internal instance map. Phase 1 did not. M4-4A does not spawn, unload, or replace a scene.
 4. Components are registered explicitly with a stable name, a `TypeId`, a declared field list, a debug formatter, a persistence class, and script visibility flags.
 5. Hierarchical visibility is resolved while extracting. It does not write a cached visibility component. Absence of `Visibility` means that entity is locally visible. An entity is omitted when it or any ancestor in its `Parent` chain has `Visibility::Hidden`. Local components are left as written. The walk stops on a repeated entity id and on a parent id that has no further `Parent`, including a stale id. Sprites, meshes, tilemaps, and lights use that rule. `Camera.active` and `order` still choose the camera; `Visibility` does not activate or deactivate one. A renderable parented under a hidden camera is still omitted. `AmbientLight` and `Fog` are resources and are not part of the chain. Depth testing and `RenderOrder` are unchanged.
 6. Registry types live in `engine-world`. `engine` registers world, renderer, and animation components. `Game::new` does that once.
@@ -56,33 +56,71 @@ A, with the refinements below. The trade-off is hand-written metadata in exchang
 
 Script flags are inert. No system reads them to allow or deny anything.
 
-`Persistence::Persist` and `Persistence::Runtime` are classifications for a future serializer. M4 does not write either kind. `Parent`, `Children`, `GlobalTransform`, `Interpolate`, and the animation instance components are `Runtime` because they are derived, hold playback clocks, or store `Entity` values. `GlobalTransform`'s dump value is the translation only. The field is still declared as `Mat4`, so the summary is not presented as the whole matrix. `TileMap` tile values are a length. `SkeletonInstance`'s private name index is omitted because it mirrors `bones`.
+`Persistence::Persist` and `Persistence::Runtime` are classifications for a future serializer. M4 does not write either kind. `SceneMember`, `Parent`, `Children`, `GlobalTransform`, `Interpolate`, and the animation instance components are `Runtime` because they are derived, hold playback clocks, or store runtime ids. `SceneMember` stores a `SceneInstanceId` and a scene-local `u32`, not a file id. `GlobalTransform`'s dump value is the translation only. The field is still declared as `Mat4`, so the summary is not presented as the whole matrix. `TileMap` tile values are a length. `SkeletonInstance`'s private name index is omitted because it mirrors `bones`.
 
 The registry is a resource inserted by `World::new`. Dumps borrow that resource and `World.entities` as sibling fields, so the `RefCell` guard does not cover entity storage. A mutable borrow of the registry held by the caller panics on dump, which is the existing resource rule. `EntityRef` stays inside the registry. The public formatter is `fn(&T) -> Vec<String>`, one string per declared field, in field order. A missing formatter prints the fields without values. A formatter whose length disagrees is reported and is not applied onto the wrong fields. The formatter function is not part of the metadata comparison, and a panic inside it is not caught. The field list is not checked against the Rust struct: a renamed field, a changed type, or a new struct field stays as written until someone edits the registration.
 
 Debug text is deterministic for an unchanged world: roots follow `Entity`'s `Ord`, children follow the `Children` list, registered names are alphabetical, and unregistered `TypeId`s are ordered by their `Debug` text. An entity that cannot be reached from a root is listed under `unreached`. A cycle prints `(already listed)` once and stops. `dump_entity` on a dead or unknown id returns `DumpError::NoSuchEntity`. The printed entity token is `Entity`'s `Debug` form (`{id}v{generation}`), which is the runtime id, not a persistent id.
 
-These types are contract (ADR-0010): `ComponentRegistry`, `ComponentDesc`, `ComponentInfo`, `FieldDesc`, `Persistence`, `RegistryError`, `DumpError`, and `register_builtin_components`. They are in the prelude. No new `hecs` type is re-exported.
+These types are contract (ADR-0010): `ComponentRegistry`, `ComponentDesc`, `ComponentInfo`, `FieldDesc`, `Persistence`, `RegistryError`, `DumpError`, `register_builtin_components`, and, from M4-4A, `SceneInstanceId`, `SceneMember`, and `SceneError`. They are in the prelude. `SceneManager` is not. No new `hecs` type is re-exported.
+
+### Accepted for M4-4A (2026-10-15)
+
+The feasibility spike's scene-management shape is accepted, with these rules. M4-4A implements identity, membership, and the instance map. It does not implement creation of a scene graph, rollback, unload, replace, or deferred scene commands.
+
+1. One existing `World` holds runtime entities and multiple scene instances.
+2. `SceneManager` is an internal `World` resource, inserted by `World::new`.
+3. Public scene operations are `World` methods, so a `SceneManager` guard is not held across `spawn`.
+4. `SceneBuilder`, when M4-4B adds it, is the only way a scene closure creates entities. It does not hand out `&mut World`.
+5. An entity belongs to at most one scene instance.
+6. `SceneInstanceId` is a runtime id. Issued ids start at 0 and increase. An id is not issued twice, including after a failed creation that consumed one.
+7. Scene-local `u32`s are unique inside one instance, may repeat in another, and are not file ids. M4-4A assigns them in track order. A future stable id can be a separate field. Spawn order is not that field.
+8. `SceneMember` is `Persistence::Runtime`.
+9. Scene creation is synchronous. M4-4A's `create_scene_instance` only opens an empty instance. It does not run a scene definition.
+10. Scene asset serialization stays in M19.
+11. Scene construction does not insert or remove assets. M4-4A has no scene constructor that touches `AssetManager`.
+12. Scene membership does not own referenced assets. Unload, when it exists, will not call `AssetManager::remove` because an entity disappeared.
+13. Unload preserves entities that are not members of that instance. M4-4A does not unload. `track_scene_entity` does not modify any entity except the one named.
+14. A later unload lifts a non-member child to its world transform by walking that entity's parent chain. It does not run a full `propagate_transforms`, which would insert `GlobalTransform` on unrelated entities. M4-4A does not lift.
+15. `World` hierarchy, transforms, the existing ECS, and extraction stay authoritative. `World::despawn` is unchanged and does not update the scene map.
+16. Deferred scene work, when added, uses the existing command queue. There is no second queue. M4-4A does not enqueue scene commands.
+
+Borrowing. A scene method takes `SceneManager` out of the resource map and inserts that same value before it returns `Ok` or `Err`. An ordinary error does not leave the manager missing. A nested call while the manager is out returns `SceneError::SceneManagerUnavailable` and does not insert a replacement. A panic inside the method is not a transaction: the insert does not run. No `unsafe` is used.
+
+Stale rows. `scene_entity` returns a recorded entity only when it is alive and its `SceneMember` names that instance and local id. A dead id, a reused hecs slot, a removed component, or a component that names a different id does not resolve. The row stays until `sweep_scene_mappings`. Sweep drops those rows and does not reuse the local id or the instance id. Empty instances remain.
+
+### Deferred scene-operation results (recommendation, not accepted)
+
+A later command can roll a scene back and still return `Ok` from the command closure. That `Ok` means the closure finished and left no partial scene. It does not mean an instance was published. Do not store that outcome in `CommandError`. `CommandError` remains dispatch: the queue could not run the command, or an existing spawn, despawn, or parent command failed.
+
+The smallest record is a `SceneOpId` allocated when the operation is queued, with the result stored on `SceneManager`:
+
+* `Pending` until flush runs the closure.
+* `Succeeded { instance }` when the instance is published. This is the only place the new `SceneInstanceId` is handed out.
+* `RolledBack { error }` when creation failed, the created entities are gone, and no instance was published. An id consumed by that attempt is not reused and is not returned here as a live instance.
+
+The caller receives `SceneOpId` immediately, the same way `CommandWriter::spawn` returns an `Entity` before flush. After flush, `World::scene_operation(id)` reads the stored result. A dispatch failure never writes that result: the writer returns `Err` before a `SceneOpId` exists, or an unrelated command records a `CommandFailure`.
+
+The existing event queues are cleared at the end of `step`, so they are a poor place for the result the caller reads after `step` returns. A later stage in the same step can read the stored result. An event can notify. It is not the record. This adds no queue and no async runtime.
+
+This recommendation is not implemented. Deferred scene commands wait until it is approved.
 
 ### Follow-ups that stay open
 
-**Asset ownership.** Scene membership does not own assets. `SceneManager` will not delete assets from a retain count. These cases have to stay safe: several scenes sharing one asset, a runtime entity using an asset a scene also uses, an asset the application loaded itself, a spawn that fails, and a scene that is unloaded and loaded again. Unload must not invalidate an asset something else still needs.
+**Asset ownership.** Accepted: membership does not own assets, and scene code does not call `AssetManager::remove` because an entity disappeared. Shared use by another scene, a runtime entity, or the application stays valid. D-16 is still open. Handles are name hashes, and the manager does not track users, so M4 still cannot prove exclusive ownership of an arbitrary handle. The GPU-baseline test, when unload exists, inserts assets only that test uses, calls `remove` itself after unload, and renders one frame.
 
-The smallest safe rule, until a later measurement says otherwise: scene code does not call `AssetManager::remove` because an entity disappeared. The application removes assets it owns. The existing GPU cache still drops a copy when `remove` is called, and still drops an unused copy after the idle window. That is not general-purpose reference counting, and it does not decide D-16.
+**Spawn rollback.** The spike is done. A constrained builder is the accepted way to create scene entities. Full atomicity is not claimed. A panic while `SceneManager` is out of the resource map is not restored. M4-4B implements the builder, rollback, unload, and replace. M4-4A does not.
 
-An asset that is exclusively owned may be released when that exclusive ownership can be shown. M4 does not yet have a way to show it for an arbitrary handle, because handles are name hashes and the manager does not track users. The M4 GPU-baseline test, when Phase 4 writes it, uses assets inserted only for that test and calls `remove` itself after unload, then renders one frame. That is the test's ownership, not `SceneManager`'s.
+**Identity.** Settled for M4 in "Accepted for M4-4A" above. M19 still chooses which id a file stores. Spawn-order local ids are not that id.
 
-**Spawn rollback.** A closure with `&mut World` can change entities and resources that already existed. Despawning the entities it created does not undo those changes. Full atomicity is not claimed. Phase 4 starts with a feasibility spike against `World`'s borrows and the command buffer, using a constrained builder that records the entities it creates. The spike has to show: new entities are tracked, parent and child links stay valid, a failed create leaves none of its entities, a failed replace keeps the previous instance, asset changes are either forbidden or recorded as non-transactional, and unrelated runtime entities are not destroyed. Descendants count, not only the entities the builder spawned directly. Until that spike, the Phase 4 API is not frozen.
-
-**Identity.** Runtime ids are the existing `Entity` values (index and generation). `SceneInstanceId` will be a runtime instance id. Scene-local ids map entities inside one instance. A `u32` assigned in spawn order is acceptable for M4's code-defined scenes. It is not a persistent id. Editing the spawn function can renumber it. M19 is not required to serialize spawn-order ids. A later explicit stable id can be a separate field. Phase 4 must not treat the spawn-order number as the file id.
-
-**Direct despawn.** Phase 4's map stores the `Entity`, generation included. A lookup returns it only when that entity is alive and its `SceneMember` still carries the same instance id and local id. `World::despawn` outside `SceneManager` makes `contains` false for that handle. hecs will not hand the same `Entity` value to a later spawn, so a stale map entry cannot point at the replacement. The entry is detectable and can be dropped by a later sweep. Phase 1 does not implement the map. `dump_entity` already uses the generation check: a despawned id is `NoSuchEntity`.
+**Direct despawn.** Implemented for lookup and sweep. `World::despawn` does not update the map. `scene_entity` validates the live `Entity` and `SceneMember`. `sweep_scene_mappings` drops stale rows without reusing ids.
 
 ## Consequences and follow-up
 
 * Phase 1 is the registry, built-in registration, and the text dumps. It is commit `cdb5ec3`, local, not pushed.
 * Phase 2 is hierarchical visibility in `extract_scene`, as item 5 describes. It is commit `2c76f71`. Sprites, meshes, tilemaps, and lights share one ancestor walk (`AncestorVisibility::hides`).
-* Phase 3 is name and tag lookup on the same `World`. `find_by_name` and `find_by_tag` scan live entities and return every exact match in `Entity` order. `Tags` stores plain strings, rejects `""`, keeps the first copy of a duplicate, and does not follow `Parent`. It is `Persistence::Persist` in the registry. There is no name index and no tag index. Phase 3 is checkpointed locally with this record. Phase 4 is instances, membership, and the code-defined spawn function, after the feasibility spike. Phase 5 is the `spatial_scene` switch.
+* Phase 3 is name and tag lookup on the same `World`. `find_by_name` and `find_by_tag` scan live entities and return every exact match in `Entity` order. `Tags` stores plain strings, rejects `""`, keeps the first copy of a duplicate, and does not follow `Parent`. It is `Persistence::Persist` in the registry. There is no name index and no tag index. Phase 3 is commit `f9a4aab`.
+* M4-4A is scene identity and membership: `SceneInstanceId`, `SceneMember`, `SceneError`, an internal `SceneManager`, and `World` methods that create an empty instance, track an existing entity, look it up, and sweep stale rows. It is implemented locally and is not committed. M4-4B is the constrained builder, rollback, unload, and replace. Phase 5 is the `spatial_scene` switch. Deferred scene commands wait on the result recommendation above.
 * M19 still chooses the file encoding, under ADR-0011, after D-16. RON remains a candidate. It is not a dependency.
 * D-16 and D-41 stay open. D-41 may later read the flags this registry stores.
 
@@ -90,4 +128,6 @@ An asset that is exclusively owned may be released when that exclusive ownership
 
 Phase 1 tests cover duplicate names, duplicate types, conflicting metadata, empty and repeated field names, declared fields, a missing formatter, a formatter length mismatch, unregistered `TypeId`s, hierarchy order, empty worlds, missing names, cycles, unreached entities, and dead entities. `Game::new` registers the built-ins. A second `register_builtin_components` on that world returns `Ok` and keeps the first formatters. A name already used by a different type is still `DuplicateName`.
 
-Reopen the settled items only under the rule at the bottom of DECISIONS.md. Revisit asset ownership when some caller can prove an asset is unused by every remaining entity and system. Revisit rollback when the Phase 4 spike shows the constrained builder cannot track descendants with the current command buffer. Revisit scene-local ids when M19 has a real file and D-16 has settled asset ids.
+M4-4A tests cover distinct instance ids, repeated local ids on distinct entities, missing instances and local ids, entities with no membership, despawn, a reused hecs slot, a missing or wrong `SceneMember`, ordinary errors restoring the manager, a missing manager not being replaced, registry metadata, and dump text. `scripts/check.sh` on 2026-10-15 passed with 318 tests. Extraction was not modified, so the four screenshot baselines were not re-rendered.
+
+Reopen the settled items only under the rule at the bottom of DECISIONS.md. Revisit asset ownership when some caller can prove an asset is unused by every remaining entity and system. Revisit the deferred scene-operation record if the stored `SceneOpId` cannot be read after flush without holding `SceneManager` across the command queue. Revisit scene-local ids when M19 has a real file and D-16 has settled asset ids.

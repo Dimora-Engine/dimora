@@ -23,8 +23,10 @@ is the public-API review recorded below. M3b Phases 1–3 are checkpointed local
 
 **M4 is in progress.** Phase 1, the component registry and text dumps, is commit `cdb5ec3` and is not
 pushed (ADR-0014). Phase 2, hierarchical visibility, is commit `2c76f71` and is not pushed. Phase 3,
-name and tag lookup, is checkpointed locally with this record. Phases 4–5 are not started. M4 is
-not complete. Evidence is under "M4 Phase 1 results", "M4 Phase 2 results", and "M4 Phase 3 results".
+name and tag lookup, is commit `f9a4aab` and is not pushed. M4-4A, scene instance tracking, is
+implemented locally and is not committed. Load, unload, replace, and the `spatial_scene` switch are
+not started. M4 is not complete. Evidence is under "M4 Phase 1 results", "M4 Phase 2 results",
+"M4 Phase 3 results", and "M4-4A results".
 
 ## Completed work
 
@@ -727,6 +729,24 @@ Checkpointed locally with this record. Not pushed. M4 is not complete. Phase 1 i
 
 **Screenshots.** Release, 1280×720, rendered from this working tree and compared with `cmp -s` to the four PNGs previously rendered from commit `6dbabb8` (`6dbabb88f10779301115d04720ac1f52000ed03a`) and recorded in the Phase 2 results. All four byte-identical: `basic_2_5d` 746071 bytes, `basic_2_5d --ortho` 462130, `spatial_scene --camera perspective` 136991, `spatial_scene --camera orthographic` 34046.
 
+## M4-4A results (2026-10-15)
+
+Implemented locally. Not committed. M4 is not complete. Phase 1 is `cdb5ec3`. Phase 2 is `2c76f71`. Phase 3 is `f9a4aab`.
+
+**Behavior.** `World::new` inserts an internal scene manager. `create_scene_instance` opens an empty instance and returns a new `SceneInstanceId`. Ids start at 0 and increase. An issued id is not issued again. `track_scene_entity` records one live entity that does not already have `SceneMember`, inserts that component, and assigns the next scene-local `u32` in that instance, starting at 0. It does not spawn and does not edit any other entity. The same local id may exist in another instance. `scene_entity` returns the recorded entity only when it is alive and its `SceneMember` names that instance and local id. Otherwise it returns `Ok(None)`. A stale row stays until `sweep_scene_mappings`, which drops dead or mismatched rows and does not reuse the local id. Empty instances stay. `World::despawn` is unchanged.
+
+**Errors.** A scene method takes the manager out and inserts the same value before returning `Ok` or `Err`. `NoSuchEntity`, `NoSuchInstance`, and `AlreadyMember` leave the manager in the world. If the manager is absent, the call returns `SceneError::SceneManagerUnavailable` and does not insert a new one. A panic while the manager is out is not restored. There is no `unsafe`.
+
+**Registry.** `SceneMember` is registered with the built-ins: fields `instance: SceneInstanceId` and `local: u32`, `Persistence::Runtime`, script flags false. `dump_entity` prints both numbers.
+
+**Not in this change.** Scene definitions, the constrained builder, spawn, rollback, unload, replace, deferred scene commands, asset removal, serialization, prefabs, and the `spatial_scene` switch. The `SceneOpId` result for a deferred command is recommended in ADR-0014 and is not accepted or implemented.
+
+**Tests.** Nine in `engine-world` `scene::tests`: distinct ids and issuance order, repeated local ids on distinct entities, unknown instance and local id, an entity with no membership, despawn plus sweep plus a reused slot, a removed or replaced `SceneMember`, ordinary errors, a missing manager, and registry plus dump text. `engine` `tests/registry.rs` now also requires `"SceneMember"` from `Game::new`.
+
+**Repository check.** `scripts/check.sh` on 2026-10-15, macOS 27.0 arm64, `rustc 1.99.0`, exit 0. All 4 steps passed. `cargo test --workspace` with `DIMORA_REQUIRE_GPU=1` reported **318 passed, 0 failed, 0 ignored**. `headless.rs` ran 19 tests. `spatial_scene` `configurations.rs` ran 16. Clippy `--all-targets` compiled `basic_2_5d` and `spatial_scene`.
+
+**Screenshots.** Not re-rendered. `extract_scene` queries sprites, meshes, tilemaps, lights, cameras, `Visibility`, and `Parent`. It does not read `SceneMember` or the scene manager. This change does not alter extraction or the examples.
+
 ## Planned systems and their state
 
 None of these exists. They are in the roadmap so that earlier work does not block them; they are not
@@ -744,8 +764,8 @@ in the current scope.
 
 ## Not in scope now
 
-M4 phases 4–5, and everything after M4. In particular: no scene format, no scene manager, no new rendering features, no collision, no
-editor work, and no work on UI, scripting or any of the three character representations. M4 Phase 1 is commit `cdb5ec3`. Phase 2 is commit `2c76f71`. Phase 3 (name and tag lookup) is checkpointed locally with this record. None of M4 is pushed. M4 is not complete. M3b is complete locally and is not pushed. These systems are deliberately
+M4-4B, phase 5, and everything after M4. In particular: no scene format, no scene load or unload, no new rendering features, no collision, no
+editor work, and no work on UI, scripting or any of the three character representations. M4 Phase 1 is commit `cdb5ec3`. Phase 2 is commit `2c76f71`. Phase 3 is commit `f9a4aab`. M4-4A (instance tracking) is implemented locally and is not committed. None of M4 is pushed. M4 is not complete. M3b is complete locally and is not pushed. These systems are deliberately
 not being started together: each has its own milestone, prerequisites and decisions. Decisions that data
 formats or public APIs will bake in are made before their first consumer (see
 [docs/DECISIONS.md](docs/DECISIONS.md#what-to-resolve-first)).

@@ -14,6 +14,7 @@ fn game_startup_registers_builtins_and_still_reports_unknown_components() {
         "Transform",
         "Name",
         "Tags",
+        "SceneMember",
         "Visibility",
         "Sprite",
         "Mesh",
