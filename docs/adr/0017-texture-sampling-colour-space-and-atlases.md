@@ -52,6 +52,10 @@ Option B.
 
 **Sampler descriptor, engine-owned.** Min filter, mag filter, mip filter, address mode per axis, anisotropy level. Defaults: nearest min, nearest mag, no mip sampling, clamp on each axis, anisotropy 1. `Texture::with_filter` continues to set min and mag together so existing call sites stay valid. Mipmaps are off unless the texture asks for generation. Address modes are clamp, repeat, and mirror. Clamp-to-border is not in M5. The engine does not impose a power-of-two anisotropy rule. wgpu 30.0.1 does not require one, and no engine policy chooses one.
 
+**CPU configuration (M5-2A).** `ColorSpace`, `AddressMode`, `MipFilter`, `Mipmaps`, and `SamplerDesc` live on `Texture` in `engine-assets`. `from_rgba8`, `solid`, `from_fn`, and PNG decode still produce sRGB, nearest, clamp, no mips, and anisotropy 1. `sampler` stores the full descriptor, including a min filter that differs from the mag filter. `filter` is the legacy summary the current GPU backend reads. `with_filter` writes that field and both min and mag, and leaves address, mip filter, and anisotropy alone. `with_sampler` stores the normalized descriptor and sets `filter` to linear only when both min and mag are linear. A direct write to the public `filter` field does not update `sampler`. The GPU upload still ignores `color_space`, `mips`, and `sampler`.
+
+**Mip levels and the mip filter are separate.** `Mipmaps` asks which levels exist. `mip_filter` says how to sample levels that exist. Setting a mip filter does not select `Mipmaps::Generate`. `Mipmaps::None` with a mip filter is valid. wgpu 30.0.1 `create_sampler` does not look at the texture's mip count, and sampling clamps to the levels that exist, so a one-level texture contributes its base level. Metal selects "not mipmapped" only when the mip filter is nearest and the LOD clamp is `0..0`; the default LOD range is wider. The GPU checkpoint therefore clamps LOD to the base level when the texture has one level. M5-2A does not generate mipmaps.
+
 **Anisotropy, normalized before a sampler exists.** The CPU descriptor is validated and normalized, and the GPU sampler is created once from that result.
 
 * Anisotropy below 1 is invalid. wgpu returns `CreateSamplerError::InvalidAnisotropy`. The engine returns that as a configuration error. It does not raise 0 to 1.
@@ -105,7 +109,7 @@ The M5 atlas acceptance tests, when that phase is implemented, establish the sup
 ## Consequences and follow-up
 
 * M5-2 implements the descriptor, formats, mip generation, the split caches, and the GPU tests. It does not implement the packer, partial upload, or blended meshes.
-* M5-2A, specified in TASKS.md, adds the CPU types, the backward-compatible constructors, CPU validation, and unit tests. It does not create a GPU sampler and does not generate mipmaps.
+* M5-2A adds the CPU types, the backward-compatible constructors, CPU validation, and unit tests. It does not create a GPU sampler and does not generate mipmaps. The GPU backend still reads `Texture.filter`.
 * M5-2 preserves the constructors, defaults, handles, and sprite and mesh rendering listed above. The four screenshots against `6dbabb8` stay byte-identical unless a separately reviewed correctness issue requires a change.
 * M14 is the first consumer of `ColorSpace::Linear` for normals. The slot exists only as storage until then (ADR-0015).
 * D-06 remains open.

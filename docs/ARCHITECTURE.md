@@ -19,7 +19,8 @@ commit `e12fb5b` and is not pushed. M4-4D, deferred scene operations, is commit 
 not pushed. M4-4E, the `spatial_scene` switch, is commit `d58c66b` and is not pushed. M4-5,
 the lamp prefab and crate-private low-level scene methods, is commit `2b79806` and is not pushed. M4 is
 complete locally at `2b79806` and is not pushed. M5 decisions are ADR-0015, ADR-0016, and ADR-0017,
-corrected in the M5-1 final review. No M5 renderer code exists. M5-2 has not started.
+corrected in the M5-1 final review. CPU texture descriptors exist on `Texture`. No M5 renderer code
+exists. M5-2B has not started.
 Profiling is not in the code. The M2 audit
 date was 2026-10-13 at `4857158`.
 Everything outside the sections "Proposed future architecture" and "Proposed boundaries" exists in the
@@ -475,7 +476,7 @@ These are settled; revisit only with a concrete problem.
 | Scene model and registry (D-18) | One world; internal `SceneManager`; `SceneBuilder` without `&mut World`; load publishes only on success; unload lifts non-members and does not remove assets; deferred scene ops use the command queue and store `SceneOpStatus`; `spatial_scene` replaces one environment at the stage flush; a prefab is `fn(&mut World) -> Entity` | ADR-0014. Phase 1 is `cdb5ec3`. Phase 2 is `2c76f71`. Phase 3 is `f9a4aab`. M4-4A is `302622b`. M4-4B is `128c70e`. M4-4C is `e12fb5b`. M4-4D is `8398e49`. M4-4E is `d58c66b`. M4-5 is `2b79806`. Scene files stay in M19. D-16 stays open |
 | Material alpha classes (D-05) | Opaque, Mask, and Blend. Blended sprites and meshes share one sort. A blended mesh uses the camera-space Z of its world-space bounding-sphere centre. `RenderOrder` on blended sprites is unchanged. Coplanar conflicts stay with D-48 | ADR-0015. Settled, not implemented |
 | Sprite units (D-27) | Per-sprite `pixels_per_unit`, default 16. No global constant. Atlases are in texels | ADR-0016. The field already exists. M5-1 does not change it |
-| Texture sampling (M5) | Per-texture sRGB or linear. GPU image storage and samplers are separate caches. `write_texture` keeps a tight row stride. Atlas padding versus mips is a provisional estimate until GPU tests | ADR-0017. Settled as a contract. Not implemented |
+| Texture sampling (M5) | Per-texture sRGB or linear. GPU image storage and samplers are separate caches. `write_texture` keeps a tight row stride. Atlas padding versus mips is a provisional estimate until GPU tests | ADR-0017. CPU descriptors are on `Texture`. The GPU path still reads `Texture.filter` |
 
 ## Proposed future architecture (NOT implemented)
 

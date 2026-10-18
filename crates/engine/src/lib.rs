@@ -61,8 +61,8 @@ pub mod prelude {
         SkeletonInstance,
     };
     pub use engine_assets::{
-        AssetHandle, AssetManager, AssetSource, FileSystemSource, MemorySource, MeshData, SpriteAsset, Texture,
-        TextureFilter,
+        AddressMode, AssetHandle, AssetManager, AssetSource, ColorSpace, FileSystemSource, MemorySource, MeshData,
+        MipFilter, Mipmaps, SamplerConfigError, SamplerDesc, SpriteAsset, Texture, TextureFilter,
     };
     pub use engine_core::{Actions, ButtonSource, Color, FixedTimestep, Input, Key, MouseButton, Time};
     pub use engine_math::{Mat4, Quat, Rect, Transform, Vec2, Vec3, Vec4};

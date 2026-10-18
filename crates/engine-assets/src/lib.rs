@@ -26,4 +26,6 @@ pub use manager::{AssetManager, LoadState};
 pub use mesh::{MeshData, Vertex};
 pub use source::{AssetSource, FileSystemSource, MemorySource};
 pub use sprite::SpriteAsset;
-pub use texture::{Texture, TextureFilter};
+pub use texture::{
+    AddressMode, ColorSpace, MipFilter, Mipmaps, SamplerConfigError, SamplerDesc, Texture, TextureFilter,
+};

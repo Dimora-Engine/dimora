@@ -79,11 +79,9 @@ first" tiers in [docs/DECISIONS.md](docs/DECISIONS.md#what-to-resolve-first).
   Synchronous load is `128c70e`. Unload and replace are `e12fb5b`. Deferred scene operations are
   `8398e49`. The `spatial_scene` switch is `d58c66b`. The lamp prefab and the crate-private scene helpers
   are `2b79806`. Scene files stay in M19. D-16 stays open.
-* **Now: M5, materials and textures.** Decisions are recorded (ADR-0015, ADR-0016, ADR-0017) and corrected
-  in the M5-1 final review. Implementation has not started. M5 stays not started: the roadmap marks a
-  milestone in progress only when TASKS.md shows implementation commits. M5-2, texture parameters and
-  mipmaps, is specified in TASKS.md and is not started. M5-2A, CPU texture descriptors, is specified
-  there and is not started.
+* **Now: M5, materials and textures.** Decisions are recorded (ADR-0015, ADR-0016, ADR-0017). M5-2A,
+  the CPU texture descriptors, is committed locally and is not pushed. It does not change GPU sampling.
+  The milestone is in progress and is not complete. M5-2B, GPU formats and the sampler cache, has not started.
 * **M6 stays after M5.** The camera-configuration prototype is verified. The rest of M6 is not started.
   M7 and M8 can proceed in parallel after M3a, M4, M5, and M6 as stated below. M9 freezes the foundational
   gameplay, scene, and component-integration contracts. Later milestones may add public APIs through a
@@ -451,7 +449,7 @@ Scene files stay in M19. D-16 stays open.
 
 ---
 
-## M5. Materials and textures: Not started (decisions recorded)
+## M5. Materials and textures: In progress
 
 **Objective.** A small but real material and texture model that normal maps, shadows and the asset
 pipeline can build on without rewriting the renderer. It serves every camera configuration and visual
@@ -481,7 +479,7 @@ blended-mesh depth is the camera-space Z of the world-space bounding-sphere cent
 updates, and atlas mip limits are
 [ADR-0017](docs/adr/0017-texture-sampling-colour-space-and-atlases.md), including the corrected
 anisotropy fallback, `write_texture` alignment, split texture and sampler caches, and the provisional
-atlas estimate. M5-1 is documentation only. M5-2 is not started.
+atlas estimate. M5-2A stores the CPU descriptors and does not change GPU sampling. M5-2B has not started.
 
 **Acceptance criteria.**
 - GPU test: a minified high-frequency texture approaches its mean colour with mipmaps, and aliases

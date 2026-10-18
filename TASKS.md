@@ -31,13 +31,11 @@ operations, is commit `8398e49` and is not pushed. M4-4E, the `spatial_scene` sw
 commit `2b79806` and is not pushed. Evidence is under "M4 Phase 1 results", "M4 Phase 2 results", "M4 Phase 3 results",
 "M4-4A results", "M4-4B results", "M4-4C results", "M4-4D results", "M4-4E results", and "M4-5 results".
 
-**M5 is the next implementation milestone and has not started.** M5-1 records ADR-0015, ADR-0016, and
-ADR-0017, corrected in the final review. No renderer, texture, material, sampler, shader, or atlas
-code changed for it. M5 stays not started: a milestone is in progress only when this file shows
-implementation commits. M5-2 is specified below and is not started. M5-2A, CPU texture descriptors, is
-specified below and is not started. M6's camera-configuration prototype remains the only verified M6
-work. The manual window note under M4-4E and M4-5 is unchanged: the framebuffer and the keyboard were
-not observed.
+**M5 is in progress and is not complete.** M5-1 records ADR-0015, ADR-0016, and ADR-0017. M5-2A, the
+CPU texture descriptors, is committed locally and is not pushed. The GPU backend still reads
+`Texture.filter`. No renderer, shader, material, atlas, or upload code changed for it. M5-2B has not
+started. M6's camera-configuration prototype remains the only verified M6 work. The manual window note
+under M4-4E and M4-5 is unchanged: the framebuffer and the keyboard were not observed.
 
 ## Completed work
 
@@ -879,12 +877,12 @@ Texture parameters and mipmaps only. No `MaterialAsset`, no atlas packer, no sub
 
 **Later checkpoints, after M5-2A.**
 
-1. **Formats and sampler cache.** `scene_renderer.rs` upload and `GpuContext` limits. GPU tests for linear sampling, clamp versus repeat, and the anisotropy normalization. Screenshots compared. Done when defaults still match `6dbabb8` and the linear sample is not sRGB-decoded.
+1. **Formats and sampler cache.** `scene_renderer.rs` upload and `GpuContext` limits. The backend reads `Texture.sampler` after `SamplerDesc::normalized`, and stops choosing the draw sampler from `Texture.filter`. A direct write to `filter` is not the sampled configuration. `ColorSpace` selects `Rgba8UnormSrgb` or `Rgba8Unorm`. `Mipmaps::None` stays one level; a mip filter on that texture clamps LOD to the base level. Downlevel anisotropy forces 1 when the flag is absent, logs once, and creates the sampler once. A HAL failure is a device error. Re-upload pixels only when storage differs. GPU tests for linear sampling, clamp versus repeat, and the anisotropy normalization. Screenshots compared. Done when defaults still match `6dbabb8` and the linear sample is not sRGB-decoded.
 2. **Mip generation.** Private blit, mip count from the texture. GPU mean-versus-alias test in perspective and under orthographic zoom. NPOT fallback logged, not a hard failure. Screenshots compared again. Done when both cameras show the mean-with-mips and alias-without-mips results, and the four baselines are unchanged.
 
 Partial upload and the atlas packer are later M5 phases (ADR-0017). They are not part of these checkpoints.
 
-## M5-2A specification (not started)
+## M5-2A specification
 
 CPU texture descriptors and defaults. No GPU sampler creation, no mipmap generation, no `MaterialAsset`, no atlas packer, no partial upload, and no change to `engine-renderer`, `engine-renderer-wgpu`, or any shader.
 
@@ -912,7 +910,7 @@ Do not edit `crates/engine-renderer-wgpu/src/scene_renderer.rs`, `gpu.rs`, `spri
 `Texture` keeps `width`, `height`, `rgba`, and `filter`, and gains `color_space: ColorSpace`, `mips: Mipmaps`, and `sampler: SamplerDesc`.
 
 - `from_rgba8`, `solid`, `from_fn`, and `Asset::decode` keep their signatures. They set sRGB, `Mipmaps::None`, nearest `filter`, and the default `SamplerDesc`.
-- `with_filter(self, TextureFilter) -> Self` sets `filter` and both `sampler.min_filter` and `sampler.mag_filter`. Other sampler fields stay.
+- `with_filter(self, TextureFilter) -> Self` sets `filter` and both `sampler.min_filter` and `sampler.mag_filter`. Address, mip filter, colour space, and mipmap generation stay. If anisotropy is above 1 and the resulting filters are not all linear, anisotropy becomes 1.
 - `with_color_space(self, ColorSpace) -> Self`.
 - `with_mipmaps(self, Mipmaps) -> Self`.
 - `with_sampler(self, SamplerDesc) -> Result<Self, SamplerConfigError>` stores `desc.normalized()?`. It sets `filter` to `Linear` when both min and mag are `Linear`, and to `Nearest` otherwise. The current backend still reads `filter` until the GPU checkpoint, so a split min and mag is stored on `sampler` and is not visible in a draw during M5-2A.
@@ -931,7 +929,19 @@ Do not edit `crates/engine-renderer-wgpu/src/scene_renderer.rs`, `gpu.rs`, `spri
 
 **Unit tests, in `texture.rs`.** `from_rgba8_defaults_match_todays_sampling`; `png_decode_uses_the_same_defaults` (a tiny in-memory PNG, or `image` writing one into a buffer); `with_filter_sets_min_and_mag`; `anisotropy_zero_is_rejected`; `anisotropy_with_nearest_keeps_nearest`; `anisotropy_without_linear_mips_drops_to_one`; `linear_anisotropy_above_16_clamps_to_16`; `non_power_of_two_anisotropy_is_kept`; `with_sampler_stores_the_normalized_descriptor`.
 
-**Completion.** Existing constructors compile. Default sampling fields equal today's behaviour. The CPU tests pass. `scene_renderer.rs` still compiles against `Texture.filter` without an edit. `scripts/check.sh` passes. Screenshots are not required for this checkpoint because the upload path is unchanged; do not claim a new byte comparison unless it is run. M5 and M5-2 stay not started in ROADMAP.md. No GPU sampler, mip chain, packer, or partial update exists at the end of M5-2A.
+**Completion.** Existing constructors compile. Default sampling fields equal today's behaviour. The CPU tests pass. `scene_renderer.rs` still compiles against `Texture.filter` without an edit. `scripts/check.sh` passes. Screenshots are not required for this checkpoint because the upload path is unchanged; do not claim a new byte comparison unless it is run. M5 stays not complete. M5-2B has not started. No GPU sampler, mip chain, packer, or partial update exists at the end of M5-2A.
+
+## M5-2A results (2026-10-18)
+
+Committed locally and not pushed.
+
+**API.** `engine-assets` adds `ColorSpace`, `AddressMode`, `MipFilter`, `Mipmaps`, `SamplerDesc`, and `SamplerConfigError`. They are re-exported from `engine-assets` and the `engine` prelude. `Texture` keeps `width`, `height`, `rgba`, and `filter`, and gains `color_space`, `mips`, and `sampler`. `from_rgba8`, `solid`, `from_fn`, and PNG `decode` keep their signatures and the previous sampling defaults. No caller outside `texture.rs` built a `Texture` literal or called `with_filter`. The only reader of `Texture.filter` is `scene_renderer.rs`, which was not edited.
+
+**Legacy filter.** `sampler` holds the full descriptor, including distinct min and mag filters. `filter` is the summary the current backend reads. `with_sampler` sets it to linear only when both min and mag are linear. A direct write to the public `filter` field does not update `sampler`. `with_filter` updates both and reduces anisotropy when the new filters cannot keep a value above 1.
+
+**Mipmaps.** `Mipmaps` and `mip_filter` are stored independently. A one-level texture with a mip filter is valid. wgpu 30.0.1 does not reject that sampler; sampling clamps to the levels that exist. M5-2B clamps LOD to the base level in that case. No mip chain is generated here.
+
+**Repository check.** `scripts/check.sh` on 2026-10-18, macOS 27.0 arm64, `rustc 1.99.0`, exit 0. All 4 steps passed: `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` with `DIMORA_REQUIRE_GPU=1` (**387 passed, 0 failed, 0 ignored**, 41 suites), `cargo doc --workspace --no-deps` with `-D warnings`. `headless.rs` ran 20 tests. `spatial_scene` `configurations.rs` ran 16, `switching.rs` 12, `prefab.rs` 5. The log did not print the adapter name. `DIMORA_REQUIRE_GPU=1` was set, and those GPU tests passed, so a usable adapter was present. Screenshots were not re-rendered. The four baselines against `6dbabb8` were not compared in this checkpoint.
 
 ## Planned systems and their state
 
@@ -950,7 +960,7 @@ in the current scope.
 
 ## Not in scope now
 
-M5 implementation has not started. M5-1 is the decision record only. M6's remaining tasks, and everything after M5, are not in progress. In particular: no scene format, no prefab assets, no new rendering features in this change, no collision, no
+M5-2A, CPU texture descriptors, is committed locally and is not pushed. M5 is not complete. M5-2B has not started. M6's remaining tasks, and everything after M5, are not in progress. In particular: no scene format, no prefab assets, no new rendering features in this change, no collision, no
 editor work, and no work on UI, scripting or any of the three character representations. M4 Phase 1 is commit `cdb5ec3`. Phase 2 is commit `2c76f71`. Phase 3 is commit `f9a4aab`. M4-4A is commit `302622b`. M4-4B is commit `128c70e`. M4-4C is commit `e12fb5b`. M4-4D is commit `8398e49`. M4-4E is commit `d58c66b`. M4-5 is commit `2b79806`. None of M4 is pushed. M4 is complete locally. M3b is complete locally and is not pushed. These systems are deliberately
 not being started together: each has its own milestone, prerequisites and decisions. Decisions that data
 formats or public APIs will bake in are made before their first consumer (see

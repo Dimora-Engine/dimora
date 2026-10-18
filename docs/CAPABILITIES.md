@@ -380,8 +380,9 @@ Missing from the original category list and now tracked: **save games** (34), **
 * **Not initially.** PBR, custom shaders, texture compression, LODs.
 
 ### 12. Textures and atlases
-* **Now.** PNG decode via `image`; nearest or linear; clamp; no mipmaps; always sRGB; any change
-  re-uploads the whole texture (KI-6, KI-25).
+* **Now.** PNG decode via `image`; nearest or linear; clamp; no mipmaps; always sRGB on the GPU; any change
+  re-uploads the whole texture (KI-6, KI-25). CPU-side `ColorSpace`, `Mipmaps`, and `SamplerDesc` are
+  stored on `Texture`. The GPU path still reads `Texture.filter` and still uploads one sRGB level.
 * **Required.** The texture contract in ADR-0017: mipmaps, wrap, separate filters, anisotropy normalized
   before sampler creation (linear filters required above 1; no power-of-two rule), per-texture colour
   space, separate GPU image and sampler caches, sub-region updates that follow the operation they call
