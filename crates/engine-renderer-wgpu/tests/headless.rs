@@ -980,27 +980,36 @@ fn one_allocated_mip_level_clamps_sampler_lod() {
     let mut world = sampling_world(size, None, at);
     render(&gpu, &mut renderer, &mut world, &assets);
     let info = renderer.cached_texture(handle.id()).unwrap();
-    assert_eq!(assets.get(handle).unwrap().mips, Mipmaps::Generate, "the request is stored and not generated");
-    assert_eq!(info.mip_level_count, 1);
-    assert_eq!((info.lod_min, info.lod_max), (0.0, 32.0));
+    assert_eq!(assets.get(handle).unwrap().mips, Mipmaps::Generate);
+    assert_eq!(info.mip_level_count, 3, "4x4 generates floor(log2(4))+1 levels");
+    assert_eq!((info.lod_min, info.lod_max), (0.0, 32.0), "no mip filter keeps the base-level LOD range");
     assert!(!info.mip_filter_linear);
+    assert_eq!(renderer.sampler_cache_len(), 1, "base-level sampling reuses the placeholder sampler");
     assert_eq!(
         renderer.resource_stats().sampler_creates,
-        before.sampler_creates,
-        "default sampling reuses the placeholder sampler"
+        before.sampler_creates + 1,
+        "the shared blit sampler is created once"
     );
+    assert_eq!(renderer.resource_stats().mip_generations, before.mip_generations + 1);
 
     assets
         .insert(
             "tex",
             Texture::solid(4, 4, [1, 2, 3, 255])
+                .with_mipmaps(Mipmaps::Generate)
                 .with_sampler(SamplerDesc { mip_filter: Some(MipFilter::Nearest), ..SamplerDesc::default() })
                 .unwrap(),
         )
         .unwrap();
     render(&gpu, &mut renderer, &mut world, &assets);
-    assert_eq!(renderer.resource_stats().sampler_creates, before.sampler_creates);
-    assert_eq!(renderer.cached_texture(handle.id()).unwrap().lod_max, 32.0);
+    assert_eq!(renderer.resource_stats().sampler_creates, before.sampler_creates + 2);
+    assert_eq!(
+        renderer.resource_stats().mip_generations,
+        before.mip_generations + 1,
+        "sampler-only does not rebuild mips"
+    );
+    assert_eq!(renderer.cached_texture(handle.id()).unwrap().lod_max, 2.0);
+    assert_eq!(renderer.cached_texture(handle.id()).unwrap().mip_level_count, 3);
 
     assets
         .insert(
@@ -1015,7 +1024,12 @@ fn one_allocated_mip_level_clamps_sampler_lod() {
     assert!(linear.mip_filter_linear);
     assert_eq!((linear.lod_min, linear.lod_max), (0.0, 32.0));
     assert_eq!(linear.mip_level_count, 1);
-    assert_eq!(renderer.resource_stats().sampler_creates, before.sampler_creates + 1);
+    assert_eq!(renderer.resource_stats().sampler_creates, before.sampler_creates + 3);
+    assert_eq!(
+        renderer.resource_stats().mip_generations,
+        before.mip_generations + 1,
+        "dropping to one level does not blit"
+    );
     assert_eq!(assets.get(handle).unwrap().mips, Mipmaps::None);
 }
 
@@ -1081,4 +1095,357 @@ fn asset_revision_reuploads_storage_only_when_it_changes() {
     assert_eq!(renderer.cache_stats().textures, 0);
     assert_eq!(renderer.sampler_cache_len(), 1, "the unused sampler goes; the placeholder sampler stays");
     assert!(renderer.cached_texture(handle.id()).is_none());
+}
+
+fn linear_renderer(gpu: &GpuContext) -> SceneRenderer {
+    SceneRenderer::new(gpu, wgpu::TextureFormat::Rgba8Unorm)
+}
+
+fn checker(size: u32, mips: Mipmaps, sampler: SamplerDesc) -> Texture {
+    Texture::from_fn(size, size, |x, y| if (x + y) % 2 == 0 { [0, 0, 0, 255] } else { [255, 255, 255, 255] })
+        .with_color_space(ColorSpace::Linear)
+        .with_mipmaps(mips)
+        .with_sampler(sampler)
+        .unwrap()
+}
+
+fn nearest_sampler(mip: Option<MipFilter>) -> SamplerDesc {
+    SamplerDesc {
+        min_filter: TextureFilter::Nearest,
+        mag_filter: TextureFilter::Nearest,
+        mip_filter: mip,
+        ..SamplerDesc::default()
+    }
+}
+
+fn is_near_gray(pixel: [u8; 4]) -> bool {
+    pixel.iter().take(3).all(|c| (110..=145).contains(c)) && pixel[3] > 250
+}
+
+fn is_extreme(pixel: [u8; 4]) -> bool {
+    (pixel[0] < 30 || pixel[0] > 225) && (pixel[0] as i16 - pixel[1] as i16).abs() < 8
+}
+
+fn camera_world(camera: Camera, size: Vec2) -> World {
+    let mut world = World::new();
+    world.insert_resource(AmbientLight { color: Color::WHITE, intensity: 1.0 });
+    world.spawn((camera, Transform::from_xyz(0.0, 0.0, -4.0)));
+    world.spawn((
+        Transform::IDENTITY,
+        Sprite::new("sprite").with_size(size).with_anchor(Vec2::splat(0.5)).unlit().cutout(),
+    ));
+    world
+}
+
+fn render_checker(
+    gpu: &GpuContext,
+    renderer: &mut SceneRenderer,
+    assets: &mut AssetManager,
+    texture: Texture,
+    camera: Camera,
+    size: Vec2,
+) -> ([u8; 4], engine_renderer_wgpu::CachedTextureInfo) {
+    let handle = insert_sampling_texture(assets, texture);
+    let mut world = camera_world(camera, size);
+    let image = render(gpu, renderer, &mut world, assets);
+    (px(&image, 64, 64), renderer.cached_texture(handle.id()).expect("cached"))
+}
+
+#[test]
+fn generated_mips_average_a_minified_checker_and_alias_without_them() {
+    let Some((gpu, _)) = setup() else { return };
+    let mut renderer = linear_renderer(&gpu);
+    let mut assets = AssetManager::in_memory();
+    let far = Camera::orthographic(64.0).with_clear_color(Color::BLACK);
+    let (aliased, alias_info) = render_checker(
+        &gpu,
+        &mut renderer,
+        &mut assets,
+        checker(32, Mipmaps::None, nearest_sampler(None)),
+        far,
+        Vec2::splat(1.0),
+    );
+    assert_eq!(alias_info.mip_level_count, 1);
+    assert!(is_extreme(aliased), "one-level nearest minification aliases the checker {aliased:?}");
+
+    let (averaged, mip_info) = render_checker(
+        &gpu,
+        &mut renderer,
+        &mut assets,
+        checker(32, Mipmaps::Generate, nearest_sampler(Some(MipFilter::Nearest))),
+        far,
+        Vec2::splat(1.0),
+    );
+    assert_eq!(mip_info.mip_level_count, 6);
+    assert_eq!(mip_info.lod_max, 5.0);
+    assert!(is_near_gray(averaged), "nearest mip of the minified checker approaches the mean {averaged:?}");
+    assert!(!is_near_gray(aliased) && is_near_gray(averaged));
+
+    let (linear_mip, linear_info) = render_checker(
+        &gpu,
+        &mut renderer,
+        &mut assets,
+        checker(32, Mipmaps::Generate, nearest_sampler(Some(MipFilter::Linear))),
+        far,
+        Vec2::splat(1.0),
+    );
+    assert!(linear_info.mip_filter_linear);
+    assert_eq!(linear_info.lod_max, 5.0);
+    assert!(is_near_gray(linear_mip), "linear mip of the minified checker approaches the mean {linear_mip:?}");
+
+    let close = Camera::orthographic(2.0).with_clear_color(Color::BLACK);
+    let handle =
+        insert_sampling_texture(&mut assets, checker(32, Mipmaps::Generate, nearest_sampler(Some(MipFilter::Linear))));
+    let mut world = camera_world(close, Vec2::splat(2.0));
+    let image = render(&gpu, &mut renderer, &mut world, &assets);
+    assert_eq!(renderer.cached_texture(handle.id()).unwrap().mip_level_count, 6);
+    let black = px(&image, 1, 1);
+    let white = px(&image, 6, 1);
+    assert!(is_extreme(black) && black[0] < 30, "magnified ortho zoom stays on the base checker {black:?}");
+    assert!(is_extreme(white) && white[0] > 225, "the neighbouring magnified texel stays white {white:?}");
+}
+
+#[test]
+fn perspective_and_orthographic_zoom_both_select_mip_levels() {
+    let Some((gpu, _)) = setup() else { return };
+    let mut renderer = linear_renderer(&gpu);
+    let mut assets = AssetManager::in_memory();
+    let generated = checker(32, Mipmaps::Generate, nearest_sampler(Some(MipFilter::Linear)));
+    let plain = checker(32, Mipmaps::None, nearest_sampler(None));
+
+    let mut world = World::new();
+    world.insert_resource(AmbientLight { color: Color::WHITE, intensity: 1.0 });
+    world.spawn((Camera::perspective(60.0).with_clear_color(Color::BLACK), Transform::from_xyz(0.0, 0.0, -40.0)));
+    let handle = insert_sampling_texture(&mut assets, generated);
+    world.spawn((
+        Transform::IDENTITY,
+        Sprite::new("sprite").with_size(Vec2::splat(1.0)).with_anchor(Vec2::splat(0.5)).unlit().cutout(),
+    ));
+    let image = render(&gpu, &mut renderer, &mut world, &assets);
+    let with_mips = px(&image, 64, 64);
+    assert!(renderer.cached_texture(handle.id()).unwrap().mip_level_count > 1);
+    assert!(is_near_gray(with_mips), "perspective minification approaches the mean {with_mips:?}");
+
+    insert_sampling_texture(&mut assets, plain);
+    let image = render(&gpu, &mut renderer, &mut world, &assets);
+    let without = px(&image, 64, 64);
+    assert!(is_extreme(without), "perspective without mips aliases {without:?}");
+
+    let (ortho_far, _) = render_checker(
+        &gpu,
+        &mut renderer,
+        &mut assets,
+        checker(32, Mipmaps::Generate, nearest_sampler(Some(MipFilter::Nearest))),
+        Camera::orthographic(48.0).with_clear_color(Color::BLACK),
+        Vec2::splat(1.0),
+    );
+    assert!(is_near_gray(ortho_far), "orthographic zoom-out selects a mip {ortho_far:?}");
+}
+
+#[test]
+fn generated_mips_keep_base_level_sampling_until_a_mip_filter_is_set() {
+    let Some((gpu, mut renderer)) = setup() else { return };
+    let mut assets = AssetManager::in_memory();
+    let minified = Texture::from_fn(32, 1, |x, _| if x < 16 { [255, 0, 0, 255] } else { [0, 0, 255, 255] })
+        .with_mipmaps(Mipmaps::Generate)
+        .with_sampler(SamplerDesc {
+            min_filter: TextureFilter::Linear,
+            mag_filter: TextureFilter::Nearest,
+            mip_filter: None,
+            ..SamplerDesc::default()
+        })
+        .unwrap();
+    let center = -1.0 + (64.5 / W as f32) * 2.0;
+    let sprite = Vec2::new(8.0 * 2.0 / W as f32, 2.0);
+    let handle = insert_sampling_texture(&mut assets, minified);
+    let mut world = sampling_world(sprite, None, Transform::from_xyz(center, 0.0, 0.0));
+    let image = render(&gpu, &mut renderer, &mut world, &assets);
+    let info = renderer.cached_texture(handle.id()).unwrap();
+    assert!(info.mip_level_count > 1);
+    assert_eq!(info.lod_max, 32.0);
+    assert!(
+        mixed_red_blue(px(&image, 64, 64)),
+        "generated mips without a mip filter still min-filter the base level {:?}",
+        px(&image, 64, 64)
+    );
+
+    let magnified = Texture::from_rgba8(2, 1, vec![255, 0, 0, 255, 0, 0, 255, 255])
+        .with_mipmaps(Mipmaps::Generate)
+        .with_sampler(SamplerDesc {
+            min_filter: TextureFilter::Linear,
+            mag_filter: TextureFilter::Nearest,
+            mip_filter: Some(MipFilter::Linear),
+            ..SamplerDesc::default()
+        })
+        .unwrap();
+    insert_sampling_texture(&mut assets, magnified);
+    let mut world = sampling_world(Vec2::splat(2.0), None, Transform::IDENTITY);
+    let image = render(&gpu, &mut renderer, &mut world, &assets);
+    assert!(
+        is_red(px(&image, 63, 64)),
+        "magnification uses mag nearest while the chain exists {:?}",
+        px(&image, 63, 64)
+    );
+}
+
+#[test]
+fn srgb_and_linear_mip_samples_are_about_half_linear_intensity() {
+    let Some((gpu, _)) = setup() else { return };
+    let mut renderer = linear_renderer(&gpu);
+    let mut assets = AssetManager::in_memory();
+    let camera = Camera::orthographic(64.0).with_clear_color(Color::BLACK);
+    for space in [ColorSpace::Srgb, ColorSpace::Linear] {
+        let texture =
+            Texture::from_fn(32, 32, |x, y| if (x + y) % 2 == 0 { [0, 0, 0, 255] } else { [255, 255, 255, 255] })
+                .with_color_space(space)
+                .with_mipmaps(Mipmaps::Generate)
+                .with_sampler(nearest_sampler(Some(MipFilter::Linear)))
+                .unwrap();
+        let (pixel, info) = render_checker(&gpu, &mut renderer, &mut assets, texture, camera, Vec2::splat(1.0));
+        assert_eq!(info.mip_level_count, 6);
+        assert!(is_near_gray(pixel), "{space:?} black/white mip samples near 0.5 linear on a linear target {pixel:?}");
+    }
+}
+
+#[test]
+fn mip_generation_follows_pixels_allocation_and_eviction() {
+    let Some((gpu, mut renderer)) = setup() else { return };
+    let mut assets = AssetManager::in_memory();
+    let before = renderer.resource_stats();
+    let handle =
+        insert_sampling_texture(&mut assets, Texture::solid(8, 8, [20, 30, 40, 255]).with_mipmaps(Mipmaps::Generate));
+    let (size, at) = full_sprite();
+    let mut world = sampling_world(size, None, at);
+    render(&gpu, &mut renderer, &mut world, &assets);
+    let uploaded = renderer.resource_stats();
+    assert_eq!(uploaded.texture_creates, before.texture_creates + 1);
+    assert_eq!(uploaded.texture_writes, before.texture_writes + 1);
+    assert_eq!(uploaded.mip_generations, before.mip_generations + 1);
+    assert_eq!(renderer.cached_texture(handle.id()).unwrap().mip_level_count, 4);
+    let fingerprint = renderer.cached_texture(handle.id()).unwrap().pixel_fingerprint;
+
+    assets
+        .insert(
+            "tex",
+            Texture::solid(8, 8, [20, 30, 40, 255])
+                .with_mipmaps(Mipmaps::Generate)
+                .with_sampler(SamplerDesc { address_u: AddressMode::Repeat, ..SamplerDesc::default() })
+                .unwrap(),
+        )
+        .unwrap();
+    render(&gpu, &mut renderer, &mut world, &assets);
+    let sampled = renderer.resource_stats();
+    assert_eq!(sampled.mip_generations, uploaded.mip_generations);
+    assert_eq!(sampled.texture_creates, uploaded.texture_creates);
+    assert_eq!(sampled.texture_writes, uploaded.texture_writes);
+    assert!(sampled.bind_group_creates > uploaded.bind_group_creates);
+    assert_eq!(renderer.cached_texture(handle.id()).unwrap().pixel_fingerprint, fingerprint);
+
+    assets
+        .insert(
+            "tex",
+            Texture::solid(8, 8, [21, 30, 40, 255])
+                .with_mipmaps(Mipmaps::Generate)
+                .with_sampler(SamplerDesc { address_u: AddressMode::Repeat, ..SamplerDesc::default() })
+                .unwrap(),
+        )
+        .unwrap();
+    render(&gpu, &mut renderer, &mut world, &assets);
+    let pixels = renderer.resource_stats();
+    assert_eq!(pixels.texture_creates, sampled.texture_creates);
+    assert_eq!(pixels.texture_writes, sampled.texture_writes + 1);
+    assert_eq!(pixels.mip_generations, sampled.mip_generations + 1);
+    assert_ne!(renderer.cached_texture(handle.id()).unwrap().pixel_fingerprint, fingerprint);
+
+    assets
+        .insert(
+            "tex",
+            Texture::solid(8, 8, [21, 30, 40, 255])
+                .with_sampler(SamplerDesc { address_u: AddressMode::Repeat, ..SamplerDesc::default() })
+                .unwrap(),
+        )
+        .unwrap();
+    render(&gpu, &mut renderer, &mut world, &assets);
+    let one_level = renderer.resource_stats();
+    assert_eq!(renderer.cached_texture(handle.id()).unwrap().mip_level_count, 1);
+    assert_eq!(one_level.texture_creates, pixels.texture_creates + 1);
+    assert_eq!(one_level.mip_generations, pixels.mip_generations);
+
+    assets
+        .insert(
+            "tex",
+            Texture::solid(8, 8, [21, 30, 40, 255])
+                .with_color_space(ColorSpace::Linear)
+                .with_mipmaps(Mipmaps::Generate)
+                .with_sampler(SamplerDesc { address_u: AddressMode::Repeat, ..SamplerDesc::default() })
+                .unwrap(),
+        )
+        .unwrap();
+    render(&gpu, &mut renderer, &mut world, &assets);
+    let recolored = renderer.resource_stats();
+    assert_eq!(renderer.cached_texture(handle.id()).unwrap().color_space, ColorSpace::Linear);
+    assert_eq!(renderer.cached_texture(handle.id()).unwrap().mip_level_count, 4);
+    assert_eq!(recolored.texture_creates, one_level.texture_creates + 1);
+    assert_eq!(recolored.mip_generations, one_level.mip_generations + 1);
+
+    assets.remove(handle);
+    let mut empty = World::new();
+    empty.spawn((Camera::orthographic(2.0).with_clear_color(Color::BLACK), Transform::from_xyz(0.0, 0.0, -4.0)));
+    render(&gpu, &mut renderer, &mut empty, &assets);
+    assert!(renderer.cached_texture(handle.id()).is_none());
+    assert_eq!(renderer.cache_stats().textures, 0);
+}
+
+#[test]
+fn npot_mip_allocation_follows_the_device_flag() {
+    let Some((gpu, mut renderer)) = setup() else { return };
+    let supported = renderer.npot_mipmapped_textures_supported();
+    let flags = gpu.adapter.get_downlevel_capabilities().flags;
+    eprintln!(
+        "NPOT mip test: NON_POWER_OF_TWO_MIPMAPPED_TEXTURES={supported}; adapter {:?}",
+        gpu.adapter.get_info().name
+    );
+    assert_eq!(supported, flags.contains(wgpu::DownlevelFlags::NON_POWER_OF_TWO_MIPMAPPED_TEXTURES));
+    let mut assets = AssetManager::in_memory();
+    let before = renderer.resource_stats();
+    let handle = insert_sampling_texture(
+        &mut assets,
+        Texture::solid(6, 4, [8, 8, 8, 255])
+            .with_mipmaps(Mipmaps::Generate)
+            .with_sampler(nearest_sampler(Some(MipFilter::Nearest)))
+            .unwrap(),
+    );
+    let (size, at) = full_sprite();
+    let mut world = sampling_world(size, None, at);
+    render(&gpu, &mut renderer, &mut world, &assets);
+    let info = renderer.cached_texture(handle.id()).unwrap();
+    if supported {
+        assert_eq!(info.mip_level_count, 3);
+        assert_eq!(info.lod_max, 2.0);
+        assert_eq!(renderer.resource_stats().npot_mip_fallbacks, before.npot_mip_fallbacks);
+        assert!(renderer.resource_stats().mip_generations > before.mip_generations);
+        eprintln!("NPOT hardware fallback was not exercised; the adapter supports the flag");
+    } else {
+        assert_eq!(info.mip_level_count, 1);
+        assert_eq!(renderer.resource_stats().npot_mip_fallbacks, before.npot_mip_fallbacks + 1);
+        render(&gpu, &mut renderer, &mut world, &assets);
+        assert_eq!(renderer.resource_stats().npot_mip_fallbacks, before.npot_mip_fallbacks + 1);
+    }
+
+    let narrow = insert_sampling_texture(
+        &mut assets,
+        Texture::solid(1, 16, [4, 5, 6, 255])
+            .with_mipmaps(Mipmaps::Generate)
+            .with_sampler(nearest_sampler(None))
+            .unwrap(),
+    );
+    render(&gpu, &mut renderer, &mut world, &assets);
+    let levels = renderer.cached_texture(narrow.id()).unwrap().mip_level_count;
+    assert_eq!(levels, 5, "1x16 is a power of two, so the NPOT fallback does not apply");
+    let point =
+        insert_sampling_texture(&mut assets, Texture::solid(1, 1, [4, 5, 6, 255]).with_mipmaps(Mipmaps::Generate));
+    let generations = renderer.resource_stats().mip_generations;
+    render(&gpu, &mut renderer, &mut world, &assets);
+    assert_eq!(renderer.cached_texture(point.id()).unwrap().mip_level_count, 1);
+    assert_eq!(renderer.resource_stats().mip_generations, generations);
 }

@@ -382,15 +382,17 @@ Missing from the original category list and now tracked: **save games** (34), **
 ### 12. Textures and atlases
 * **Now.** PNG decode via `image`. The GPU reads `Texture.sampler` after normalization. `ColorSpace::Srgb`
   uploads `Rgba8UnormSrgb` and `ColorSpace::Linear` uploads `Rgba8Unorm`. Defaults stay sRGB, nearest,
-  and clamp. One mip level is allocated, including when `Mipmaps::Generate` is stored; that chain is
-  M5-2C. Samplers are cached by the effective descriptor. Pixel bytes are re-uploaded when the image
-  storage changes, not when only the sampler changes (KI-6, KI-25 for partial updates, which are not
-  implemented).
-* **Required.** The rest of ADR-0017: mipmap generation, sub-region updates that follow the operation they
+  and clamp. `Mipmaps::None` allocates one level. `Mipmaps::Generate` allocates
+  `floor(log2(max(width, height))) + 1` levels and the renderer fills them with a private blit, unless the
+  device cannot store that chain, in which case the base level is kept and the fallback is logged once.
+  A mip filter does not allocate levels. Samplers are cached by the effective descriptor, including the LOD
+  clamp. Pixel bytes are re-uploaded, and a chain is rebuilt, when the image storage changes, not when
+  only the sampler changes (KI-6, KI-25 for partial updates, which are not implemented).
+* **Required.** The rest of ADR-0017: sub-region updates that follow the operation they
   call (`write_texture` keeps a tight row stride), and a texel shelf packer. The padding-to-mip formula is a
   provisional estimate until the atlas GPU tests exist. Wrap, separate filters, anisotropy normalization,
-  per-texture colour space, and the split GPU image and sampler caches are implemented (M5-2B).
-  **Planned.** Mip generation is M5-2C and has not started. **Depends on.** ADR-0016.
+  per-texture colour space, the split GPU image and sampler caches, and mip generation are implemented
+  (M5-2B is `11b914f`; M5-2C is implemented in this checkpoint). **Depends on.** ADR-0016.
   D-06 (snapping) stays M6.
 * **Integration.** The glyph atlas (M10), sheets (M8), normal maps (M14), render targets (M6).
 * **Tests/examples.** GPU tests in M5's acceptance list.

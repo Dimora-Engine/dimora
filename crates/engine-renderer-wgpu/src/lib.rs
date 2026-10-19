@@ -10,6 +10,7 @@
 
 mod gpu;
 mod gpu_types;
+mod mip;
 mod present;
 mod scene_renderer;
 mod window;

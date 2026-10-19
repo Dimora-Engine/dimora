@@ -33,8 +33,8 @@ commit `2b79806` and is not pushed. Evidence is under "M4 Phase 1 results", "M4 
 
 **M5 is in progress and is not complete.** M5-1 records ADR-0015, ADR-0016, and ADR-0017. M5-2A, the
 CPU texture descriptors, is committed locally as `c687d5b` and is not pushed. M5-2B, GPU formats and
-the sampler cache, is implemented in this checkpoint and is not pushed. `Mipmaps::Generate` is stored and is
-not built. M5-2C has not started. M6's camera-configuration prototype remains the only verified M6 work.
+the sampler cache, is commit `11b914f` and is not pushed. M5-2C, GPU mip generation, is implemented
+in this checkpoint and is not pushed. M5-3 has not started. M6's camera-configuration prototype remains the only verified M6 work.
 The manual window note under M4-4E and M4-5 is unchanged: the framebuffer and the keyboard were not observed.
 
 ## Completed work
@@ -854,7 +854,7 @@ Documentation checkpoint. Committed locally and not pushed. No renderer, texture
 
 ## M5-2 specification
 
-M5-2A is committed locally as `c687d5b` and is not pushed. M5-2B is implemented in this checkpoint and is not pushed. M5-2C has not started.
+M5-2A is committed locally as `c687d5b` and is not pushed. M5-2B is commit `11b914f` and is not pushed. M5-2C is implemented in this checkpoint and is not pushed. M5-3 has not started.
 
 Texture parameters and mipmaps only. No `MaterialAsset`, no atlas packer, no sub-rectangle upload, no blended meshes, no shader rewrite beyond what a colour-space or mip sample requires. Defaults must keep the four screenshots against `6dbabb8` byte-identical unless a separately reviewed correctness issue requires a change.
 
@@ -880,7 +880,7 @@ Texture parameters and mipmaps only. No `MaterialAsset`, no atlas packer, no sub
 **Later checkpoints, after M5-2A.**
 
 1. **Formats and sampler cache.** `scene_renderer.rs` upload and `GpuContext` limits. The backend reads `Texture.sampler` after `SamplerDesc::normalized`, and stops choosing the draw sampler from `Texture.filter`. A direct write to `filter` is not the sampled configuration. `ColorSpace` selects `Rgba8UnormSrgb` or `Rgba8Unorm`. `Mipmaps::None` stays one level. The sampler LOD range stays `0..32` so minification uses `min_filter`; the one-level view keeps the sample on that level. A `0..0` clamp is not used. Downlevel anisotropy forces 1 when the flag is absent, logs once, and creates the sampler once. A HAL failure is a device error. Re-upload pixels only when storage differs. GPU tests for linear sampling, clamp versus repeat, independent min and mag filters, and the anisotropy normalization. Screenshots compared. Done when defaults still match `6dbabb8` and the linear sample is not sRGB-decoded.
-2. **Mip generation.** Private blit, mip count from the texture. GPU mean-versus-alias test in perspective and under orthographic zoom. NPOT fallback logged, not a hard failure. Screenshots compared again. Done when both cameras show the mean-with-mips and alias-without-mips results, and the four baselines are unchanged.
+2. **Mip generation.** Private blit, mip count `floor(log2(max(width, height))) + 1`. `Mipmaps::None` stays one level. A mip filter does not allocate levels. When levels exist and no mip filter is set, the sampling view is the base level and LOD stays `0..32`. When a mip filter is set, LOD max is the last allocated level. GPU mean-versus-alias test in perspective and under orthographic zoom. NPOT fallback logged once, not a hard failure. Screenshots compared again. Done when both cameras show the mean-with-mips and alias-without-mips results, and the four baselines are unchanged.
 
 Partial upload and the atlas packer are later M5 phases (ADR-0017). They are not part of these checkpoints.
 
@@ -965,6 +965,24 @@ Implemented in this checkpoint. Not pushed.
 
 **Screenshots.** Release 1280×720 images rendered on 2026-10-19 from this tree and from `6dbabb8`, compared with `cmp -s`. All four matched after the LOD correction. Baselines were not replaced. `basic_2_5d` 746071 bytes, SHA-256 `c3c5874adeea119c98255c6c1d08208c0244224d930d86e8736c280ef88b38fe`. `basic_2_5d --ortho` 462130 bytes, `f2aedc0c4a65e13a33187f391d2a778d073b3befbf1ce207bc6484d961ac980f`. `spatial_scene --camera perspective` 136991 bytes, `ec5f6252a88f642b454ae768f9eec8cdd5fba88a5aeb7a424fcefe5fda12275e`. `spatial_scene --camera orthographic` 34046 bytes, `3551d84fe2ec1c14fc0729c7a86e2031c068285a6551597ee32d100f76805cde`.
 
+## M5-2C results (2026-10-19)
+
+Implemented in this checkpoint. Not pushed. M5-2B is commit `11b914f`.
+
+**Allocation.** `Mipmaps::None` is one level and is not blitted. `Mipmaps::Generate` is `floor(log2(max(width, height))) + 1`, including 1×1 (one level), power-of-two, non-power-of-two, non-square, 1×N, and N×1. The count is `Mipmaps::level_count`. A mip filter does not change it.
+
+**Generation.** `engine-renderer-wgpu` owns a private blit. Each level is a separate pass: a view of the previous mip is sampled, and a view of the next mip is the color attachment. The blit pipeline is one per RGBA8 format, not one per asset. The blit sampler is created once. sRGB formats decode on sample and encode on write. Linear formats do not. Alpha is a straight average. On Apple M5 Metal the 1×1 mip of a 2×2 black/white checker was `[188, 188, 188, 255]` for `Rgba8UnormSrgb` and `[128, 128, 128, 255]` for `Rgba8Unorm`.
+
+**LOD.** A sampling view that contains only the base level keeps LOD `0..32`, including a generated chain whose sampler has no mip filter. When a mip filter is set, the view includes the allocated chain and the LOD maximum is the last level. `0..0` is not used: on this device it selects the magnification filter.
+
+**Device.** `DownlevelFlags::NON_POWER_OF_TWO_MIPMAPPED_TEXTURES` is queried once. Apple M5, Metal, `IntegratedGpu` reported the flag, so non-power-of-two chains were generated. The one-level decision for a missing flag is a CPU test. It was not the hardware path. A format that cannot be filtered and written as a render attachment also stays at one level.
+
+**Caches.** Sampler-only changes do not upload pixels or rebuild mips. Pixel changes rewrite the base level and rebuild the chain. A mip-count or colour-space change replaces the image. Removal still follows D-04. `mip_generations` counts chain builds. The blit sampler counts as one sampler creation.
+
+**Repository check.** `scripts/check.sh` on 2026-10-19, macOS 27.0 arm64, `rustc 1.99.0`, exit 0. All 4 steps passed: `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` with `DIMORA_REQUIRE_GPU=1` (**413 passed, 0 failed, 0 ignored**, 41 suites), `cargo doc --workspace --no-deps` with `-D warnings`. `headless.rs` ran 32 tests. `spatial_scene` `configurations.rs` ran 16, `switching.rs` 12, `prefab.rs` 5. The passing-test log hides adapter lines. A direct GPU run printed Apple M5, Metal, `IntegratedGpu`, with both `ANISOTROPIC_FILTERING` and `NON_POWER_OF_TWO_MIPMAPPED_TEXTURES` present.
+
+**Screenshots.** Release 1280×720 images rendered on 2026-10-19 from this tree and from `6dbabb8`, compared with `cmp -s`. All four matched. Baselines were not replaced. `basic_2_5d` 746071 bytes, SHA-256 `c3c5874adeea119c98255c6c1d08208c0244224d930d86e8736c280ef88b38fe`. `basic_2_5d --ortho` 462130 bytes, `f2aedc0c4a65e13a33187f391d2a778d073b3befbf1ce207bc6484d961ac980f`. `spatial_scene --camera perspective` 136991 bytes, `ec5f6252a88f642b454ae768f9eec8cdd5fba88a5aeb7a424fcefe5fda12275e`. `spatial_scene --camera orthographic` 34046 bytes, `3551d84fe2ec1c14fc0729c7a86e2031c068285a6551597ee32d100f76805cde`.
+
 ## Planned systems and their state
 
 None of these exists. They are in the roadmap so that earlier work does not block them; they are not
@@ -982,7 +1000,7 @@ in the current scope.
 
 ## Not in scope now
 
-M5-2A, CPU texture descriptors, is committed locally as `c687d5b` and is not pushed. M5-2B is implemented in this checkpoint and is not pushed. M5 is not complete. M5-2C has not started. M6's remaining tasks, and everything after M5, are not in progress. In particular: no scene format, no prefab assets, no new rendering features in this change, no collision, no
+M5-2A, CPU texture descriptors, is committed locally as `c687d5b` and is not pushed. M5-2B is commit `11b914f` and is not pushed. M5-2C is implemented in this checkpoint and is not pushed. M5 is not complete. M5-3 has not started. M6's remaining tasks, and everything after M5, are not in progress. In particular: no scene format, no prefab assets, no new rendering features in this change, no collision, no
 editor work, and no work on UI, scripting or any of the three character representations. M4 Phase 1 is commit `cdb5ec3`. Phase 2 is commit `2c76f71`. Phase 3 is commit `f9a4aab`. M4-4A is commit `302622b`. M4-4B is commit `128c70e`. M4-4C is commit `e12fb5b`. M4-4D is commit `8398e49`. M4-4E is commit `d58c66b`. M4-5 is commit `2b79806`. None of M4 is pushed. M4 is complete locally. M3b is complete locally and is not pushed. These systems are deliberately
 not being started together: each has its own milestone, prerequisites and decisions. Decisions that data
 formats or public APIs will bake in are made before their first consumer (see

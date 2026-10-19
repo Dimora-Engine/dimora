@@ -91,6 +91,7 @@ AssetHandle<T> (a name hash)                             GPU vertex/index buffer
   batches. It contains no ECS or asset-manager references.
 * `engine-renderer-wgpu` consumes a `RenderScene` and owns every GPU object. Its texture and mesh
   caches are keyed by `AssetId` and remember the asset revision, so a reloaded asset is re-uploaded.
+  `Mipmaps::Generate` is filled there, by a private blit, when the image is created or its pixels change.
   An entry is evicted when its asset is removed from the `AssetManager` or when no frame has used it for a
   configurable number of frames (120 by default); `SceneRenderer::cache_stats()` reports the counts.
 * The world never issues a `RenderPass` call. The renderer decides how to draw what exists.
