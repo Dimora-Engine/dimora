@@ -12,6 +12,7 @@
 //! assert!(assets.get(assets.sprite("player")).is_some());
 //! ```
 
+mod atlas;
 mod error;
 mod handle;
 mod manager;
@@ -20,6 +21,7 @@ mod source;
 mod sprite;
 mod texture;
 
+pub use atlas::{Atlas, AtlasBuilder, AtlasConfig, AtlasError, AtlasRegion};
 pub use error::AssetError;
 pub use handle::{Asset, AssetHandle, AssetId, AssetKind};
 pub use manager::{AssetManager, LoadState};

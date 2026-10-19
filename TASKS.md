@@ -35,8 +35,9 @@ commit `2b79806` and is not pushed. Evidence is under "M4 Phase 1 results", "M4 
 CPU texture descriptors, is committed locally as `c687d5b` and is not pushed. M5-2B, GPU formats and
 the sampler cache, is commit `11b914f` and is not pushed. M5-2C, GPU mip generation, is commit
 `622ef80` and is not pushed. M5-3A, bounded CPU region transitions, is commit `b51f1fb` and is not
-pushed. M5-3B, GPU rectangle uploads, is in the working tree and is not committed. Localized mip
-regeneration and the atlas packer have not started. M6's camera-configuration prototype remains the only verified M6 work.
+pushed. M5-3B, GPU rectangle uploads, is commit `84d5ab1` and is not pushed. M5-4A, the CPU shelf
+packer, is in the working tree and is not committed. Localized mip regeneration and GPU atlas
+acceptance tests have not started. M6's camera-configuration prototype remains the only verified M6 work.
 The manual window note under M4-4E and M4-5 is unchanged: the framebuffer and the keyboard were not observed.
 
 ## Completed work
@@ -204,7 +205,7 @@ yet reproduced.
 | KI-22 | `animate_system` writes sampled transforms directly onto bone entities and only visits entities that have a `SkeletonInstance`; `Pose` is not in the path, so there is no stage for blending or IK, and a skeleton-less sprite cannot be animated by it | Read (`clip.rs`) | M11 (sprite sheets: M8) |
 | KI-23 | `Vertex` is position, normal and uv; no joints, weights or tangents; no model loader; meshes are code-built | Read (`mesh.rs`) | M12 |
 | KI-24 | ~~The platform layer does not forward the window scale factor, and `Viewport` is one pixel size~~ M3b Phase 3 stores physical size, logical size, and a validated scale, and converts the physical pointer. Remaining: no text-input events, so UI text still has no input path, and reference-resolution fit modes are not built (D-39) | Partial (checkpointed locally as `9c99edf`) | M10 |
-| KI-25 | Any change to a texture re-uploads the whole texture (cache keyed by `AssetId` and revision); there is no sub-rectangle update, which a glyph atlas needs | Read (`scene_renderer.rs`) | M5 |
+| KI-25 | Proved region journals upload rectangles (M5-3B, `84d5ab1`). A CPU shelf packer is in the working tree (M5-4A, not committed). Still open: localized mip regeneration, GPU atlas sampling tests, and the M10 glyph atlas. A journal older than eight transitions, or bytes written outside `update_region`, still uploads the whole base level | M5-3B and M5-4A | M5, M10 |
 | KI-26 | macOS dev machine (Apple M5, macOS 27.0): rustc **older than 1.99** cannot link anything, not even `fn main(){}`, with `ld: tapi error: malformed file ... libSystem.B.tbd ... unknown architecture arm64e.x1-macos`. Cause seen: `xcode-select -p` points at Xcode 26.4.1 (`ld-1266.8`) but `xcrun --show-sdk-path` returns the macOS 27.0 SDK from the Command Line Tools, which that linker cannot read; rustc 1.99.0 links fine (not investigated why). Host setup, not engine code; nothing was changed system-wide. Workaround used for the 1.89.0 and 1.90.0 runs: `SDKROOT=/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk`. Proper fix (user's decision): select a matching Xcode or CLT with `xcode-select`, or update Xcode | Verified (hello-world reproduction with 1.89.0 and 1.90.0 fails, with the `SDKROOT` above succeeds, 1.99.0 succeeds without it) | Environment |
 | KI-27 | ~~The MSRV (1.90) was only built on macOS arm64~~ **Verified on all three systems** by the CI `msrv` job: `cargo +1.90.0 test --workspace --locked`, 138 passed, 0 failed on x86_64 Linux, aarch64 macOS and x86_64 Windows (MSVC). The MSRV holds only with the committed `Cargo.lock` | Verified (run 38475229601) | Done |
 | KI-28 | Six views are now rendered by example-local constructors in `spatial_scene` (evidence below). Still true: no engine preset API, no 2D-style game, no custom projection (KI-11). `Upright` is edge-on from straight above and foreshortened in a steep view; that is observed, not accepted as the design (D-26). Coplanar cutout content is ordered by draw order or by depth-test rounding, and `RenderOrder` still orders only blended sprites (D-48, three verified conflicts). The ground plane stays `XZ` (provisional, ADR-0004) | Verified for the demonstration and the conflicts (Apple M5, 2026-10-14). The remaining gaps are unread as designs | M6 |
@@ -856,7 +857,7 @@ Documentation checkpoint. Committed locally and not pushed. No renderer, texture
 
 ## M5-2 specification
 
-M5-2A is committed locally as `c687d5b` and is not pushed. M5-2B is commit `11b914f` and is not pushed. M5-2C is commit `622ef80` and is not pushed. M5-3A is commit `b51f1fb` and is not pushed. M5-3B is in the working tree and is not committed.
+M5-2A is committed locally as `c687d5b` and is not pushed. M5-2B is commit `11b914f` and is not pushed. M5-2C is commit `622ef80` and is not pushed. M5-3A is commit `b51f1fb` and is not pushed. M5-3B is commit `84d5ab1` and is not pushed. M5-4A is in the working tree and is not committed. The paragraphs below are the M5-2 specification, not the current milestone boundary.
 
 Texture parameters and mipmaps only. No `MaterialAsset`, no atlas packer, no sub-rectangle upload, no blended meshes, no shader rewrite beyond what a colour-space or mip sample requires. Defaults must keep the four screenshots against `6dbabb8` byte-identical unless a separately reviewed correctness issue requires a change.
 
@@ -1005,7 +1006,7 @@ Commit `b51f1fb`. Not pushed. M5-2C is commit `622ef80`. This commit records CPU
 
 ## M5-3B results (2026-10-19)
 
-In the working tree. Not committed. M5-3A is commit `b51f1fb`. M5-4 atlas packing has not started.
+Committed locally as `84d5ab1`. Not pushed. M5-3A is commit `b51f1fb`. The checks below are the ones recorded for that commit.
 
 **Upload selection.** A new asset revision hashes pixels once. An unchanged revision does not. Matching dimensions, format, and mip allocation keep the GPU image. `base_upload` then returns `Unchanged` (no pixel write, no mip rebuild), `Partial` (each proved rectangle, from the current CPU bytes), or `Full`. A partial or full base upload regenerates the allocated chain with the M5-2C blit. `Mipmaps::None` does not blit. Sampler-only changes do not upload pixels or rebuild mips. Dimensions, colour space, or mip allocation still replace the image. Removal and idle eviction are unchanged.
 
@@ -1017,11 +1018,35 @@ In the working tree. Not committed. M5-3A is commit `b51f1fb`. M5-4 atlas packin
 
 **Missing textures.** A present sprite with an absent texture still draws and samples the magenta placeholder. A mesh with `base_texture: Some` and no image still samples the white placeholder. `None` is untextured white and is not a warning. The miss logs once per texture id. A registered name is included. A handle that was never registered, or whose entry was removed, has no name on `AssetHandle`; the log uses the id and the parent sprite or mesh name when that entry exists. It does not invent a texture name. A pending load does not warn. The warning memory holds 64 ids, does not grow, and does not rotate. A distinct miss after that is still counted in `missing_assets` and is not logged individually. The first dropped id logs one aggregate line. Later drops stay silent until a remembered asset loads and frees a slot. Worlds without `MissingAssetWarnings` log every miss.
 
-**Not in this checkpoint.** Localized mip regeneration, shelf atlas packing, sprite-sheet animation, `MaterialAsset`, blended meshes, texture compression, and streaming. M5 stays in progress.
+**Not in this checkpoint.** Localized mip regeneration, shelf atlas packing, sprite-sheet animation, `MaterialAsset`, blended meshes, texture compression, and streaming. M5 stays in progress. Shelf packing is M5-4A, below.
 
 **Repository check.** `scripts/check.sh` on 2026-10-19, macOS 27.0 arm64, `rustc 1.99.0`, exit 0, including the 64-id aggregate warning. All 4 steps passed: `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` with `DIMORA_REQUIRE_GPU=1` (**449 passed, 0 failed, 0 ignored**, 41 suites), `cargo doc --workspace --no-deps` with `-D warnings`. `headless.rs` ran 39 tests. `spatial_scene` `configurations.rs` ran 16, `switching.rs` 12, `prefab.rs` 5. A direct GPU run printed Apple M5, Metal, `IntegratedGpu`, with `ANISOTROPIC_FILTERING` and `NON_POWER_OF_TWO_MIPMAPPED_TEXTURES` both present. This paragraph was written after that check.
 
 **Screenshots.** Release 1280×720 images rendered on 2026-10-19 from this working tree and compared with `cmp -s` to the `6dbabb8` baselines. All four matched. Baselines were not replaced. `basic_2_5d` 746071 bytes, SHA-256 `c3c5874adeea119c98255c6c1d08208c0244224d930d86e8736c280ef88b38fe`. `basic_2_5d --ortho` 462130 bytes, `f2aedc0c4a65e13a33187f391d2a778d073b3befbf1ce207bc6484d961ac980f`. `spatial_scene --camera perspective` 136991 bytes, `ec5f6252a88f642b454ae768f9eec8cdd5fba88a5aeb7a424fcefe5fda12275e`. `spatial_scene --camera orthographic` 34046 bytes, `3551d84fe2ec1c14fc0729c7a86e2031c068285a6551597ee32d100f76805cde`.
+
+## M5-4A results (2026-10-19)
+
+In the working tree. Not committed. M5-3B is commit `84d5ab1`. GPU atlas acceptance (M5-4B) has not started. M5 stays in progress.
+
+**API.** `AtlasBuilder`, `AtlasConfig`, `Atlas`, `AtlasRegion`, and `AtlasError` live in `engine-assets` and are re-exported from the engine prelude. The builder stores copies of named RGBA8 images. `build` returns one `Texture` and one visible region per image. It does not hold a world or an `AssetManager`, does not create a GPU texture, and does not make regions into entities. Registration is the caller's `insert` of `Atlas::texture`. `Atlas::sprite` calls `SpriteAsset::from_atlas_rect` on the visible rectangle.
+
+**Order.** Placement follows `add` order. Names and heights are not sorted. `HashMap` iteration is not used. The same images, order, and config produce the same placements and the same atlas bytes.
+
+**Shelves.** The cursor starts at the top-left. Each image's allocated rectangle is `(width + 2 * padding)` by `(height + 2 * padding)`. Shelves fill left to right. A rectangle that would pass the atlas width starts a new shelf below the tallest allocated height on the current shelf. Allocated rectangles do not overlap and may touch. The visible origin is the allocated origin plus `padding`. The visible size is the source size. The configured width and height are the atlas size. The builder does not grow it.
+
+**Padding and extrusion.** Padding is the gutter inside the allocated rectangle. Extrusion copies the source edge, including corners, outward into that gutter, all four channels, with no premultiplication. Extrusion wider than padding is an error. The outer `padding - extrusion` texels stay transparent black. Extrusion stays inside its own allocated rectangle. Source bytes passed to `add` are not written back.
+
+**Regions.** `AtlasRegion` stores the name, visible origin and size, source size, and a UV rectangle. UV uses the atlas size. `(0, 0)` is the top-left texel. There is no Y flip and no half-texel bias. `pixels_per_unit` stays 16. Atlas position does not change world size. `Texture::update_region` can replace a visible rectangle later. That does not refresh extrusion or move regions. A source whose dimensions change needs a new build, and old metadata must not be reused.
+
+**Texture configuration.** One atlas has one colour space, one sampler, and one mip request. Bytes are not converted between sRGB and linear. The default is sRGB, nearest, clamp, anisotropy 1, and `Mipmaps::None`. `Mipmaps::None` is the recommended atlas sampling policy. `Mipmaps::Generate` stores the request only. Whole-atlas mip generation can mix neighbours at coarse levels. `floor(log2(padding))` is still an estimate, not a guarantee, and the builder does not enforce it. Renderer LOD is unchanged.
+
+**Errors.** `AtlasError` names the image when the caller supplied a name. Empty input, an empty name, duplicates, a zero side, truncated or excess RGBA8, a source larger than the atlas, padding that makes a fitting source too large, a shelf with no room, extrusion wider than padding, `u32` overflow, an atlas byte length that does not fit in `usize`, a zero atlas side, and anisotropy below 1 are errors. `build` returns `Err` and does not yield an atlas. The packer does not log.
+
+**Not in this checkpoint.** M5-4B GPU atlas tests, sprite-sheet animation, `SpriteClip`, `SpriteAnimator`, `MaterialAsset`, blended meshes, a new upload path, incremental repacking, an atlas manager, streaming, compression, and localized mip regeneration. M5 stays in progress.
+
+**Repository check.** `scripts/check.sh` on 2026-10-19, macOS 27.0 arm64, `rustc 1.99.0`, exit 0, after the CPU shelf packer. All 4 steps passed: `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` with `DIMORA_REQUIRE_GPU=1` (**470 passed, 0 failed, 0 ignored**, 41 suites), `cargo doc --workspace --no-deps` with `-D warnings`. `headless.rs` ran 39 tests. `spatial_scene` `configurations.rs` ran 16, `switching.rs` 12, `prefab.rs` 5. A direct GPU run of `srgb_and_linear_textures_select_different_gpu_formats` printed `GPU test adapter: Apple M5 (Metal, IntegratedGpu); DownlevelFlags::ANISOTROPIC_FILTERING=true`. This paragraph was written after that check.
+
+**Screenshots.** No renderer, shader, or scene-extraction file changed, so the four release screenshots were not regenerated. The M5-3B `cmp -s` against `6dbabb8` remains the baseline. This checkpoint does not repeat that comparison.
 
 ## Planned systems and their state
 
@@ -1040,7 +1065,7 @@ in the current scope.
 
 ## Not in scope now
 
-M5-2A, CPU texture descriptors, is committed locally as `c687d5b` and is not pushed. M5-2B is commit `11b914f` and is not pushed. M5-2C is commit `622ef80` and is not pushed. M5-3A, bounded region transitions, is commit `b51f1fb` and is not pushed. M5-3B, GPU rectangle uploads, is in the working tree and is not committed. M5 is not complete. Localized mip regeneration and the atlas packer have not started. M6's remaining tasks, and everything after M5, are not in progress. In particular: no scene format, no prefab assets, no new rendering features in this change, no collision, no
+M5-2A, CPU texture descriptors, is committed locally as `c687d5b` and is not pushed. M5-2B is commit `11b914f` and is not pushed. M5-2C is commit `622ef80` and is not pushed. M5-3A, bounded region transitions, is commit `b51f1fb` and is not pushed. M5-3B, GPU rectangle uploads, is commit `84d5ab1` and is not pushed. M5-4A, the CPU shelf packer, is in the working tree and is not committed. M5 is not complete. Localized mip regeneration and GPU atlas acceptance tests have not started. M6's remaining tasks, and everything after M5, are not in progress. In particular: no scene format, no prefab assets, no new rendering features in this change, no collision, no
 editor work, and no work on UI, scripting or any of the three character representations. M4 Phase 1 is commit `cdb5ec3`. Phase 2 is commit `2c76f71`. Phase 3 is commit `f9a4aab`. M4-4A is commit `302622b`. M4-4B is commit `128c70e`. M4-4C is commit `e12fb5b`. M4-4D is commit `8398e49`. M4-4E is commit `d58c66b`. M4-5 is commit `2b79806`. None of M4 is pushed. M4 is complete locally. M3b is complete locally and is not pushed. These systems are deliberately
 not being started together: each has its own milestone, prerequisites and decisions. Decisions that data
 formats or public APIs will bake in are made before their first consumer (see

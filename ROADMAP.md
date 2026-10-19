@@ -42,8 +42,11 @@ crate-private scene helpers, at commit `2b79806`.
 viewports, camera-to-texture, tilemap chunking, and the performance baseline are not done. M6 is not
 pulled into M5.
 
-**Next implementation.** M5, materials and textures. M5-1 records the decisions (ADR-0015, ADR-0016,
-ADR-0017). No M5 renderer, texture, material, sampler, or atlas code exists yet.
+**Next implementation.** M5, materials and textures, is in progress. M5-1 records the decisions
+(ADR-0015, ADR-0016, ADR-0017). M5-2A through M5-3B are committed locally and are not pushed
+(`c687d5b`, `11b914f`, `622ef80`, `b51f1fb`, `84d5ab1`). M5-4A, the CPU shelf packer, is in the
+working tree and is not committed. GPU atlas acceptance tests have not started. `MaterialAsset` and
+localized mip regeneration have not started.
 
 **Implemented and tested, beyond the 2026-10-13 audit.** Named stages, commands and events, the `log`
 crate and `Diagnostics`, actions and window controls, scene load/unload/replace on the command flush,
@@ -52,8 +55,10 @@ prefab. The last recorded workspace check is in TASKS.md under M4-5 (365 tests).
 not add a new test run.
 
 **Still partial.** Tilemaps have no chunking. Skeletal animation is a data model and one player. Assets
-are PNG and synchronous. Materials are an inline colour, one albedo, and a lit flag. Textures are RGBA8,
-sRGB, clamp, and nearest or linear, with no mipmaps.
+are PNG and synchronous. Materials are an inline colour, one albedo, and a lit flag. Textures are RGBA8
+with per-texture colour space, samplers, optional mip generation, and proved rectangle uploads. A CPU
+shelf packer is in the working tree. GPU atlas tests, localized mip regeneration, and `MaterialAsset`
+are not done.
 
 **Still absent.** Collision, sprite-sheet animation, 3D characters, UI, audio, particles, shadows,
 scripting, serialization, a general importer, bundles, an editor, and packaging. CI exists as a workflow
@@ -83,8 +88,9 @@ first" tiers in [docs/DECISIONS.md](docs/DECISIONS.md#what-to-resolve-first).
   the CPU texture descriptors, is committed locally as `c687d5b` and is not pushed. M5-2B, GPU formats
   and the sampler cache, is commit `11b914f` and is not pushed. M5-2C, GPU mip generation, is
   commit `622ef80` and is not pushed. M5-3A, bounded CPU region transitions, is commit `b51f1fb` and
-  is not pushed. M5-3B, GPU rectangle uploads and whole-chain mip rebuilds, is in the working tree and
-  is not committed. Localized mip regeneration and the atlas packer have not started. The milestone is
+  is not pushed. M5-3B, GPU rectangle uploads and whole-chain mip rebuilds, is commit `84d5ab1` and
+  is not pushed. M5-4A, the CPU shelf packer, is in the working tree and is not committed. Localized
+  mip regeneration and GPU atlas acceptance tests have not started. The milestone is
   in progress and is not complete.
 * **M6 stays after M5.** The camera-configuration prototype is verified. The rest of M6 is not started.
   M7 and M8 can proceed in parallel after M3a, M4, M5, and M6 as stated below. M9 freezes the foundational
@@ -485,9 +491,10 @@ updates, and atlas mip limits are
 anisotropy fallback, `write_texture` alignment, split texture and sampler caches, and the provisional
 atlas estimate. M5-2A stores the CPU descriptors (`c687d5b`). M5-2B (`11b914f`) connects those
 descriptors to the wgpu renderer. M5-2C (`622ef80`) generates mip chains for `Mipmaps::Generate`.
-M5-3A (`b51f1fb`) records CPU region updates, validation, and a bounded transition journal. M5-3B,
-in the working tree and not committed, uploads a proved rectangle and regenerates the whole allocated
-mip chain. It does not pack an atlas and does not regenerate only the affected mip texels.
+M5-3A (`b51f1fb`) records CPU region updates, validation, and a bounded transition journal. M5-3B
+(`84d5ab1`) uploads a proved rectangle and regenerates the whole allocated mip chain. It does not
+regenerate only the affected mip texels. M5-4A, in the working tree and not committed, packs images
+on the CPU. It does not run the GPU atlas acceptance tests.
 
 **Acceptance criteria.**
 - GPU test: a minified high-frequency texture approaches its mean colour with mipmaps, and aliases

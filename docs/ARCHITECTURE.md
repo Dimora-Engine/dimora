@@ -22,8 +22,9 @@ complete locally at `2b79806` and is not pushed. M5 decisions are ADR-0015, ADR-
 corrected in the M5-1 final review. M5-2A CPU descriptors are commit `c687d5b`. M5-2B (`11b914f`)
 selects the GPU format from `ColorSpace` and caches samplers separately from image storage. M5-2C
 (`622ef80`) generates mip chains in the wgpu backend. M5-3A (`b51f1fb`) records bounded CPU
-region transitions. M5-3B, in the working tree and not committed, uploads those rectangles and
-rebuilds an allocated mip chain. Localized mip regeneration and the atlas packer have not started.
+region transitions. M5-3B (`84d5ab1`) uploads those rectangles and
+rebuilds an allocated mip chain. M5-4A, in the working tree and not committed, packs RGBA8 images
+on the CPU. Localized mip regeneration and GPU atlas acceptance tests have not started.
 Profiling is not in the code. The M2 audit
 date was 2026-10-13 at `4857158`.
 Everything outside the sections "Proposed future architecture" and "Proposed boundaries" exists in the
@@ -353,8 +354,7 @@ texture cache, samplers, atlases (the glyph atlas is an ordinary texture) and th
 machinery. They do not share the ordering model, coordinate space, lighting or input routing.
 World-space UI is a UI node anchored to an entity and positioned by projecting through the active camera
 (a behind-camera policy is required); render-to-texture panels are a later option (D-38).
-*Gaps:* device scale and logical pointer conversion exist (M3b Phase 3, `9c99edf`); no UI layout, no
-sub-rectangle texture update (KI-25), no overlay pass. Reference-resolution modes stay in D-39.
+*Gaps:* device scale and logical pointer conversion exist (M3b Phase 3, `9c99edf`); proved rectangle upload exists (M5-3B, `84d5ab1`); a CPU shelf packer is in the working tree and is not committed (M5-4A). No UI layout and no overlay pass. The glyph atlas consumer is still M10. Reference-resolution modes stay in D-39.
 
 **6. Asset loading, referencing and retention.** *Today:* components hold `AssetHandle<T>`, a copyable
 64-bit hash of a name; the manager owns the data; the renderer keeps GPU copies keyed by id and revision;
@@ -440,7 +440,7 @@ systems they touch. Each cites evidence from this audit.
 | R-8 | **Threading model.** `World` is `!Sync` (`RefCell` resources), systems are non-`Send` closures, asset data is `Send + Sync`. The simulation is single-threaded; async loading, parallel extraction and scripts cross this line only as `Send` data | `schedule.rs`, `resources.rs`, `Asset` bound | High if parallel systems are wanted later | Settled in ADR-0006. The calling thread owns `World`. M3a's scheduler must not assume parallel systems |
 | R-9 | **Numeric determinism.** `f32` throughout; trigonometry comes from the platform libm and can differ between operating systems, so state hashes for replay may differ across OSes. World size is small enough for `f32` positions today | `engine-math`; M9 replay criterion | Moderate; surfaces as a flaky cross-OS replay test | Policy at M3: replay equality is required on one platform; cross-platform equality is not promised unless simulation avoids platform trig |
 | R-10 | **Animation write path and bone cost.** `animate_system` writes straight onto bone entities; entity-per-bone makes propagation scale with bone count | `clip.rs`; D-33, D-34 | Moderate; contained inside `engine-animation` if the evaluator stays world-free | D-34 first in M11; D-33 by measurement |
-| R-11 | **Material and texture format baked in.** `Material` is a component field, textures are always sRGB, no mipmaps, no sub-rect updates, batching keyed by texture only | `components.rs`, `scene_renderer.rs`; KI-6, KI-25 | Moderate: normal maps, glyph atlases and shadows depend on it | M5, before M8/M10/M14 |
+| R-11 | **Material and texture format still incomplete.** `Material` is a component field. Batching is still keyed by texture. Proved region journals upload rectangles (M5-3B, `84d5ab1`). Mip generation and per-texture colour space exist. A CPU shelf packer is in the working tree (M5-4A, not committed). Localized mip regeneration and GPU atlas sampling tests do not | `components.rs`, `scene_renderer.rs`, `atlas.rs`; KI-6, KI-25 | Moderate: normal maps, glyph atlases and shadows depend on the rest | M5, before M8/M10/M14 |
 | R-12 | **Logical versus physical pixels.** `Viewport` stores physical pixels, logical pixels, and the device scale. Rendering and extraction use physical pixels. UI reference-resolution modes are still open | KI-24 (DPI part done in M3b Phase 3, `9c99edf`); D-39 | Lower for the coordinate split. UI fit modes can still spread if they invent a third size | Device scale is M3b Phase 3. Fit/expand/integer modes stay with D-39 at M10 |
 | R-13 | **Diagnostics are counters, not a profile.** Logging is the `log` crate. `Diagnostics` holds one step of CPU stage times, the frame delta, and the latest render stats. There is no history, no per-system timing, and no GPU timestamp | `logging.rs`, `diagnostics.rs`, `missing.rs`; ADR-0012 | Low for the current call sites. A profiler bolted on later would duplicate them | M3a-4 implemented the records and the resource. M20 may add `tracing` or another profiler. The on-screen overlay stays in M10 |
 | R-14 | **Verification is narrower than it looks.** CI now runs on Windows, macOS and Linux (first run green), but only on software or paravirtual adapters, offscreen; GPU tests skip unless `DIMORA_REQUIRE_GPU=1` (CI sets it). A macOS window was checked for DPI (Phase 3). Phase 4's macOS window check is the one recorded in TASKS.md; Windows and Linux windowed paths are unverified. Performance is unmeasured. Pixel tests use tolerances that held on three rasterisers | TASKS.md "CI results" and "M3b Phase 4 results"; KI-3, KI-24, KI-27 | Rises slowly; regressions on real GPUs or untested windowed paths found by users | Keep CI green and required. Real-GPU timing needs a different runner (ADR-0005 option B) |
@@ -479,7 +479,7 @@ These are settled; revisit only with a concrete problem.
 | Scene model and registry (D-18) | One world; internal `SceneManager`; `SceneBuilder` without `&mut World`; load publishes only on success; unload lifts non-members and does not remove assets; deferred scene ops use the command queue and store `SceneOpStatus`; `spatial_scene` replaces one environment at the stage flush; a prefab is `fn(&mut World) -> Entity` | ADR-0014. Phase 1 is `cdb5ec3`. Phase 2 is `2c76f71`. Phase 3 is `f9a4aab`. M4-4A is `302622b`. M4-4B is `128c70e`. M4-4C is `e12fb5b`. M4-4D is `8398e49`. M4-4E is `d58c66b`. M4-5 is `2b79806`. Scene files stay in M19. D-16 stays open |
 | Material alpha classes (D-05) | Opaque, Mask, and Blend. Blended sprites and meshes share one sort. A blended mesh uses the camera-space Z of its world-space bounding-sphere centre. `RenderOrder` on blended sprites is unchanged. Coplanar conflicts stay with D-48 | ADR-0015. Settled, not implemented |
 | Sprite units (D-27) | Per-sprite `pixels_per_unit`, default 16. No global constant. Atlases are in texels | ADR-0016. The field already exists. M5-1 does not change it |
-| Texture sampling (M5) | Per-texture sRGB or linear. GPU image storage and samplers are separate caches. `write_texture` keeps a tight row stride. Atlas padding versus mips is a provisional estimate until GPU tests | ADR-0017. M5-2B (`11b914f`) reads `Texture.sampler` and selects the format from `ColorSpace`. M5-2C (`622ef80`) generates `Mipmaps::Generate` in the wgpu backend. M5-3A (`b51f1fb`) records CPU region transitions. M5-3B, uncommitted, uploads proved rectangles and rebuilds the whole allocated chain. Localized mip regeneration and the atlas packer are not implemented |
+| Texture sampling (M5) | Per-texture sRGB or linear. GPU image storage and samplers are separate caches. `write_texture` keeps a tight row stride. A CPU shelf packer places RGBA8 images in insertion order. Atlas padding versus mips is a provisional estimate until GPU tests | ADR-0017. M5-2B (`11b914f`) reads `Texture.sampler` and selects the format from `ColorSpace`. M5-2C (`622ef80`) generates `Mipmaps::Generate` in the wgpu backend. M5-3A (`b51f1fb`) records CPU region transitions. M5-3B (`84d5ab1`) uploads proved rectangles and rebuilds the whole allocated chain. M5-4A, uncommitted, adds `AtlasBuilder`. Localized mip regeneration and GPU atlas acceptance tests are not implemented |
 
 ## Proposed future architecture (NOT implemented)
 
@@ -602,7 +602,8 @@ glTF handedness conversion and importer choice (D-36).
 **Exists today.** Nothing UI-specific. `RenderScene` is world-only. No font or text rendering. Pointer,
 scroll, and keys exist in input. The window scale factor is forwarded, and `Viewport` stores physical
 size, logical size, and scale (M3b Phase 3, `9c99edf`). A proved texture rectangle can upload without
-rewriting the whole image (M5-3B, uncommitted). A glyph atlas packer is still absent (KI-25). Reference-resolution
+rewriting the whole image (M5-3B, `84d5ab1`). A CPU shelf packer exists in the working tree (M5-4A, not
+committed). The glyph atlas that would use both is still absent (M10). Reference-resolution
 UI scaling is not built (D-39).
 
 **Proposed (D-24, D-37, D-38, D-39).**
