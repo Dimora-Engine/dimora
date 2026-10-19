@@ -5,9 +5,12 @@
 //! sets the variable. The skip-or-fail decision is [`on_gpu_unavailable`], which is a pure function so it
 //! can be tested without removing the GPU.
 
-use engine_assets::{AssetHandle, AssetManager, MeshData, SpriteAsset, Texture};
+use engine_assets::{
+    AddressMode, AssetHandle, AssetManager, ColorSpace, MeshData, MipFilter, Mipmaps, SamplerDesc, SpriteAsset,
+    Texture, TextureFilter,
+};
 use engine_core::Color;
-use engine_math::{Quat, Transform, Vec2, Vec3};
+use engine_math::{Quat, Rect, Transform, Vec2, Vec3};
 use engine_renderer::*;
 use engine_renderer_wgpu::{GpuContext, RenderError, SceneRenderer};
 use engine_world::{propagate_transforms, Visibility, World};
@@ -57,7 +60,12 @@ fn setup() -> Option<(GpuContext, SceneRenderer)> {
     match GpuContext::headless() {
         Ok(gpu) => {
             let info = gpu.adapter.get_info();
-            eprintln!("GPU test adapter: {} ({:?}, {:?})", info.name, info.backend, info.device_type);
+            let anisotropic =
+                gpu.adapter.get_downlevel_capabilities().flags.contains(wgpu::DownlevelFlags::ANISOTROPIC_FILTERING);
+            eprintln!(
+                "GPU test adapter: {} ({:?}, {:?}); DownlevelFlags::ANISOTROPIC_FILTERING={anisotropic}",
+                info.name, info.backend, info.device_type
+            );
             let r = SceneRenderer::new(&gpu, wgpu::TextureFormat::Rgba8UnormSrgb);
             Some((gpu, r))
         }
@@ -609,4 +617,468 @@ fn idle_limit_is_clamped_and_can_be_disabled() {
     remove_cache_test_assets(&mut a);
     render(&gpu, &mut r, &mut empty, &a);
     assert_eq!(r.cache_stats(), EMPTY_CACHE, "removal still evicts when idle eviction is off");
+}
+
+fn sampling_world(size: Vec2, region: Option<Rect>, at: Transform) -> World {
+    let mut world = World::new();
+    world.insert_resource(AmbientLight { color: Color::WHITE, intensity: 1.0 });
+    world.spawn((Camera::orthographic(2.0).with_clear_color(Color::BLACK), Transform::from_xyz(0.0, 0.0, -4.0)));
+    let mut sprite = Sprite::new("sprite").with_size(size).with_anchor(Vec2::splat(0.5)).unlit().cutout();
+    if let Some(region) = region {
+        sprite = sprite.with_region(region);
+    }
+    world.spawn((at, sprite));
+    world
+}
+
+fn insert_sampling_texture(assets: &mut AssetManager, texture: Texture) -> AssetHandle<Texture> {
+    let (width, height) = (texture.width, texture.height);
+    let handle = assets.insert("tex", texture).unwrap();
+    assets.insert("sprite", SpriteAsset::whole_texture(handle, width, height).with_pixels_per_unit(1.0)).unwrap();
+    handle
+}
+
+fn full_sprite() -> (Vec2, Transform) {
+    (Vec2::splat(2.0), Transform::IDENTITY)
+}
+
+fn assert_pixel(img: &[u8], x: u32, y: u32, expected: [u8; 4], tolerance: i16) {
+    let pixel = px(img, x, y);
+    assert_rgba(pixel, expected, tolerance, &format!("pixel ({x},{y})"));
+}
+
+fn assert_rgba(pixel: [u8; 4], expected: [u8; 4], tolerance: i16, what: &str) {
+    let close = pixel.iter().zip(expected).all(|(got, want)| (*got as i16 - want as i16).abs() <= tolerance);
+    assert!(close, "{what} is {pixel:?}, expected {expected:?} ±{tolerance}");
+}
+
+fn mixed_red_blue(pixel: [u8; 4]) -> bool {
+    pixel[0] > 60 && pixel[2] > 60 && pixel[1] < 20 && pixel[3] > 250
+}
+
+/// `uv` across a full-screen sprite whose asset region is `(0, 0)-(2, 1)`.
+fn pixel_for_u(uv: f32) -> u32 {
+    // uv = 2 * (x + 0.5) / W, so x = uv * W / 2 - 0.5.
+    (uv * W as f32 / 2.0 - 0.5).round() as u32
+}
+
+fn linear_aniso(anisotropy: u8) -> SamplerDesc {
+    SamplerDesc {
+        min_filter: TextureFilter::Linear,
+        mag_filter: TextureFilter::Linear,
+        mip_filter: Some(MipFilter::Linear),
+        anisotropy,
+        ..SamplerDesc::default()
+    }
+}
+
+#[test]
+fn srgb_and_linear_textures_select_different_gpu_formats() {
+    let Some((gpu, mut srgb_renderer)) = setup() else { return };
+    let mut linear_renderer = SceneRenderer::new(&gpu, wgpu::TextureFormat::Rgba8Unorm);
+    let byte = 180u8;
+    let decoded = (Color::from_srgb8(byte, byte, byte).r * 255.0).round() as u8;
+    assert!(decoded + 20 < byte, "the fixture must make an sRGB decode visible, decoded {decoded}");
+
+    let mut linear_assets = AssetManager::in_memory();
+    let mut srgb_assets = AssetManager::in_memory();
+    let sample = |renderer: &mut SceneRenderer, assets: &mut AssetManager, texture: Texture| {
+        let handle = insert_sampling_texture(assets, texture);
+        let (size, at) = full_sprite();
+        let mut world = sampling_world(size, None, at);
+        let image = render(&gpu, renderer, &mut world, assets);
+        let info = renderer.cached_texture(handle.id()).expect("texture cached");
+        (px(&image, W / 2, H / 2), info)
+    };
+
+    let linear_tex = Texture::solid(1, 1, [byte, byte, byte, 255]).with_color_space(ColorSpace::Linear);
+    let (linear_pixel, linear_info) = sample(&mut linear_renderer, &mut linear_assets, linear_tex);
+    assert_eq!(linear_info.color_space, ColorSpace::Linear);
+    assert_rgba(linear_pixel, [byte, byte, byte, 255], 1, "linear sample");
+
+    let srgb_tex = Texture::solid(1, 1, [byte, byte, byte, 255]).with_color_space(ColorSpace::Srgb);
+    let (srgb_pixel, srgb_info) = sample(&mut linear_renderer, &mut linear_assets, srgb_tex);
+    assert_eq!(srgb_info.color_space, ColorSpace::Srgb);
+    assert_rgba(srgb_pixel, [decoded, decoded, decoded, 255], 2, "sRGB sample on a linear target");
+
+    let default_tex = Texture::solid(1, 1, [byte, byte, byte, 255]);
+    let (default_pixel, default_info) = sample(&mut linear_renderer, &mut linear_assets, default_tex);
+    assert_eq!(default_info.color_space, ColorSpace::Srgb);
+    assert_rgba(default_pixel, [decoded, decoded, decoded, 255], 2, "default colour space");
+
+    let (round_trip, round_info) =
+        sample(&mut srgb_renderer, &mut srgb_assets, Texture::solid(1, 1, [byte, byte, byte, 255]));
+    assert_eq!(round_info.color_space, ColorSpace::Srgb);
+    assert_rgba(round_trip, [byte, byte, byte, 255], 2, "sRGB round trip");
+}
+
+#[test]
+fn filtering_and_addressing_follow_the_sampler_descriptor() {
+    let Some((gpu, mut renderer)) = setup() else { return };
+    let red_blue = Texture::from_rgba8(2, 1, vec![255, 0, 0, 255, 0, 0, 255, 255]);
+    let (size, at) = full_sprite();
+    let mut assets = AssetManager::in_memory();
+
+    let draw = |renderer: &mut SceneRenderer, assets: &mut AssetManager, texture: Texture, region: Option<Rect>| {
+        let handle = insert_sampling_texture(assets, texture);
+        let mut world = sampling_world(size, region, at);
+        let image = render(&gpu, renderer, &mut world, assets);
+        (image, renderer.cached_texture(handle.id()).expect("cached"))
+    };
+
+    let (nearest_img, nearest_info) =
+        draw(&mut renderer, &mut assets, red_blue.clone().with_filter(TextureFilter::Nearest), None);
+    assert_eq!(nearest_info.min_filter, TextureFilter::Nearest);
+    assert_eq!(nearest_info.mag_filter, TextureFilter::Nearest);
+    assert!(is_red(px(&nearest_img, 32, 64)), "nearest texel centre {:?}", px(&nearest_img, 32, 64));
+    assert!(is_blue(px(&nearest_img, 96, 64)), "nearest texel centre {:?}", px(&nearest_img, 96, 64));
+    assert!(is_red(px(&nearest_img, 63, 64)), "nearest keeps the texel edge {:?}", px(&nearest_img, 63, 64));
+
+    let (linear_img, linear_info) =
+        draw(&mut renderer, &mut assets, red_blue.clone().with_filter(TextureFilter::Linear), None);
+    assert_eq!((linear_info.min_filter, linear_info.mag_filter), (TextureFilter::Linear, TextureFilter::Linear));
+    assert!(is_red(px(&linear_img, 32, 64)) && is_blue(px(&linear_img, 96, 64)));
+    assert!(mixed_red_blue(px(&linear_img, 63, 64)), "linear blends the edge {:?}", px(&linear_img, 63, 64));
+
+    let split = red_blue
+        .clone()
+        .with_sampler(SamplerDesc {
+            min_filter: TextureFilter::Nearest,
+            mag_filter: TextureFilter::Linear,
+            ..SamplerDesc::default()
+        })
+        .unwrap();
+    let (split_img, split_info) = draw(&mut renderer, &mut assets, split, None);
+    assert_eq!(split_info.min_filter, TextureFilter::Nearest);
+    assert_eq!(split_info.mag_filter, TextureFilter::Linear);
+    assert!(mixed_red_blue(px(&split_img, 63, 64)), "magnification uses the mag filter {:?}", px(&split_img, 63, 64));
+
+    // The full-screen sprite magnifies two texels across the view, so this edge uses mag nearest.
+    let min_only = red_blue
+        .with_sampler(SamplerDesc {
+            min_filter: TextureFilter::Linear,
+            mag_filter: TextureFilter::Nearest,
+            ..SamplerDesc::default()
+        })
+        .unwrap();
+    let (min_only_img, min_only_info) = draw(&mut renderer, &mut assets, min_only, None);
+    assert_eq!(min_only_info.min_filter, TextureFilter::Linear);
+    assert_eq!(min_only_info.mag_filter, TextureFilter::Nearest);
+    assert_eq!((min_only_info.lod_min, min_only_info.lod_max), (0.0, 32.0));
+    assert_eq!(min_only_info.mip_level_count, 1);
+    assert!(
+        is_red(px(&min_only_img, 63, 64)),
+        "magnified sampling uses mag nearest, not the linear min filter {:?}",
+        px(&min_only_img, 63, 64)
+    );
+
+    // Eight screen pixels across 32 texels of a one-level texture. The centre sample sits on the
+    // red/blue edge and the footprint is several texels wide, so the GPU selects minification.
+    let minified = Texture::from_fn(32, 1, |x, _| if x < 16 { [255, 0, 0, 255] } else { [0, 0, 255, 255] });
+    let center = -1.0 + (64.5 / W as f32) * 2.0;
+    let sprite = Vec2::new(8.0 * 2.0 / W as f32, 2.0);
+    let at_pixel = Transform::from_xyz(center, 0.0, 0.0);
+    let min_linear = minified
+        .clone()
+        .with_sampler(SamplerDesc {
+            min_filter: TextureFilter::Linear,
+            mag_filter: TextureFilter::Nearest,
+            ..SamplerDesc::default()
+        })
+        .unwrap();
+    let handle = insert_sampling_texture(&mut assets, min_linear);
+    let mut world = sampling_world(sprite, None, at_pixel);
+    let image = render(&gpu, &mut renderer, &mut world, &assets);
+    let info = renderer.cached_texture(handle.id()).expect("cached");
+    assert_eq!(info.mip_level_count, 1);
+    assert_eq!((info.min_filter, info.mag_filter), (TextureFilter::Linear, TextureFilter::Nearest));
+    assert!(
+        mixed_red_blue(px(&image, 64, 64)),
+        "one-level minification uses the linear min filter {:?}",
+        px(&image, 64, 64)
+    );
+    let min_nearest = minified
+        .with_sampler(SamplerDesc {
+            min_filter: TextureFilter::Nearest,
+            mag_filter: TextureFilter::Linear,
+            ..SamplerDesc::default()
+        })
+        .unwrap();
+    insert_sampling_texture(&mut assets, min_nearest);
+    let image = render(&gpu, &mut renderer, &mut world, &assets);
+    let pixel = px(&image, 64, 64);
+    assert!(
+        is_red(pixel) || is_blue(pixel),
+        "one-level minification keeps nearest min crisp at the texel edge {pixel:?}"
+    );
+
+    let wide = Rect::new(Vec2::ZERO, Vec2::new(2.0, 1.0));
+    let repeat_uv = pixel_for_u(1.25);
+    let mirror_uv = pixel_for_u(1.75);
+    let modes = [
+        (AddressMode::Repeat, AddressMode::Clamp, repeat_uv, true),
+        (AddressMode::Clamp, AddressMode::Clamp, repeat_uv, false),
+        (AddressMode::Mirror, AddressMode::Clamp, mirror_uv, true),
+    ];
+    for (address_u, address_v, x, expect_red) in modes {
+        let texture = Texture::from_rgba8(2, 1, vec![255, 0, 0, 255, 0, 0, 255, 255])
+            .with_sampler(SamplerDesc { address_u, address_v, ..SamplerDesc::default() })
+            .unwrap();
+        let (image, info) = draw(&mut renderer, &mut assets, texture, Some(wide));
+        assert_eq!((info.address_u, info.address_v), (address_u, address_v));
+        let pixel = px(&image, x, 64);
+        assert_eq!(is_red(pixel), expect_red, "{address_u:?}/{address_v:?} at x={x} is {pixel:?}, red={expect_red}");
+    }
+
+    let grid = Texture::from_rgba8(2, 2, vec![255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 0, 255]);
+    let region = Rect::new(Vec2::ZERO, Vec2::splat(2.0));
+    let axes = [
+        (AddressMode::Repeat, AddressMode::Repeat, [255, 0, 0, 255]),
+        (AddressMode::Clamp, AddressMode::Clamp, [255, 255, 0, 255]),
+        (AddressMode::Repeat, AddressMode::Clamp, [0, 0, 255, 255]),
+        (AddressMode::Clamp, AddressMode::Repeat, [0, 255, 0, 255]),
+    ];
+    for (address_u, address_v, expected) in axes {
+        let texture = grid
+            .clone()
+            .with_sampler(SamplerDesc {
+                address_u,
+                address_v,
+                min_filter: TextureFilter::Nearest,
+                mag_filter: TextureFilter::Nearest,
+                ..SamplerDesc::default()
+            })
+            .unwrap();
+        let (image, info) = draw(&mut renderer, &mut assets, texture, Some(region));
+        assert_eq!((info.address_u, info.address_v), (address_u, address_v));
+        assert_pixel(&image, pixel_for_u(1.25), pixel_for_u(1.25), expected, 2);
+    }
+}
+
+#[test]
+fn sampler_cache_reuses_descriptors_without_copying_pixels() {
+    let Some((gpu, mut renderer)) = setup() else { return };
+    let before = renderer.resource_stats();
+    assert_eq!(before.sampler_creates, 1, "placeholders share the default sampler");
+    assert_eq!(renderer.sampler_cache_len(), 1);
+
+    let mut assets = AssetManager::in_memory();
+    let linear =
+        SamplerDesc { min_filter: TextureFilter::Linear, mag_filter: TextureFilter::Linear, ..SamplerDesc::default() };
+    let first = assets.insert("a", Texture::solid(1, 1, [10, 20, 30, 255]).with_sampler(linear).unwrap()).unwrap();
+    let second = assets.insert("b", Texture::solid(1, 1, [40, 50, 60, 255]).with_sampler(linear).unwrap()).unwrap();
+    assets.insert("sprite-a", SpriteAsset::whole_texture(first, 1, 1).with_pixels_per_unit(1.0)).unwrap();
+    assets.insert("sprite-b", SpriteAsset::whole_texture(second, 1, 1).with_pixels_per_unit(1.0)).unwrap();
+    let mut world = World::new();
+    world.insert_resource(AmbientLight { color: Color::WHITE, intensity: 1.0 });
+    world.spawn((Camera::orthographic(2.0).with_clear_color(Color::BLACK), Transform::from_xyz(0.0, 0.0, -4.0)));
+    for name in ["sprite-a", "sprite-a", "sprite-b"] {
+        world.spawn((
+            Transform::IDENTITY,
+            Sprite::new(name).with_size(Vec2::splat(1.0)).with_anchor(Vec2::splat(0.5)).unlit().cutout(),
+        ));
+    }
+    render(&gpu, &mut renderer, &mut world, &assets);
+    let uploaded = renderer.resource_stats();
+    assert_eq!(uploaded.texture_creates, before.texture_creates + 2, "two images, three entities");
+    assert_eq!(uploaded.texture_writes, before.texture_writes + 2);
+    assert_eq!(uploaded.sampler_creates, before.sampler_creates + 1, "one sampler for both images");
+    assert_eq!(renderer.sampler_cache_len(), 2);
+    let fingerprint = renderer.cached_texture(first.id()).unwrap().pixel_fingerprint;
+    assert_eq!(renderer.cached_texture(second.id()).unwrap().min_filter, TextureFilter::Linear);
+
+    let again = renderer.resource_stats();
+    render(&gpu, &mut renderer, &mut world, &assets);
+    assert_eq!(renderer.resource_stats(), again, "an unchanged revision does not hash or upload");
+
+    assets
+        .insert(
+            "a",
+            Texture::solid(1, 1, [10, 20, 30, 255])
+                .with_sampler(SamplerDesc { address_u: AddressMode::Repeat, ..linear })
+                .unwrap(),
+        )
+        .unwrap();
+    render(&gpu, &mut renderer, &mut world, &assets);
+    let changed = renderer.resource_stats();
+    assert_eq!(changed.texture_creates, uploaded.texture_creates);
+    assert_eq!(changed.texture_writes, uploaded.texture_writes);
+    assert!(changed.bind_group_creates > uploaded.bind_group_creates);
+    assert!(changed.sampler_creates > uploaded.sampler_creates);
+    assert_eq!(changed.pixel_fingerprints, uploaded.pixel_fingerprints + 1);
+    assert_eq!(renderer.cached_texture(first.id()).unwrap().pixel_fingerprint, fingerprint);
+    assert_eq!(renderer.cached_texture(first.id()).unwrap().address_u, AddressMode::Repeat);
+    assert_ne!(
+        renderer.cached_texture(first.id()).unwrap().address_u,
+        renderer.cached_texture(second.id()).unwrap().address_u
+    );
+}
+
+#[test]
+fn anisotropy_follows_device_support_and_keeps_nearest() {
+    let Some((gpu, mut renderer)) = setup() else { return };
+    let supported = renderer.anisotropic_filtering_supported();
+    eprintln!("anisotropy test queried DownlevelFlags::ANISOTROPIC_FILTERING={supported}");
+
+    let mut assets = AssetManager::in_memory();
+    let handle = insert_sampling_texture(
+        &mut assets,
+        Texture::solid(2, 2, [8, 16, 32, 255]).with_sampler(linear_aniso(8)).unwrap(),
+    );
+    let (size, at) = full_sprite();
+    let mut world = sampling_world(size, None, at);
+    render(&gpu, &mut renderer, &mut world, &assets);
+    let info = renderer.cached_texture(handle.id()).unwrap();
+    assert_eq!(info.min_filter, TextureFilter::Linear);
+    assert_eq!(info.mag_filter, TextureFilter::Linear);
+    assert!(info.mip_filter_linear);
+    if supported {
+        assert_eq!(info.anisotropy, 8);
+        assert_eq!(renderer.resource_stats().anisotropy_capability_fallbacks, 0);
+    } else {
+        assert_eq!(info.anisotropy, 1);
+        assert_eq!(renderer.resource_stats().anisotropy_capability_fallbacks, 1);
+    }
+
+    let mut nearest = Texture::solid(2, 2, [8, 16, 32, 255]);
+    nearest.sampler.anisotropy = 8;
+    nearest.sampler.min_filter = TextureFilter::Nearest;
+    assets.insert("tex", nearest).unwrap();
+    render(&gpu, &mut renderer, &mut world, &assets);
+    let nearest_info = renderer.cached_texture(handle.id()).unwrap();
+    assert_eq!(nearest_info.anisotropy, 1);
+    assert_eq!(nearest_info.min_filter, TextureFilter::Nearest);
+    assert_eq!(nearest_info.mag_filter, TextureFilter::Nearest);
+
+    assets.insert("tex", Texture::solid(2, 2, [8, 16, 32, 255]).with_sampler(linear_aniso(3)).unwrap()).unwrap();
+    render(&gpu, &mut renderer, &mut world, &assets);
+    let odd = renderer.cached_texture(handle.id()).unwrap();
+    assert_eq!(odd.anisotropy, if supported { 3 } else { 1 });
+    assert_eq!(odd.min_filter, TextureFilter::Linear);
+
+    let mut invalid = Texture::solid(2, 2, [8, 16, 32, 255]).with_filter(TextureFilter::Linear);
+    invalid.sampler.anisotropy = 0;
+    assets.insert("tex", invalid).unwrap();
+    render(&gpu, &mut renderer, &mut world, &assets);
+    let corrected = renderer.cached_texture(handle.id()).unwrap();
+    assert_eq!(corrected.anisotropy, 1);
+    assert_eq!(corrected.min_filter, TextureFilter::Linear);
+    assert_eq!(renderer.resource_stats().invalid_anisotropy_fallbacks, 1);
+    render(&gpu, &mut renderer, &mut world, &assets);
+    assert_eq!(renderer.resource_stats().invalid_anisotropy_fallbacks, 1, "the invalid clamp is logged once");
+}
+
+#[test]
+fn one_allocated_mip_level_clamps_sampler_lod() {
+    let Some((gpu, mut renderer)) = setup() else { return };
+    let before = renderer.resource_stats();
+    let mut assets = AssetManager::in_memory();
+    let generated = Texture::solid(4, 4, [1, 2, 3, 255]).with_mipmaps(Mipmaps::Generate);
+    assert_eq!(generated.mips, Mipmaps::Generate);
+    let handle = insert_sampling_texture(&mut assets, generated);
+    let (size, at) = full_sprite();
+    let mut world = sampling_world(size, None, at);
+    render(&gpu, &mut renderer, &mut world, &assets);
+    let info = renderer.cached_texture(handle.id()).unwrap();
+    assert_eq!(assets.get(handle).unwrap().mips, Mipmaps::Generate, "the request is stored and not generated");
+    assert_eq!(info.mip_level_count, 1);
+    assert_eq!((info.lod_min, info.lod_max), (0.0, 32.0));
+    assert!(!info.mip_filter_linear);
+    assert_eq!(
+        renderer.resource_stats().sampler_creates,
+        before.sampler_creates,
+        "default sampling reuses the placeholder sampler"
+    );
+
+    assets
+        .insert(
+            "tex",
+            Texture::solid(4, 4, [1, 2, 3, 255])
+                .with_sampler(SamplerDesc { mip_filter: Some(MipFilter::Nearest), ..SamplerDesc::default() })
+                .unwrap(),
+        )
+        .unwrap();
+    render(&gpu, &mut renderer, &mut world, &assets);
+    assert_eq!(renderer.resource_stats().sampler_creates, before.sampler_creates);
+    assert_eq!(renderer.cached_texture(handle.id()).unwrap().lod_max, 32.0);
+
+    assets
+        .insert(
+            "tex",
+            Texture::solid(4, 4, [1, 2, 3, 255])
+                .with_sampler(SamplerDesc { mip_filter: Some(MipFilter::Linear), ..SamplerDesc::default() })
+                .unwrap(),
+        )
+        .unwrap();
+    render(&gpu, &mut renderer, &mut world, &assets);
+    let linear = renderer.cached_texture(handle.id()).unwrap();
+    assert!(linear.mip_filter_linear);
+    assert_eq!((linear.lod_min, linear.lod_max), (0.0, 32.0));
+    assert_eq!(linear.mip_level_count, 1);
+    assert_eq!(renderer.resource_stats().sampler_creates, before.sampler_creates + 1);
+    assert_eq!(assets.get(handle).unwrap().mips, Mipmaps::None);
+}
+
+#[test]
+fn asset_revision_reuploads_storage_only_when_it_changes() {
+    let Some((gpu, mut renderer)) = setup() else { return };
+    let mut assets = AssetManager::in_memory();
+    let handle = insert_sampling_texture(&mut assets, Texture::solid(1, 1, [9, 8, 7, 255]));
+    let (size, at) = full_sprite();
+    let mut world = sampling_world(size, None, at);
+    render(&gpu, &mut renderer, &mut world, &assets);
+    let baseline = renderer.resource_stats();
+    let fingerprint = renderer.cached_texture(handle.id()).unwrap().pixel_fingerprint;
+
+    assets.insert("tex", Texture::solid(1, 1, [9, 8, 7, 255])).unwrap();
+    render(&gpu, &mut renderer, &mut world, &assets);
+    let same_pixels = renderer.resource_stats();
+    assert_eq!(same_pixels.texture_writes, baseline.texture_writes);
+    assert_eq!(same_pixels.texture_creates, baseline.texture_creates);
+    assert_eq!(same_pixels.pixel_fingerprints, baseline.pixel_fingerprints + 1);
+    assert_eq!(renderer.cached_texture(handle.id()).unwrap().pixel_fingerprint, fingerprint);
+
+    assets.insert("tex", Texture::solid(1, 1, [1, 2, 3, 255])).unwrap();
+    render(&gpu, &mut renderer, &mut world, &assets);
+    let new_pixels = renderer.resource_stats();
+    assert_eq!(new_pixels.texture_writes, baseline.texture_writes + 1);
+    assert_eq!(new_pixels.texture_creates, baseline.texture_creates, "same dimensions and format keep the image");
+    assert_ne!(renderer.cached_texture(handle.id()).unwrap().pixel_fingerprint, fingerprint);
+
+    assets.insert("tex", Texture::solid(1, 1, [1, 2, 3, 255]).with_color_space(ColorSpace::Linear)).unwrap();
+    render(&gpu, &mut renderer, &mut world, &assets);
+    let recolored = renderer.resource_stats();
+    assert_eq!(recolored.texture_creates, new_pixels.texture_creates + 1);
+    assert_eq!(recolored.texture_writes, new_pixels.texture_writes + 1);
+    assert_eq!(renderer.cached_texture(handle.id()).unwrap().color_space, ColorSpace::Linear);
+
+    assets.insert("tex", Texture::solid(2, 2, [1, 2, 3, 255]).with_color_space(ColorSpace::Linear)).unwrap();
+    render(&gpu, &mut renderer, &mut world, &assets);
+    assert_eq!(renderer.cached_texture(handle.id()).unwrap().width, 2);
+    assert_eq!(renderer.resource_stats().texture_creates, recolored.texture_creates + 1);
+
+    let writes = renderer.resource_stats().texture_writes;
+    let creates = renderer.resource_stats().texture_creates;
+    assets
+        .insert(
+            "tex",
+            Texture::solid(2, 2, [1, 2, 3, 255])
+                .with_color_space(ColorSpace::Linear)
+                .with_sampler(SamplerDesc { address_u: AddressMode::Mirror, ..SamplerDesc::default() })
+                .unwrap(),
+        )
+        .unwrap();
+    render(&gpu, &mut renderer, &mut world, &assets);
+    assert_eq!(renderer.resource_stats().texture_writes, writes);
+    assert_eq!(renderer.resource_stats().texture_creates, creates);
+    assert_eq!(renderer.cached_texture(handle.id()).unwrap().address_u, AddressMode::Mirror);
+    assert_eq!(renderer.sampler_cache_len(), 2);
+
+    assets.remove(handle);
+    let mut empty = World::new();
+    empty.spawn((Camera::orthographic(2.0).with_clear_color(Color::BLACK), Transform::from_xyz(0.0, 0.0, -4.0)));
+    render(&gpu, &mut renderer, &mut empty, &assets);
+    assert_eq!(renderer.cache_stats().textures, 0);
+    assert_eq!(renderer.sampler_cache_len(), 1, "the unused sampler goes; the placeholder sampler stays");
+    assert!(renderer.cached_texture(handle.id()).is_none());
 }

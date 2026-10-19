@@ -1,9 +1,24 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use bytemuck::Pod;
-use engine_assets::{AssetHandle, AssetId, AssetManager, MeshData, Texture, TextureFilter};
+use engine_assets::{
+    AddressMode, AssetHandle, AssetId, AssetManager, ColorSpace, MeshData, MipFilter, SamplerDesc, Texture,
+    TextureFilter,
+};
 use engine_renderer::{RenderScene, SpriteLayer};
 use wgpu::util::DeviceExt;
+
+/// M5-2B uploads one mip level for every texture, including `Mipmaps::Generate`.
+/// Generating that chain is M5-2C.
+const ALLOCATED_MIP_LEVELS: u32 = 1;
+
+/// LOD clamp for a texture that has only the base level.
+///
+/// This is wgpu 30.0.1's default `lod_max_clamp`. Clamping to `0..0` makes minification use the
+/// magnification filter: the clamped LOD is what selects min versus mag, and Metal turns nearest
+/// mip filtering plus `0..0` into a non-mipmapped sampler that ignores `minFilter`. The texture
+/// view still contains only level 0, so a wider clamp does not sample a mip that was not allocated.
+const SINGLE_LEVEL_LOD_MAX: f32 = 32.0;
 
 use crate::gpu_types::{GpuGlobals, GpuMeshInstance, GpuSpriteInstance};
 use crate::{GpuContext, RenderError};
@@ -31,12 +46,92 @@ pub struct CacheStats {
     pub meshes: usize,
 }
 
+/// Lifetime counts for GPU image storage, uploads, samplers, and bind groups.
+///
+/// Placeholder images created with the renderer are included. A later frame that only changes a
+/// sampler increases [`Self::bind_group_creates`] and leaves [`Self::texture_creates`] and
+/// [`Self::texture_writes`] unchanged.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct GpuResourceStats {
+    pub texture_creates: u64,
+    pub texture_writes: u64,
+    pub sampler_creates: u64,
+    pub bind_group_creates: u64,
+    /// Pixel buffers hashed because an asset revision changed. Unchanged revisions are not hashed.
+    pub pixel_fingerprints: u64,
+    /// Times anisotropy above 1 was forced to 1 because `DownlevelFlags::ANISOTROPIC_FILTERING` is absent.
+    /// Incremented once per renderer, when the fallback is first logged.
+    pub anisotropy_capability_fallbacks: u64,
+    /// Times a sampler with anisotropy below 1 was forced to 1 before GPU creation.
+    /// Incremented once per renderer, when the fallback is first logged.
+    pub invalid_anisotropy_fallbacks: u64,
+}
+
+/// Effective GPU sampling and storage for one cached asset texture.
+///
+/// This is the configuration passed to `Device::create_sampler` and the image that was allocated,
+/// after CPU normalization, the device anisotropy fallback, and the one-level LOD clamp.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CachedTextureInfo {
+    pub width: u32,
+    pub height: u32,
+    pub color_space: ColorSpace,
+    pub mip_level_count: u32,
+    pub min_filter: TextureFilter,
+    pub mag_filter: TextureFilter,
+    /// `false` when the CPU mip filter is absent or nearest. Both share one GPU sampler.
+    pub mip_filter_linear: bool,
+    pub address_u: AddressMode,
+    pub address_v: AddressMode,
+    pub anisotropy: u8,
+    pub lod_min: f32,
+    pub lod_max: f32,
+    pub pixel_fingerprint: u64,
+}
+
+/// Identity of one GPU sampler after normalization, device fallback, and LOD clamp.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct SamplerKey {
+    min_linear: bool,
+    mag_linear: bool,
+    mip_linear: bool,
+    address_u: AddressMode,
+    address_v: AddressMode,
+    anisotropy: u8,
+    lod_min_bits: u32,
+    lod_max_bits: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct EffectiveSampling {
+    key: SamplerKey,
+    min_filter: TextureFilter,
+    mag_filter: TextureFilter,
+    mip_linear: bool,
+    address_u: AddressMode,
+    address_v: AddressMode,
+    anisotropy: u8,
+    lod_min: f32,
+    lod_max: f32,
+    /// Anisotropy above 1 was requested and the device flag is absent.
+    capability_fallback: bool,
+    /// The CPU descriptor had anisotropy below 1.
+    invalid_anisotropy: bool,
+}
+
 struct GpuTexture {
     revision: u32,
     /// Value of `SceneRenderer::frame` when a frame last drew with this texture.
     last_used: u64,
+    fingerprint: u64,
+    width: u32,
+    height: u32,
+    format: wgpu::TextureFormat,
+    mip_level_count: u32,
+    sampling: EffectiveSampling,
+    view: wgpu::TextureView,
     bind_group: wgpu::BindGroup,
-    _texture: wgpu::Texture,
+    texture: wgpu::Texture,
 }
 
 struct GpuMesh {
@@ -90,7 +185,13 @@ pub struct SceneRenderer {
     globals: wgpu::Buffer,
     globals_bind_group: wgpu::BindGroup,
     texture_layout: wgpu::BindGroupLayout,
-    samplers: [wgpu::Sampler; 2],
+    /// Shared samplers keyed by the effective GPU descriptor, not by entity or asset.
+    samplers: HashMap<SamplerKey, wgpu::Sampler>,
+    /// `DownlevelFlags::ANISOTROPIC_FILTERING` queried once from the adapter.
+    anisotropic_filtering: bool,
+    anisotropy_capability_logged: bool,
+    invalid_anisotropy_logged: bool,
+    resource_stats: GpuResourceStats,
     sprite_cutout: wgpu::RenderPipeline,
     sprite_blend: wgpu::RenderPipeline,
     mesh_pipeline: wgpu::RenderPipeline,
@@ -162,18 +263,6 @@ impl SceneRenderer {
             bind_group_layouts: &[Some(&globals_layout), Some(&texture_layout)],
             immediate_size: 0,
         });
-
-        let sampler = |filter| {
-            device.create_sampler(&wgpu::SamplerDescriptor {
-                label: Some("sampler"),
-                address_mode_u: wgpu::AddressMode::ClampToEdge,
-                address_mode_v: wgpu::AddressMode::ClampToEdge,
-                mag_filter: filter,
-                min_filter: filter,
-                ..Default::default()
-            })
-        };
-        let samplers = [sampler(wgpu::FilterMode::Nearest), sampler(wgpu::FilterMode::Linear)];
 
         let sprite_module = shader(device, "sprite", include_str!("shaders/sprite.wgsl"));
         let mesh_module = shader(device, "mesh", include_str!("shaders/mesh.wgsl"));
@@ -254,14 +343,55 @@ impl SceneRenderer {
             cache: None,
         });
 
+        let anisotropic_filtering =
+            gpu.adapter.get_downlevel_capabilities().flags.contains(wgpu::DownlevelFlags::ANISOTROPIC_FILTERING);
+        let mut resource_stats = GpuResourceStats::default();
+        let mut samplers = HashMap::new();
+        let default_sampling = effective_sampling(SamplerDesc::default(), anisotropic_filtering);
+        let default_sampler = device.create_sampler(&sampler_descriptor(&default_sampling));
+        resource_stats.sampler_creates = 1;
+        samplers.insert(default_sampling.key, default_sampler.clone());
+        let white = upload_image(
+            gpu,
+            &texture_layout,
+            &default_sampler,
+            ImageUpload {
+                sampling: default_sampling,
+                width: 1,
+                height: 1,
+                rgba: &[255, 255, 255, 255],
+                format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                label: "white",
+            },
+            &mut resource_stats,
+        );
+        let missing = upload_image(
+            gpu,
+            &texture_layout,
+            &default_sampler,
+            ImageUpload {
+                sampling: default_sampling,
+                width: 1,
+                height: 1,
+                rgba: &[255, 0, 255, 255],
+                format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                label: "missing",
+            },
+            &mut resource_stats,
+        );
+
         Self {
             format,
             globals,
             globals_bind_group,
-            white: placeholder(gpu, &texture_layout, &samplers[0], [255; 4], 1, "white"),
-            missing: placeholder(gpu, &texture_layout, &samplers[0], [255, 0, 255, 255], 1, "missing"),
+            white,
+            missing,
             texture_layout,
             samplers,
+            anisotropic_filtering,
+            anisotropy_capability_logged: false,
+            invalid_anisotropy_logged: false,
+            resource_stats,
             sprite_cutout,
             sprite_blend,
             mesh_pipeline,
@@ -289,6 +419,41 @@ impl SceneRenderer {
     /// How many textures and meshes are cached on the GPU right now.
     pub fn cache_stats(&self) -> CacheStats {
         CacheStats { textures: self.textures.len(), meshes: self.meshes.len() }
+    }
+
+    /// Counts of GPU image, upload, sampler, and bind-group work since this renderer was created.
+    pub fn resource_stats(&self) -> GpuResourceStats {
+        self.resource_stats
+    }
+
+    /// Samplers currently retained. Shared entries stay while any cached image or placeholder uses them.
+    pub fn sampler_cache_len(&self) -> usize {
+        self.samplers.len()
+    }
+
+    /// Whether the adapter reported `DownlevelFlags::ANISOTROPIC_FILTERING` when this renderer was created.
+    pub fn anisotropic_filtering_supported(&self) -> bool {
+        self.anisotropic_filtering
+    }
+
+    /// Effective storage and sampling for a cached asset texture. Placeholders are not included.
+    pub fn cached_texture(&self, id: AssetId) -> Option<CachedTextureInfo> {
+        let texture = self.textures.get(&id)?;
+        Some(CachedTextureInfo {
+            width: texture.width,
+            height: texture.height,
+            color_space: color_space_of(texture.format),
+            mip_level_count: texture.mip_level_count,
+            min_filter: texture.sampling.min_filter,
+            mag_filter: texture.sampling.mag_filter,
+            mip_filter_linear: texture.sampling.mip_linear,
+            address_u: texture.sampling.address_u,
+            address_v: texture.sampling.address_v,
+            anisotropy: texture.sampling.anisotropy,
+            lod_min: texture.sampling.lod_min,
+            lod_max: texture.sampling.lod_max,
+            pixel_fingerprint: texture.fingerprint,
+        })
     }
 
     /// A cached texture or mesh that no frame has drawn with for this many consecutive frames is
@@ -516,11 +681,21 @@ impl SceneRenderer {
         let keep = |last_used: u64, exists: bool| exists && frame - last_used < max_idle;
         self.textures.retain(|id, t| keep(t.last_used, assets.get(AssetHandle::<Texture>::from_id(*id)).is_some()));
         self.meshes.retain(|id, m| keep(m.last_used, assets.get(AssetHandle::<MeshData>::from_id(*id)).is_some()));
+        let mut live = HashSet::new();
+        live.insert(self.white.sampling.key);
+        live.insert(self.missing.sampling.key);
+        for texture in self.textures.values() {
+            live.insert(texture.sampling.key);
+        }
+        self.samplers.retain(|key, _| live.contains(key));
     }
 
-    /// Uploads (or re-uploads after a revision change) the GPU copy of a texture asset and marks it
-    /// as used this frame. Assets that are not loaded get no entry, and draws fall back to a magenta
-    /// placeholder. Replacing an entry drops the previous GPU copy.
+    /// Ensures a GPU image for `handle` and marks it used this frame.
+    ///
+    /// An unchanged asset revision does no work and does not hash pixels. A new revision is
+    /// inspected: matching dimensions, format, mip allocation, and pixel fingerprint keep the
+    /// image, and a sampler change only rebuilds the bind group. Storage that no longer matches
+    /// is replaced. Missing assets get no entry; sprite draws then use the magenta placeholder.
     fn ensure_texture(&mut self, gpu: &GpuContext, assets: &AssetManager, handle: AssetHandle<Texture>) {
         let revision = assets.revision(handle);
         if revision == 0 {
@@ -533,12 +708,72 @@ impl SceneRenderer {
             }
         }
         let Some(tex) = assets.get(handle) else { return };
-        let sampler = &self.samplers[(tex.filter == TextureFilter::Linear) as usize];
-        let mut gpu_tex =
-            upload_texture(gpu, &self.texture_layout, sampler, tex.width, tex.height, &tex.rgba, "asset texture");
+        let sampling = effective_sampling(tex.sampler, self.anisotropic_filtering);
+        self.note_fallbacks(&sampling);
+        let format = gpu_format(tex.color_space);
+        let fingerprint = pixel_fingerprint(&tex.rgba);
+        self.resource_stats.pixel_fingerprints += 1;
+        let (width, height) = (tex.width, tex.height);
+        let sampler = self.cached_sampler(gpu, &sampling);
+        let id = handle.id();
+        if let Some(cached) = self.textures.get_mut(&id) {
+            let storage_matches = cached.width == width
+                && cached.height == height
+                && cached.format == format
+                && cached.mip_level_count == ALLOCATED_MIP_LEVELS;
+            if storage_matches {
+                if cached.fingerprint != fingerprint {
+                    write_base_level(&gpu.queue, &cached.texture, width, height, &tex.rgba);
+                    cached.fingerprint = fingerprint;
+                    self.resource_stats.texture_writes += 1;
+                }
+                if cached.sampling.key != sampling.key {
+                    cached.bind_group =
+                        texture_bind_group(&gpu.device, &self.texture_layout, &cached.view, &sampler, "asset texture");
+                    self.resource_stats.bind_group_creates += 1;
+                }
+                cached.sampling = sampling;
+                cached.revision = revision;
+                cached.last_used = self.frame;
+                return;
+            }
+        }
+        let mut gpu_tex = upload_image(
+            gpu,
+            &self.texture_layout,
+            &sampler,
+            ImageUpload { sampling, width, height, rgba: &tex.rgba, format, label: "asset texture" },
+            &mut self.resource_stats,
+        );
         gpu_tex.revision = revision;
         gpu_tex.last_used = self.frame;
-        self.textures.insert(handle.id(), gpu_tex);
+        gpu_tex.fingerprint = fingerprint;
+        self.textures.insert(id, gpu_tex);
+    }
+
+    fn note_fallbacks(&mut self, sampling: &EffectiveSampling) {
+        if sampling.capability_fallback && !self.anisotropy_capability_logged {
+            log::warn!(
+                "DownlevelFlags::ANISOTROPIC_FILTERING is absent; anisotropy above 1 is sampled as 1 and the other sampler settings are unchanged"
+            );
+            self.anisotropy_capability_logged = true;
+            self.resource_stats.anisotropy_capability_fallbacks += 1;
+        }
+        if sampling.invalid_anisotropy && !self.invalid_anisotropy_logged {
+            log::warn!("sampler anisotropy below 1 is invalid; sampling with anisotropy 1 and the requested filters");
+            self.invalid_anisotropy_logged = true;
+            self.resource_stats.invalid_anisotropy_fallbacks += 1;
+        }
+    }
+
+    fn cached_sampler(&mut self, gpu: &GpuContext, sampling: &EffectiveSampling) -> wgpu::Sampler {
+        if let Some(sampler) = self.samplers.get(&sampling.key) {
+            return sampler.clone();
+        }
+        let sampler = gpu.device.create_sampler(&sampler_descriptor(sampling));
+        self.resource_stats.sampler_creates += 1;
+        self.samplers.insert(sampling.key, sampler.clone());
+        sampler
     }
 
     fn ensure_mesh(&mut self, gpu: &GpuContext, assets: &AssetManager, handle: AssetHandle<MeshData>) {
@@ -600,40 +835,59 @@ fn sprite_instances(layer: &SpriteLayer) -> Vec<GpuSpriteInstance> {
         .collect()
 }
 
-fn placeholder(
-    gpu: &GpuContext,
-    layout: &wgpu::BindGroupLayout,
-    sampler: &wgpu::Sampler,
-    rgba: [u8; 4],
-    size: u32,
-    label: &str,
-) -> GpuTexture {
-    upload_texture(gpu, layout, sampler, size, size, &rgba.repeat((size * size) as usize), label)
-}
-
-fn upload_texture(
-    gpu: &GpuContext,
-    layout: &wgpu::BindGroupLayout,
-    sampler: &wgpu::Sampler,
+struct ImageUpload<'a> {
+    sampling: EffectiveSampling,
     width: u32,
     height: u32,
-    rgba: &[u8],
-    label: &str,
+    rgba: &'a [u8],
+    format: wgpu::TextureFormat,
+    label: &'a str,
+}
+
+fn upload_image(
+    gpu: &GpuContext,
+    layout: &wgpu::BindGroupLayout,
+    sampler: &wgpu::Sampler,
+    image: ImageUpload<'_>,
+    stats: &mut GpuResourceStats,
 ) -> GpuTexture {
-    let size = wgpu::Extent3d { width, height, depth_or_array_layers: 1 };
+    let size = wgpu::Extent3d { width: image.width, height: image.height, depth_or_array_layers: 1 };
     let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
-        label: Some(label),
+        label: Some(image.label),
         size,
-        mip_level_count: 1,
+        mip_level_count: ALLOCATED_MIP_LEVELS,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::Rgba8UnormSrgb,
+        format: image.format,
         usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
     });
-    gpu.queue.write_texture(
+    stats.texture_creates += 1;
+    write_base_level(&gpu.queue, &texture, image.width, image.height, image.rgba);
+    stats.texture_writes += 1;
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    let bind_group = texture_bind_group(&gpu.device, layout, &view, sampler, image.label);
+    stats.bind_group_creates += 1;
+    GpuTexture {
+        revision: 0,
+        last_used: 0,
+        fingerprint: pixel_fingerprint(image.rgba),
+        width: image.width,
+        height: image.height,
+        format: image.format,
+        mip_level_count: ALLOCATED_MIP_LEVELS,
+        sampling: image.sampling,
+        view,
+        bind_group,
+        texture,
+    }
+}
+
+fn write_base_level(queue: &wgpu::Queue, texture: &wgpu::Texture, width: u32, height: u32, rgba: &[u8]) {
+    let size = wgpu::Extent3d { width, height, depth_or_array_layers: 1 };
+    queue.write_texture(
         wgpu::TexelCopyTextureInfo {
-            texture: &texture,
+            texture,
             mip_level: 0,
             origin: wgpu::Origin3d::ZERO,
             aspect: wgpu::TextureAspect::All,
@@ -642,14 +896,224 @@ fn upload_texture(
         wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(4 * width), rows_per_image: Some(height) },
         size,
     );
-    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-    let bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+}
+
+fn texture_bind_group(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    view: &wgpu::TextureView,
+    sampler: &wgpu::Sampler,
+    label: &str,
+) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some(label),
         layout,
         entries: &[
-            wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&view) },
+            wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(view) },
             wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(sampler) },
         ],
-    });
-    GpuTexture { revision: 0, last_used: 0, bind_group, _texture: texture }
+    })
+}
+
+fn gpu_format(color_space: ColorSpace) -> wgpu::TextureFormat {
+    match color_space {
+        ColorSpace::Srgb => wgpu::TextureFormat::Rgba8UnormSrgb,
+        ColorSpace::Linear => wgpu::TextureFormat::Rgba8Unorm,
+    }
+}
+
+fn color_space_of(format: wgpu::TextureFormat) -> ColorSpace {
+    match format {
+        wgpu::TextureFormat::Rgba8Unorm => ColorSpace::Linear,
+        _ => ColorSpace::Srgb,
+    }
+}
+
+/// CPU normalization, then the device anisotropy fallback, then the single-level LOD clamp.
+///
+/// One allocated mip level means the texture view has no other level to sample. The LOD upper bound
+/// stays at [`SINGLE_LEVEL_LOD_MAX`] so a minified footprint still uses `min_filter`. `Mipmaps::Generate`
+/// does not allocate that chain until M5-2C. A missing mip filter and nearest mip filtering produce
+/// the same key. `create_sampler` is not retried: invalid anisotropy is corrected here, and a later
+/// HAL failure is a device error.
+fn effective_sampling(sampler: SamplerDesc, anisotropic_filtering: bool) -> EffectiveSampling {
+    let (sampler, invalid_anisotropy) = match sampler.normalized() {
+        Ok(sampler) => (sampler, false),
+        Err(_) => (SamplerDesc { anisotropy: 1, ..sampler }, true),
+    };
+    let capability_fallback = sampler.anisotropy > 1 && !anisotropic_filtering;
+    let anisotropy = if capability_fallback { 1 } else { sampler.anisotropy };
+    let mip_linear = sampler.mip_filter == Some(MipFilter::Linear);
+    let lod_min: f32 = 0.0;
+    let lod_max: f32 = SINGLE_LEVEL_LOD_MAX;
+    EffectiveSampling {
+        key: SamplerKey {
+            min_linear: sampler.min_filter == TextureFilter::Linear,
+            mag_linear: sampler.mag_filter == TextureFilter::Linear,
+            mip_linear,
+            address_u: sampler.address_u,
+            address_v: sampler.address_v,
+            anisotropy,
+            lod_min_bits: lod_min.to_bits(),
+            lod_max_bits: lod_max.to_bits(),
+        },
+        min_filter: sampler.min_filter,
+        mag_filter: sampler.mag_filter,
+        mip_linear,
+        address_u: sampler.address_u,
+        address_v: sampler.address_v,
+        anisotropy,
+        lod_min,
+        lod_max,
+        capability_fallback,
+        invalid_anisotropy,
+    }
+}
+
+fn sampler_descriptor(sampling: &EffectiveSampling) -> wgpu::SamplerDescriptor<'static> {
+    wgpu::SamplerDescriptor {
+        label: Some("sampler"),
+        address_mode_u: wgpu_address(sampling.address_u),
+        address_mode_v: wgpu_address(sampling.address_v),
+        address_mode_w: wgpu::AddressMode::ClampToEdge,
+        mag_filter: wgpu_filter(sampling.mag_filter),
+        min_filter: wgpu_filter(sampling.min_filter),
+        mipmap_filter: if sampling.mip_linear {
+            wgpu::MipmapFilterMode::Linear
+        } else {
+            wgpu::MipmapFilterMode::Nearest
+        },
+        lod_min_clamp: sampling.lod_min,
+        lod_max_clamp: sampling.lod_max,
+        compare: None,
+        anisotropy_clamp: u16::from(sampling.anisotropy),
+        border_color: None,
+    }
+}
+
+fn wgpu_filter(filter: TextureFilter) -> wgpu::FilterMode {
+    match filter {
+        TextureFilter::Nearest => wgpu::FilterMode::Nearest,
+        TextureFilter::Linear => wgpu::FilterMode::Linear,
+    }
+}
+
+fn wgpu_address(mode: AddressMode) -> wgpu::AddressMode {
+    match mode {
+        AddressMode::Clamp => wgpu::AddressMode::ClampToEdge,
+        AddressMode::Repeat => wgpu::AddressMode::Repeat,
+        AddressMode::Mirror => wgpu::AddressMode::MirrorRepeat,
+    }
+}
+
+fn pixel_fingerprint(rgba: &[u8]) -> u64 {
+    let mut hash = 0xcbf29ce484222325u64;
+    for &byte in rgba {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash ^ (rgba.len() as u64)
+}
+
+#[cfg(test)]
+mod sampling_tests {
+    use super::*;
+
+    fn linear_aniso(anisotropy: u8) -> SamplerDesc {
+        SamplerDesc {
+            min_filter: TextureFilter::Linear,
+            mag_filter: TextureFilter::Linear,
+            mip_filter: Some(MipFilter::Linear),
+            anisotropy,
+            ..SamplerDesc::default()
+        }
+    }
+
+    #[test]
+    fn unsupported_anisotropy_becomes_one_and_keeps_filters() {
+        let sampling = effective_sampling(linear_aniso(8), false);
+        assert!(sampling.capability_fallback);
+        assert_eq!(sampling.anisotropy, 1);
+        assert_eq!(sampling.min_filter, TextureFilter::Linear);
+        assert_eq!(sampling.mag_filter, TextureFilter::Linear);
+        assert!(sampling.mip_linear);
+        assert_eq!(sampler_descriptor(&sampling).anisotropy_clamp, 1);
+    }
+
+    #[test]
+    fn supported_anisotropy_reaches_the_descriptor() {
+        let sampling = effective_sampling(linear_aniso(8), true);
+        assert!(!sampling.capability_fallback);
+        assert_eq!(sampling.anisotropy, 8);
+        assert_eq!(sampler_descriptor(&sampling).anisotropy_clamp, 8);
+    }
+
+    #[test]
+    fn nearest_is_not_rewritten_and_non_power_of_two_is_kept() {
+        let nearest = effective_sampling(
+            SamplerDesc {
+                min_filter: TextureFilter::Nearest,
+                mag_filter: TextureFilter::Linear,
+                mip_filter: Some(MipFilter::Linear),
+                anisotropy: 8,
+                ..SamplerDesc::default()
+            },
+            true,
+        );
+        assert_eq!(nearest.anisotropy, 1);
+        assert_eq!(nearest.min_filter, TextureFilter::Nearest);
+        assert_eq!(nearest.mag_filter, TextureFilter::Linear);
+
+        let odd = effective_sampling(linear_aniso(3), true);
+        assert_eq!(odd.anisotropy, 3);
+        assert_eq!(sampler_descriptor(&odd).anisotropy_clamp, 3);
+    }
+
+    #[test]
+    fn anisotropy_below_one_is_corrected_before_sampler_creation() {
+        let sampling = effective_sampling(SamplerDesc { anisotropy: 0, ..SamplerDesc::default() }, true);
+        assert!(sampling.invalid_anisotropy);
+        assert_eq!(sampling.anisotropy, 1);
+        assert_eq!(sampling.min_filter, TextureFilter::Nearest);
+        assert_eq!(sampler_descriptor(&sampling).anisotropy_clamp, 1);
+    }
+
+    #[test]
+    fn one_mip_level_clamps_lod_and_collapses_nearest_mip_filters() {
+        let base = effective_sampling(SamplerDesc::default(), true);
+        let nearest =
+            effective_sampling(SamplerDesc { mip_filter: Some(MipFilter::Nearest), ..SamplerDesc::default() }, true);
+        let linear =
+            effective_sampling(SamplerDesc { mip_filter: Some(MipFilter::Linear), ..SamplerDesc::default() }, true);
+        assert_eq!(base.lod_min, 0.0);
+        assert_eq!(base.lod_max, SINGLE_LEVEL_LOD_MAX);
+        assert_eq!(base.key, nearest.key);
+        assert_ne!(base.key, linear.key);
+        let descriptor = sampler_descriptor(&linear);
+        assert_eq!(descriptor.lod_min_clamp, 0.0);
+        assert_eq!(descriptor.lod_max_clamp, SINGLE_LEVEL_LOD_MAX);
+        assert_eq!(descriptor.mipmap_filter, wgpu::MipmapFilterMode::Linear);
+        assert_eq!(descriptor.min_filter, wgpu::FilterMode::Nearest);
+        assert_eq!(descriptor.mag_filter, wgpu::FilterMode::Nearest);
+    }
+
+    #[test]
+    fn address_modes_and_split_filters_stay_independent() {
+        let sampling = effective_sampling(
+            SamplerDesc {
+                min_filter: TextureFilter::Linear,
+                mag_filter: TextureFilter::Nearest,
+                address_u: AddressMode::Repeat,
+                address_v: AddressMode::Mirror,
+                ..SamplerDesc::default()
+            },
+            true,
+        );
+        let descriptor = sampler_descriptor(&sampling);
+        assert_eq!(descriptor.min_filter, wgpu::FilterMode::Linear);
+        assert_eq!(descriptor.mag_filter, wgpu::FilterMode::Nearest);
+        assert_eq!(descriptor.address_mode_u, wgpu::AddressMode::Repeat);
+        assert_eq!(descriptor.address_mode_v, wgpu::AddressMode::MirrorRepeat);
+        assert_eq!(descriptor.address_mode_w, wgpu::AddressMode::ClampToEdge);
+    }
 }

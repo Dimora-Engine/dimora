@@ -2,8 +2,8 @@ use crate::{Asset, AssetError, AssetKind};
 
 /// How a texture is filtered when it is magnified or minified.
 ///
-/// The GPU backend still chooses between its two clamp samplers from [`Texture::filter`].
-/// [`SamplerDesc`] is the configuration later GPU work will read.
+/// [`SamplerDesc`] is the configuration the GPU reads. [`Texture::filter`] is the legacy
+/// projection of that descriptor: linear only when minification and magnification are both linear.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum TextureFilter {
     /// Crisp texels; the default for pixel art.
@@ -14,7 +14,8 @@ pub enum TextureFilter {
 
 /// How GPU sampling should interpret the RGBA8 bytes.
 ///
-/// Stored on the texture. The current upload path still uses an sRGB format for every texture.
+/// [`ColorSpace::Srgb`] selects `Rgba8UnormSrgb`, so the GPU decodes on sample. [`ColorSpace::Linear`]
+/// selects `Rgba8Unorm`, so the bytes are not decoded. The CPU stores the bytes unchanged.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum ColorSpace {
     /// Bytes are sRGB. Hardware decodes them to linear when the GPU format is sRGB.
@@ -54,10 +55,10 @@ pub enum MipFilter {
 /// [`Mipmaps::Generate`], and [`Mipmaps::Generate`] does not select a mip filter.
 ///
 /// [`Mipmaps::None`] together with a mip filter is valid. wgpu 30.0.1 creates a sampler without
-/// consulting the texture's mip count, and a sample is clamped to the levels that exist, so a
-/// one-level texture contributes its base level. The GPU checkpoint clamps the sampler LOD to that
-/// base level when no chain was generated. This checkpoint stores the request and does not build
-/// the chain.
+/// consulting the texture's mip count. M5-2B allocates one level for both variants. The texture
+/// view is what limits sampling to that level. The sampler LOD upper bound stays wide enough that
+/// minification still uses the minification filter.
+/// [`Mipmaps::Generate`] is stored and is not built yet. Generating the chain is M5-2C.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum Mipmaps {
     /// Base level only.
@@ -69,10 +70,10 @@ pub enum Mipmaps {
 
 /// CPU sampler configuration.
 ///
-/// Normalized by [`SamplerDesc::normalized`] before a GPU sampler would be created. This type does
-/// not create one. Anisotropy `1` means anisotropic filtering is off. The engine cap of
-/// [`SamplerDesc::MAX_ANISOTROPY`] is the wgpu-hal interface range from ADR-0017, not a value read
-/// from a device.
+/// The GPU backend calls [`SamplerDesc::normalized`] before creating a sampler, including when these
+/// public fields were written directly. Anisotropy `1` means anisotropic filtering is off. The engine
+/// cap of [`SamplerDesc::MAX_ANISOTROPY`] is the wgpu-hal interface range from ADR-0017, not a value
+/// read from a device. A device that lacks anisotropic filtering forces the effective clamp to 1.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct SamplerDesc {
     pub min_filter: TextureFilter,
@@ -146,24 +147,23 @@ impl std::error::Error for SamplerConfigError {}
 
 /// CPU-side image, tightly packed RGBA8.
 ///
-/// [`Texture::color_space`] says how those bytes should be sampled. The default is sRGB, and the
-/// bytes are stored as given. The GPU backend still uploads every texture as sRGB, still uses one
-/// mip level, and still chooses a clamp sampler from [`Texture::filter`]. [`Texture::sampler`] is
-/// the configuration that later GPU work reads.
+/// [`Texture::sampler`] is the sampling configuration. The GPU reads it after
+/// [`SamplerDesc::normalized`], including when the public fields were changed without
+/// [`Texture::with_sampler`]. [`Texture::color_space`] selects the GPU format. The RGBA bytes are
+/// stored as given. [`Texture::mips`] is stored as requested; M5-2B still uploads one level.
+///
+/// [`Texture::filter`] is a legacy projection of min and mag, not a second configuration. It is
+/// private so a caller cannot publish a filter the backend will ignore.
 #[derive(Clone, Debug)]
 pub struct Texture {
     pub width: u32,
     pub height: u32,
     pub rgba: Vec<u8>,
-    /// Legacy summary the current GPU backend reads.
+    /// Legacy projection of [`Texture::sampler`]'s min and mag filters.
     ///
-    /// It is not the sampler configuration. [`Texture::with_filter`] writes this field and both
-    /// min and mag filters. [`Texture::with_sampler`] stores the full descriptor and sets this
-    /// field to [`TextureFilter::Linear`] only when both of those filters are linear; otherwise
-    /// it sets [`TextureFilter::Nearest`]. A direct assignment does not update [`Texture::sampler`],
-    /// so the two can disagree. Until the backend reads `sampler`, that assignment is what the
-    /// picture uses. Prefer the builders.
-    pub filter: TextureFilter,
+    /// [`Texture::with_filter`] sets this and both filters. [`Texture::with_sampler`] sets it to
+    /// [`TextureFilter::Linear`] only when both filters are linear. The GPU does not read it.
+    filter: TextureFilter,
     pub color_space: ColorSpace,
     pub mips: Mipmaps,
     pub sampler: SamplerDesc,
@@ -198,6 +198,13 @@ impl Texture {
         Self::from_rgba8(width, height, data)
     }
 
+    /// Legacy single-filter summary. Linear only when minification and magnification are both linear.
+    ///
+    /// The GPU samples [`Texture::sampler`], not this value.
+    pub fn filter(&self) -> TextureFilter {
+        self.filter
+    }
+
     /// Sets the legacy filter and both min and mag filters to `filter`.
     ///
     /// Address modes, the mip filter, colour space, and mipmap generation stay. Anisotropy stays
@@ -227,9 +234,9 @@ impl Texture {
 
     /// Stores `sampler` after [`SamplerDesc::normalized`].
     ///
-    /// Min and mag filters are kept even when they differ. The legacy [`Texture::filter`] field
-    /// becomes [`TextureFilter::Linear`] only when both are linear, because that field has one
-    /// value and the current backend reads it for both.
+    /// Min and mag filters are kept even when they differ. [`Texture::filter`] becomes
+    /// [`TextureFilter::Linear`] only when both are linear. The GPU reads `sampler`, so the two
+    /// filters stay independent.
     pub fn with_sampler(mut self, sampler: SamplerDesc) -> Result<Self, SamplerConfigError> {
         let sampler = sampler.normalized()?;
         self.filter = legacy_filter(sampler);
@@ -238,7 +245,7 @@ impl Texture {
     }
 }
 
-/// The single filter the current backend can apply to both minification and magnification.
+/// The single value [`Texture::filter`] reports. The GPU does not sample from it.
 fn legacy_filter(sampler: SamplerDesc) -> TextureFilter {
     if sampler.min_filter == TextureFilter::Linear && sampler.mag_filter == TextureFilter::Linear {
         TextureFilter::Linear
@@ -263,7 +270,7 @@ mod tests {
     fn assert_sampling_defaults(tex: &Texture) {
         assert_eq!(tex.color_space, ColorSpace::Srgb);
         assert_eq!(tex.mips, Mipmaps::None);
-        assert_eq!(tex.filter, TextureFilter::Nearest);
+        assert_eq!(tex.filter(), TextureFilter::Nearest);
         assert_eq!(tex.sampler, SamplerDesc::default());
     }
 
@@ -311,7 +318,7 @@ mod tests {
     #[test]
     fn with_filter_sets_min_and_mag() {
         let tex = Texture::solid(1, 1, [0; 4]).with_filter(TextureFilter::Linear);
-        assert_eq!(tex.filter, TextureFilter::Linear);
+        assert_eq!(tex.filter(), TextureFilter::Linear);
         assert_eq!(tex.sampler.min_filter, TextureFilter::Linear);
         assert_eq!(tex.sampler.mag_filter, TextureFilter::Linear);
     }
@@ -354,7 +361,7 @@ mod tests {
             })
             .unwrap()
             .with_filter(TextureFilter::Nearest);
-        assert_eq!(tex.filter, TextureFilter::Nearest);
+        assert_eq!(tex.filter(), TextureFilter::Nearest);
         assert_eq!(tex.sampler.min_filter, TextureFilter::Nearest);
         assert_eq!(tex.sampler.mag_filter, TextureFilter::Nearest);
         assert_eq!(tex.sampler.anisotropy, 1);
@@ -373,7 +380,7 @@ mod tests {
             .unwrap();
         assert_eq!(tex.sampler.min_filter, TextureFilter::Linear);
         assert_eq!(tex.sampler.mag_filter, TextureFilter::Nearest);
-        assert_eq!(tex.filter, TextureFilter::Nearest);
+        assert_eq!(tex.filter(), TextureFilter::Nearest);
     }
 
     #[test]
@@ -388,7 +395,7 @@ mod tests {
             })
             .unwrap();
         assert_eq!(tex.sampler.anisotropy, SamplerDesc::MAX_ANISOTROPY);
-        assert_eq!(tex.filter, TextureFilter::Linear);
+        assert_eq!(tex.filter(), TextureFilter::Linear);
         assert!(Texture::solid(1, 1, [0; 4])
             .with_sampler(SamplerDesc { anisotropy: 0, ..SamplerDesc::default() })
             .is_err());
@@ -396,8 +403,11 @@ mod tests {
 
     #[test]
     fn a_direct_filter_write_does_not_update_the_sampler() {
+        // `filter` is private. This module can still assign it; other crates cannot. The assignment
+        // does not change `sampler`, and the GPU reads `sampler`.
         let mut tex = Texture::solid(1, 1, [0; 4]);
         tex.filter = TextureFilter::Linear;
+        assert_eq!(tex.filter(), TextureFilter::Linear);
         assert_eq!(tex.sampler.min_filter, TextureFilter::Nearest);
         assert_eq!(tex.sampler.mag_filter, TextureFilter::Nearest);
     }

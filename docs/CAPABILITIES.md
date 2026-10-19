@@ -380,15 +380,18 @@ Missing from the original category list and now tracked: **save games** (34), **
 * **Not initially.** PBR, custom shaders, texture compression, LODs.
 
 ### 12. Textures and atlases
-* **Now.** PNG decode via `image`; nearest or linear; clamp; no mipmaps; always sRGB on the GPU; any change
-  re-uploads the whole texture (KI-6, KI-25). CPU-side `ColorSpace`, `Mipmaps`, and `SamplerDesc` are
-  stored on `Texture`. The GPU path still reads `Texture.filter` and still uploads one sRGB level.
-* **Required.** The texture contract in ADR-0017: mipmaps, wrap, separate filters, anisotropy normalized
-  before sampler creation (linear filters required above 1; no power-of-two rule), per-texture colour
-  space, separate GPU image and sampler caches, sub-region updates that follow the operation they call
-  (`write_texture` keeps a tight row stride), and a texel shelf packer. The padding-to-mip formula is a
-  provisional estimate until the atlas GPU tests exist. **Planned.** M5, not implemented. **Depends on.**
-  ADR-0016. D-06 (snapping) stays M6.
+* **Now.** PNG decode via `image`. The GPU reads `Texture.sampler` after normalization. `ColorSpace::Srgb`
+  uploads `Rgba8UnormSrgb` and `ColorSpace::Linear` uploads `Rgba8Unorm`. Defaults stay sRGB, nearest,
+  and clamp. One mip level is allocated, including when `Mipmaps::Generate` is stored; that chain is
+  M5-2C. Samplers are cached by the effective descriptor. Pixel bytes are re-uploaded when the image
+  storage changes, not when only the sampler changes (KI-6, KI-25 for partial updates, which are not
+  implemented).
+* **Required.** The rest of ADR-0017: mipmap generation, sub-region updates that follow the operation they
+  call (`write_texture` keeps a tight row stride), and a texel shelf packer. The padding-to-mip formula is a
+  provisional estimate until the atlas GPU tests exist. Wrap, separate filters, anisotropy normalization,
+  per-texture colour space, and the split GPU image and sampler caches are implemented (M5-2B).
+  **Planned.** Mip generation is M5-2C and has not started. **Depends on.** ADR-0016.
+  D-06 (snapping) stays M6.
 * **Integration.** The glyph atlas (M10), sheets (M8), normal maps (M14), render targets (M6).
 * **Tests/examples.** GPU tests in M5's acceptance list.
 * **Not initially.** Texture streaming, compression, virtual textures.

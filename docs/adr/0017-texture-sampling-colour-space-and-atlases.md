@@ -1,6 +1,6 @@
 # ADR-0017: Texture colour space, samplers, partial updates, and atlas mip limits
 
-* **Status:** Settled as the M5 contract. Not implemented. M5-2 is the first code. M5-2A is CPU descriptors only and is specified in TASKS.md.
+* **Status:** Settled as the M5 contract. M5-2A and M5-2B implement the CPU descriptors, GPU formats, and sampler cache. Mip generation, the atlas packer, and partial updates are not implemented. M5-2C has not started.
 * **Date:** 2026-10-16
 * **Backlog id:** M5 texture tasks (KI-6, KI-25). D-06 stays open for texel snapping.
 * **Decided by:** project owner (M5-1 planning approval, corrected in the M5-1 final review)
@@ -52,38 +52,40 @@ Option B.
 
 **Sampler descriptor, engine-owned.** Min filter, mag filter, mip filter, address mode per axis, anisotropy level. Defaults: nearest min, nearest mag, no mip sampling, clamp on each axis, anisotropy 1. `Texture::with_filter` continues to set min and mag together so existing call sites stay valid. Mipmaps are off unless the texture asks for generation. Address modes are clamp, repeat, and mirror. Clamp-to-border is not in M5. The engine does not impose a power-of-two anisotropy rule. wgpu 30.0.1 does not require one, and no engine policy chooses one.
 
-**CPU configuration (M5-2A).** `ColorSpace`, `AddressMode`, `MipFilter`, `Mipmaps`, and `SamplerDesc` live on `Texture` in `engine-assets`. `from_rgba8`, `solid`, `from_fn`, and PNG decode still produce sRGB, nearest, clamp, no mips, and anisotropy 1. `sampler` stores the full descriptor, including a min filter that differs from the mag filter. `filter` is the legacy summary the current GPU backend reads. `with_filter` writes that field and both min and mag, and leaves address, mip filter, and anisotropy alone. `with_sampler` stores the normalized descriptor and sets `filter` to linear only when both min and mag are linear. A direct write to the public `filter` field does not update `sampler`. The GPU upload still ignores `color_space`, `mips`, and `sampler`.
+**CPU configuration.** `ColorSpace`, `AddressMode`, `MipFilter`, `Mipmaps`, and `SamplerDesc` live on `Texture` in `engine-assets`. `from_rgba8`, `solid`, `from_fn`, and PNG decode still produce sRGB, nearest, clamp, no mips, and anisotropy 1. `sampler` is the configuration the GPU reads, including a min filter that differs from the mag filter. `Texture::filter` is private. `filter()` reports linear only when both min and mag are linear. `with_filter` sets that projection and both filters, and leaves address, mip filter, and colour space alone. `with_sampler` stores the normalized descriptor and sets the projection the same way. A write to the private field, which other crates cannot do, does not update `sampler` and does not change the draw.
 
-**Mip levels and the mip filter are separate.** `Mipmaps` asks which levels exist. `mip_filter` says how to sample levels that exist. Setting a mip filter does not select `Mipmaps::Generate`. `Mipmaps::None` with a mip filter is valid. wgpu 30.0.1 `create_sampler` does not look at the texture's mip count, and sampling clamps to the levels that exist, so a one-level texture contributes its base level. Metal selects "not mipmapped" only when the mip filter is nearest and the LOD clamp is `0..0`; the default LOD range is wider. The GPU checkpoint therefore clamps LOD to the base level when the texture has one level. M5-2A does not generate mipmaps.
+**Mip levels and the mip filter are separate.** `Mipmaps` asks which levels exist. `mip_filter` says how to sample levels that exist. Setting a mip filter does not select `Mipmaps::Generate`. `Mipmaps::None` with a mip filter is valid. M5-2B allocates one GPU level for both `Mipmaps::None` and `Mipmaps::Generate`. `Generate` is stored and is not built. Building the chain is M5-2C. The sampler LOD clamp for that one level is `0..32`, wgpu 30.0.1's default upper bound, and the clamp is part of the sampler-cache key. A clamp of `0..0` makes minification use the magnification filter: min-versus-mag follows the clamped LOD, and Metal maps nearest mip filtering plus `0..0` to a non-mipmapped sampler that ignores `minFilter`. The one-level texture view is what keeps the sample on the base level. A missing mip filter and nearest mip filtering share one cache entry. A linear mip filter is a different entry.
 
 **Anisotropy, normalized before a sampler exists.** The CPU descriptor is validated and normalized, and the GPU sampler is created once from that result.
 
-* Anisotropy below 1 is invalid. wgpu returns `CreateSamplerError::InvalidAnisotropy`. The engine returns that as a configuration error. It does not raise 0 to 1.
+* Anisotropy below 1 is invalid. `SamplerDesc::normalized` and `Texture::with_sampler` return `SamplerConfigError::AnisotropyBelowOne`. They do not raise 0 to 1. If a caller then writes the public `anisotropy` field to 0, the GPU path logs once, uses 1, keeps the requested filters, and does not pass 0 to `create_sampler`.
 * Anisotropy above 1 requires linear magnification, linear minification, and linear mip filtering. If any of those is not linear, the normalized descriptor sets anisotropy to 1 and keeps the requested filters. Nearest-neighbour filtering stays nearest.
 * Anisotropy above 16 is clamped to 16 when the filters are linear. That cap is the wgpu-hal interface range. wgpu-core applies `anisotropy_clamp.min(16)` when `DownlevelFlags::ANISOTROPIC_FILTERING` is set. It is not a power-of-two sequence and not a maximum read from a live adapter.
-* The sampler is created once. A failed `create_sampler` after that normalization is a device error. wgpu reports it through `handle_hal_error_with_nonfatal_oom`. The engine surfaces it as the existing device error. It does not retry the create at anisotropy 1, and it does not treat the failure as a recoverable asset-load miss.
+* The sampler is created once. `Device::create_sampler` in wgpu 30.0.1 returns the sampler, not a `Result`. Known validation failures are removed before that call. A later HAL failure is reported by wgpu on the device error sink. The engine does not retry the create at anisotropy 1, and it does not treat that failure as a recoverable asset-load miss.
 
-**Downlevel.** If `DownlevelFlags::ANISOTROPIC_FILTERING` is absent, wgpu-core sets the HAL clamp to 1 and still creates the sampler. The engine applies that normalization itself when it reads the flag: anisotropy becomes 1, the filters stay, one log line is written, and the sampler is created once. The GPU phase does this. M5-2A has no device, so it does not.
+**Downlevel.** If `DownlevelFlags::ANISOTROPIC_FILTERING` is absent, wgpu-core sets the HAL clamp to 1 and still creates the sampler. The renderer reads `adapter.get_downlevel_capabilities().flags` once when it is created. Anisotropy above 1 then becomes 1, the other sampler settings stay, one log line is written, and the sampler is created once. The engine does not guess a maximum above 16.
+
+**Capability query.** M5-2B GPU tests on this machine queried that flag. The adapter was Apple M5, Metal, `IntegratedGpu`, and `DownlevelFlags::ANISOTROPIC_FILTERING` was present. No live maximum above 16 was read. The absent-flag path is covered by a CPU test of the same normalization; it was not executed on a device that lacks the flag.
 
 **Capability uncertainties.**
 
-* The flag's comment in wgpu-types 30.0.1 says every backend and device supports anisotropic filtering and that an implementation may ignore the clamp. The device path still forces 1 when the flag is absent. This review did not query a live adapter, so both statements stay on record.
+* The flag's comment in wgpu-types 30.0.1 says every backend and device supports anisotropic filtering and that an implementation may ignore the clamp. The device path still forces 1 when the flag is absent. The live query above found the flag set. Both statements stay on record.
 * Vulkan sets the flag from `sampler_anisotropy`. Metal's sampler path comments that anisotropy is supported up to 16. No device maximum other than that interface cap was measured.
 * A backend that rejects a non-power-of-two clamp is not in the wgpu 30.0.1 validation that was read. It is not an engine rule. If one appears, this ADR is reopened with that backend named.
 
 **Non-power-of-two mips.** If the adapter lacks `DownlevelFlags::NON_POWER_OF_TWO_MIPMAPPED_TEXTURES` and the image is not power-of-two on both axes, upload mip count 1, sample the base level, and log once. Do not refuse the texture. This is a mipmap-size flag. It is separate from anisotropy.
 
-**Two caches.** GPU image storage and samplers are separate.
+**Two caches.** GPU image storage and samplers are separate. M5-2B implements that split.
 
-Texture storage is identified by the image asset id, the pixel bytes, the GPU format (the colour space), the mip configuration, and the dimensions. A sampler change does not allocate a second copy of those pixels, and it does not upload them again.
+Texture storage is identified by the asset id, the pixel bytes, the GPU format (the colour space), the allocated mip count, and the dimensions. The allocated count is 1 in M5-2B. A sampler change does not allocate a second copy of those pixels and does not upload them again. Dimensions, format, or pixels that differ replace the image.
 
-`AssetManager` keeps one revision per asset. `insert` bumps it on every replace, including a replace whose pixels match, and a revision is never reused (ADR-0002). `Texture` will hold the sampler beside the pixels, so a descriptor-only replace still bumps the revision. The revision tells the renderer to look again. It does not by itself mean the pixels changed. Before uploading, the renderer compares the storage fields, or a hash of the pixel bytes. This decision does not change `AssetManager`.
+`AssetManager` keeps one revision per asset. `insert` bumps it on every replace, including a replace whose pixels match, and a revision is never reused (ADR-0002). The revision tells the renderer to look again. It does not by itself mean the pixels changed. The renderer hashes the pixel bytes when the revision differs from the cached revision, and not on a frame whose revision is unchanged. This decision does not change `AssetManager`.
 
-Samplers are cached by the normalized descriptor.
+Samplers are cached by the effective GPU descriptor: min and mag filters, whether the mip filter is linear, both address modes, anisotropy after the device fallback, and the LOD clamp. Identical effective descriptors share one sampler. An entity does not get its own.
 
-A bind group pairs one texture view with one sampler. It may be cached by that pair. Creating it does not copy the image.
+A bind group pairs one texture view with one sampler. Rebuilding it when the sampler changes does not copy the image.
 
-Eviction of a texture stays "removed from the manager, or idle for N frames" (ADR-0002). Scene unload does not call `remove`.
+Eviction of a texture stays "removed from the manager, or idle for N frames" (D-04, ADR-0002). A sampler stays while a cached image or a placeholder still uses it. Scene unload does not call `remove` (D-16).
 
 **Partial update (later phase, contract now).** Not implemented in M5-1 or M5-2. The transfer uses the alignment of the operation it calls.
 
@@ -109,7 +111,8 @@ The M5 atlas acceptance tests, when that phase is implemented, establish the sup
 ## Consequences and follow-up
 
 * M5-2 implements the descriptor, formats, mip generation, the split caches, and the GPU tests. It does not implement the packer, partial upload, or blended meshes.
-* M5-2A adds the CPU types, the backward-compatible constructors, CPU validation, and unit tests. It does not create a GPU sampler and does not generate mipmaps. The GPU backend still reads `Texture.filter`.
+* M5-2A adds the CPU types, the backward-compatible constructors, CPU validation, and unit tests. It does not generate mipmaps.
+* M5-2B selects `Rgba8UnormSrgb` or `Rgba8Unorm` from `ColorSpace`, translates `SamplerDesc` into the wgpu sampler, and caches samplers separately from image storage. It uploads one level. `Mipmaps::Generate` is not implemented. M5-2C has not started.
 * M5-2 preserves the constructors, defaults, handles, and sprite and mesh rendering listed above. The four screenshots against `6dbabb8` stay byte-identical unless a separately reviewed correctness issue requires a change.
 * M14 is the first consumer of `ColorSpace::Linear` for normals. The slot exists only as storage until then (ADR-0015).
 * D-06 remains open.
@@ -117,6 +120,6 @@ The M5 atlas acceptance tests, when that phase is implemented, establish the sup
 
 ## Evidence and revisit conditions
 
-Checked against `crates/engine-assets/src/texture.rs`, `crates/engine-assets/src/manager.rs` (one revision per replace), `crates/engine-renderer-wgpu/src/scene_renderer.rs` (`write_texture` with stride `4 * width`; readback pads for `copy_texture_to_buffer`), `crates/engine-renderer-wgpu/src/gpu.rs`, and wgpu 30.0.1: `SamplerDescriptor`, `Device::create_sampler` in `device/resource.rs`, `Queue::write_texture` in `device/queue.rs` (alignment not required; staging aligns internally), and the aligned-copy check in `command/transfer.rs`. No GPU test was run for this ADR. No live adapter maximum was read.
+Checked against `crates/engine-assets/src/texture.rs`, `crates/engine-assets/src/manager.rs` (one revision per replace), `crates/engine-renderer-wgpu/src/scene_renderer.rs` (`write_texture` with stride `4 * width`; readback pads for `copy_texture_to_buffer`), `crates/engine-renderer-wgpu/src/gpu.rs`, and wgpu 30.0.1: `SamplerDescriptor`, `Device::create_sampler` (returns `Sampler`; HAL errors go to the device sink), `Queue::write_texture` (alignment not required; staging aligns internally), and the aligned-copy check in `command/transfer.rs`. M5-2B queried `DownlevelFlags::ANISOTROPIC_FILTERING` on Apple M5 Metal. No live adapter maximum above 16 was read.
 
 Reopen if a required adapter cannot express the defaults, if a named backend rejects a non-power-of-two anisotropy clamp, if the downlevel flag and the device path are reconciled by a later wgpu, or if the atlas GPU tests disagree with the padding estimate.

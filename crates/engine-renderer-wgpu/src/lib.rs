@@ -16,6 +16,8 @@ mod window;
 
 pub use gpu::{GpuContext, RenderError};
 pub use present::{choose_surface_present, surface_presents_from_wgpu, wgpu_present_for, SurfacePresent};
-pub use scene_renderer::{CacheStats, FrameStats, SceneRenderer, DEFAULT_CACHE_MAX_IDLE_FRAMES};
+pub use scene_renderer::{
+    CacheStats, CachedTextureInfo, FrameStats, GpuResourceStats, SceneRenderer, DEFAULT_CACHE_MAX_IDLE_FRAMES,
+};
 pub use wgpu;
 pub use window::WindowRenderer;
