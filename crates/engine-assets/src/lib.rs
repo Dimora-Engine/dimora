@@ -21,7 +21,7 @@ mod source;
 mod sprite;
 mod texture;
 
-pub use atlas::{Atlas, AtlasBuilder, AtlasConfig, AtlasError, AtlasRegion};
+pub use atlas::{Atlas, AtlasBuilder, AtlasConfig, AtlasError, AtlasRegion, AtlasReplaceError};
 pub use error::AssetError;
 pub use handle::{Asset, AssetHandle, AssetId, AssetKind};
 pub use manager::{AssetManager, LoadState};

@@ -242,7 +242,7 @@ Decided in [ADR-0016](adr/0016-per-sprite-pixels-per-unit.md). The per-sprite `p
 
 ### D-05 Materials, alpha modes, blended meshes
 
-Decided in [ADR-0015](adr/0015-material-alpha-classes.md). Opaque, Mask, and Blend are material classes. Blended sprites and blended meshes share one sort. The existing sprite key is unchanged. A blended mesh uses the camera-space Z of its world-space bounding-sphere centre. That point is an object-level approximation and is not implemented. Texture sampling, including the corrected anisotropy, upload alignment, split caches, and the provisional atlas mip estimate, is [ADR-0017](adr/0017-texture-sampling-colour-space-and-atlases.md). None of this is implemented.
+Decided in [ADR-0015](adr/0015-material-alpha-classes.md). Opaque, Mask, and Blend are material classes. Blended sprites and blended meshes share one sort. The existing sprite key is unchanged. A blended mesh uses the camera-space Z of its world-space bounding-sphere centre. That point is an object-level approximation and is not implemented. Texture sampling, including the corrected anisotropy, upload alignment, split caches, and the measured atlas layouts, is [ADR-0017](adr/0017-texture-sampling-colour-space-and-atlases.md). Descriptors, GPU formats, mips, rectangle uploads, and the CPU shelf packer (`bf4d9bb`) are implemented. GPU atlas samples are in the working tree and are not committed. Blended meshes are not implemented.
 
 ### D-06 Pixel-art policy
 

@@ -58,10 +58,10 @@ without it.
 | 7 | Errors, logging, diagnostics, config | Partial | `log` 0.4 and `Diagnostics` (ADR-0012, M3a-4). No runtime config. No profiler, no history | M20, M24 |
 | **Rendering** | | | | |
 | 8 | Cameras and projection | Working; six views demonstrated by the example | Ortho + perspective, viewport, picking rays; 27 camera tests. `spatial_scene` also renders isometric, top-down, steep and side through example-local constructors (not an engine preset API). One camera/frame; closed projection enum; custom projection still absent | M6 |
-| 9 | Spatial sprites | Working | Orientation modes, region, tint, cutout/alpha; batching test; CPU shelf packer uncommitted; GPU atlas tests not run | M5 |
+| 9 | Spatial sprites | Working | Orientation modes, region, tint, cutout/alpha; batching test; CPU shelf packer (`bf4d9bb`); GPU atlas samples in the working tree, not committed | M5 |
 | 10 | Depth, transparency, ordering | Partial | One depth buffer shared by meshes and sprites (GPU tests); blended sprites sort by centre; meshes cannot blend. Three coplanar conflicts are verified and unsolved (D-48) | M5, M6, M14 |
 | 11 | Meshes and materials | Partial / Placeholder | Indexed instanced meshes; `Material` = colour + albedo + `lit`, not an asset | M5 |
-| 12 | Textures, atlases | Partial | PNG; per-texture colour space, sampler, and mips; proved rectangle upload (`84d5ab1`); CPU shelf packer uncommitted; GPU atlas tests not run | M5 |
+| 12 | Textures, atlases | Partial | PNG; per-texture colour space, sampler, and mips; proved rectangle upload (`84d5ab1`); CPU shelf packer (`bf4d9bb`); GPU atlas samples uncommitted; mip isolation is per measured layout | M5 |
 | 13 | Lighting and fog | Working, forward only | Ambient/directional/point/spot (16), fog; 1 GPU test; no shadows, normal maps | M14 |
 | 14 | Shadows | Absent | | M14 |
 | 15 | Tilemaps | Working, basic | Expanded to quads every frame; no chunking, collision, loader | M13 |
@@ -393,16 +393,18 @@ Missing from the original category list and now tracked: **save games** (34), **
   allocated, regenerates the whole chain (M5-3B, `84d5ab1`). A missing proof uploads
   the whole base level. Sampler-only changes still do not upload pixels (KI-6). `AtlasBuilder` packs
   named RGBA8 images on the CPU in insertion order, with padding and edge extrusion, and returns a
-  `Texture` plus visible `AtlasRegion` values (M5-4A, working tree, not committed). The default atlas
-  mip request is `Mipmaps::None`. GPU atlas sampling tests have not been run.
-* **Required.** The rest of ADR-0017: localized mip regeneration, and GPU tests that establish the
-  supported atlas mip range. The padding-to-mip formula is a provisional estimate until those tests
-  exist. It does not reject a pack. Wrap, separate
+  `Texture` plus visible `AtlasRegion` values (M5-4A, `bf4d9bb`). The default atlas mip request is
+  `Mipmaps::None`. GPU tests in the working tree (M5-4B, not committed) sample those regions through
+  the existing renderer. `Atlas::replace_source` refreshes a same-size image and its extruded gutter
+  through one `Texture::update_region`. Measured mip isolation is layout-specific and is not
+  `floor(log2(padding))`. Linear filtering of a tightly packed atlas is not universally safe.
+* **Required.** The rest of ADR-0017: localized mip regeneration. The measured atlas layouts are in
+  that ADR. They do not reject a pack and they do not promise full-chain isolation. Wrap, separate
   filters, anisotropy normalization, per-texture colour space, the split GPU image and sampler caches,
   and mip generation are implemented (M5-2B is `11b914f`; M5-2C is `622ef80`). The CPU region journal
   is M5-3A (`b51f1fb`). Proved rectangle uploads and whole-chain mip rebuilds are M5-3B (`84d5ab1`).
-  The CPU shelf packer is M5-4A and is not committed. Localized mip updates and GPU atlas acceptance
-  are not implemented.
+  The CPU shelf packer is M5-4A (`bf4d9bb`). GPU atlas acceptance is M5-4B and is not committed.
+  Localized mip updates are not implemented.
   **Depends on.** ADR-0016.
   D-06 (snapping) stays M6.
 * **Integration.** The glyph atlas (M10), sheets (M8), normal maps (M14), render targets (M6).
@@ -526,8 +528,8 @@ Missing from the original category list and now tracked: **save games** (34), **
 ### 26. UI runtime (screen-space and world-space)
 * **Now.** Absent. No font loading, text, layout, widgets, focus or overlay pass; `RenderScene` is
   world-only. The device scale and logical pointer conversion exist (M3b Phase 3, `9c99edf`). A proved
-  rectangle can upload without a whole-texture rewrite (M5-3B, `84d5ab1`). A CPU shelf packer is in
-  the working tree and is not committed (M5-4A). The glyph atlas consumer is still not implemented
+  rectangle can upload without a whole-texture rewrite (M5-3B, `84d5ab1`). A CPU shelf packer is
+  commit `bf4d9bb` (M5-4A). GPU atlas samples are in the working tree (M5-4B, not committed). The glyph atlas consumer is still not implemented
   (M10). Reference-resolution UI scaling is not built (D-39).
 * **Planned.** M10: a retained node tree with pure-function layout, a plain-data draw list, an overlay
   pass (no depth, painter's order, scissor), shared device/texture cache/atlases, world-anchored UI by

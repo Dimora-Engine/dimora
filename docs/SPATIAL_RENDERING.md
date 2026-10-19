@@ -320,8 +320,9 @@ batches instances of the same mesh and texture into one draw call.
 * In `spatial_scene`, hundreds of floor-tile meshes are a handful of draw calls. In
   `basic_2_5d`, 3000 grass tufts plus tiles are a single sprite draw call.
 * Culling (a bounding sphere against the camera frustum) runs before instances are created.
-* Left room for: texture atlases (sprites already reference a UV rect), material batching, GPU-driven
-  instancing and culling.
+* Sprites that share one atlas texture batch as one texture. `AtlasBuilder` fills those UV rects
+  (M5-4A, `bf4d9bb`); GPU samples of that path are in the working tree (M5-4B). Material batching,
+  GPU-driven instancing, and culling beyond the frustum test are still open.
 
 ## Camera configurations
 

@@ -67,11 +67,13 @@
 //! rectangle. `pixels_per_unit` stays [`SpriteAsset::DEFAULT_PIXELS_PER_UNIT`]. Atlas position does
 //! not change world size.
 //!
-//! A caller who has registered [`Atlas::texture`] can pass a region's visible rectangle to
-//! [`Texture::update_region`]. That replaces those texels and leaves region metadata where it is.
-//! It does not refresh extrusion and it does not move other regions. A source whose dimensions
-//! change needs a new [`AtlasBuilder::build`]. Regions from an older layout must not be reused after
-//! the layout changes.
+//! A caller who has registered [`Atlas::texture`] can replace one image in place.
+//! [`Texture::update_region`] of only the visible rectangle replaces those texels and leaves the
+//! extruded gutter untouched, so the old edge colour can remain. [`Atlas::replace_source`] is the
+//! supported same-size update: it writes the new source and a fresh gutter in one rectangle through
+//! [`Texture::update_region`]. Region coordinates stay put. A source whose dimensions change needs a
+//! new [`AtlasBuilder::build`]. Regions from an older layout must not be reused after the layout
+//! changes.
 //!
 //! [`AssetManager`]: crate::AssetManager
 //! [`HashMap`]: std::collections::HashMap
@@ -265,7 +267,7 @@ impl AtlasBuilder {
                 region_for(&self.images[placement.index], placement, self.config.width, self.config.height)
             })
             .collect();
-        Ok(Atlas { texture, regions })
+        Ok(Atlas { texture, regions, extrusion: self.config.extrusion })
     }
 }
 
@@ -274,6 +276,7 @@ impl AtlasBuilder {
 pub struct Atlas {
     texture: Texture,
     regions: Vec<AtlasRegion>,
+    extrusion: u32,
 }
 
 impl Atlas {
@@ -301,6 +304,58 @@ impl Atlas {
         let region = self.region(name)?;
         let atlas_size = Vec2::new(self.texture.width as f32, self.texture.height as f32);
         Some(SpriteAsset::from_atlas_rect(texture, atlas_size, region.x, region.y, region.width, region.height))
+    }
+
+    /// Texels of gutter copied from the source edge when this atlas was built.
+    pub fn extrusion(&self) -> u32 {
+        self.extrusion
+    }
+
+    /// Replaces one packed image and the extruded gutter around it.
+    ///
+    /// `texture` must have this atlas's dimensions. `rgba` is the new source, tightly packed, at the
+    /// region's original size. The visible origin stays where [`AtlasRegion`] says it is. One
+    /// [`Texture::update_region`] writes the visible rectangle expanded by [`Self::extrusion`].
+    /// Padding outside that extrusion is left as it was. Other regions are not written.
+    ///
+    /// A direct [`Texture::update_region`] of only the visible rectangle leaves the previous edge
+    /// colours in the gutter. A source whose width or height differs from the packed image needs a
+    /// new [`AtlasBuilder::build`].
+    pub fn replace_source(&self, texture: &mut Texture, name: &str, rgba: &[u8]) -> Result<(), AtlasReplaceError> {
+        let Some(region) = self.region(name) else {
+            return Err(AtlasReplaceError::UnknownName { name: name.to_owned() });
+        };
+        if texture.width != self.texture.width || texture.height != self.texture.height {
+            return Err(AtlasReplaceError::TextureSize {
+                name: name.to_owned(),
+                texture_width: texture.width,
+                texture_height: texture.height,
+                atlas_width: self.texture.width,
+                atlas_height: self.texture.height,
+            });
+        }
+        let expected =
+            rgba8_byte_len(region.width, region.height).ok_or(AtlasReplaceError::Overflow { name: name.to_owned() })?;
+        if rgba.len() < expected {
+            return Err(AtlasReplaceError::InsufficientData { name: name.to_owned(), expected, actual: rgba.len() });
+        }
+        if rgba.len() > expected {
+            return Err(AtlasReplaceError::ExcessData { name: name.to_owned(), expected, actual: rgba.len() });
+        }
+        let extrusion = self.extrusion;
+        if extrusion == 0 {
+            return texture
+                .update_region(region.x, region.y, region.width, region.height, rgba)
+                .map_err(AtlasReplaceError::Region);
+        }
+        let patch_width =
+            padded_side(region.width, extrusion).ok_or(AtlasReplaceError::Overflow { name: name.to_owned() })?;
+        let patch_height =
+            padded_side(region.height, extrusion).ok_or(AtlasReplaceError::Overflow { name: name.to_owned() })?;
+        let origin_x = region.x.checked_sub(extrusion).ok_or(AtlasReplaceError::Overflow { name: name.to_owned() })?;
+        let origin_y = region.y.checked_sub(extrusion).ok_or(AtlasReplaceError::Overflow { name: name.to_owned() })?;
+        let patch = extruded_patch(region.width, region.height, rgba, extrusion);
+        texture.update_region(origin_x, origin_y, patch_width, patch_height, &patch).map_err(AtlasReplaceError::Region)
     }
 }
 
@@ -434,6 +489,56 @@ impl std::error::Error for AtlasError {
     }
 }
 
+/// Why [`Atlas::replace_source`] refused to write a same-size image.
+///
+/// The name is the one the caller passed. A missing region does not invent a different name.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AtlasReplaceError {
+    /// No packed region uses `name`.
+    UnknownName { name: String },
+    /// `texture` is not this atlas's width and height.
+    TextureSize { name: String, texture_width: u32, texture_height: u32, atlas_width: u32, atlas_height: u32 },
+    /// `rgba` is shorter than the packed source.
+    InsufficientData { name: String, expected: usize, actual: usize },
+    /// `rgba` is longer than the packed source.
+    ExcessData { name: String, expected: usize, actual: usize },
+    /// The gutter rectangle overflowed `u32`.
+    Overflow { name: String },
+    /// [`Texture::update_region`] rejected the gutter rectangle.
+    Region(crate::TextureRegionError),
+}
+
+impl std::fmt::Display for AtlasReplaceError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AtlasReplaceError::UnknownName { name } => write!(f, "atlas has no region {name:?}"),
+            AtlasReplaceError::TextureSize { name, texture_width, texture_height, atlas_width, atlas_height } => {
+                write!(
+                    f,
+                    "atlas region {name:?} needs a {atlas_width}x{atlas_height} texture, got {texture_width}x{texture_height}"
+                )
+            }
+            AtlasReplaceError::InsufficientData { name, expected, actual } => {
+                write!(f, "atlas region {name:?} needs {expected} bytes, got {actual}")
+            }
+            AtlasReplaceError::ExcessData { name, expected, actual } => {
+                write!(f, "atlas region {name:?} needs {expected} bytes, got {actual}")
+            }
+            AtlasReplaceError::Overflow { name } => write!(f, "atlas region {name:?} gutter overflows u32"),
+            AtlasReplaceError::Region(err) => write!(f, "atlas region update: {err}"),
+        }
+    }
+}
+
+impl std::error::Error for AtlasReplaceError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            AtlasReplaceError::Region(err) => Some(err),
+            _ => None,
+        }
+    }
+}
+
 fn rgba8_byte_len(width: u32, height: u32) -> Option<usize> {
     let pixels = u64::from(width).checked_mul(u64::from(height))?;
     let bytes = pixels.checked_mul(4)?;
@@ -551,6 +656,22 @@ fn sample_clamped(image: &SourceImage, x: i64, y: i64) -> [u8; 4] {
     pixel
 }
 
+fn extruded_patch(width: u32, height: u32, rgba: &[u8], extrusion: u32) -> Vec<u8> {
+    let paint_width = width + extrusion * 2;
+    let paint_height = height + extrusion * 2;
+    let mut patch = vec![0u8; (paint_width * paint_height * 4) as usize];
+    for row in 0..paint_height {
+        for col in 0..paint_width {
+            let sample_x = (i64::from(col) - i64::from(extrusion)).clamp(0, i64::from(width) - 1) as u32;
+            let sample_y = (i64::from(row) - i64::from(extrusion)).clamp(0, i64::from(height) - 1) as u32;
+            let src = (sample_y * width + sample_x) as usize * 4;
+            let dst = (row * paint_width + col) as usize * 4;
+            patch[dst..dst + 4].copy_from_slice(&rgba[src..src + 4]);
+        }
+    }
+    patch
+}
+
 fn write_texel(
     atlas: &mut [u8],
     atlas_width: u32,
@@ -581,7 +702,7 @@ mod tests {
     use engine_math::Vec2;
 
     use super::*;
-    use crate::{AddressMode, AssetManager, MipFilter, SpriteAsset, TextureFilter, TexturePixelEdits};
+    use crate::{AddressMode, AssetManager, MipFilter, SpriteAsset, TexelRect, TextureFilter, TexturePixelEdits};
 
     fn solid(width: u32, height: u32, pixel: [u8; 4]) -> Vec<u8> {
         pixel.repeat((width * height) as usize)
@@ -1021,5 +1142,68 @@ mod tests {
         builder.config_mut().sampler.anisotropy = 0;
         builder.add("a", 1, 1, &[1, 2, 3, 4]).unwrap();
         assert_eq!(builder.build().unwrap_err(), AtlasError::Sampler(SamplerConfigError::AnisotropyBelowOne));
+    }
+
+    #[test]
+    fn a_visible_write_leaves_the_gutter_and_replace_source_refreshes_it() {
+        let atlas = pack(
+            AtlasConfig::new(6, 3).with_padding(1).with_extrusion(1),
+            &[("red", 1, 1, [255, 0, 0, 255]), ("blue", 1, 1, [0, 0, 255, 128])],
+        );
+        assert_eq!(atlas.extrusion(), 1);
+        let red = atlas.region("red").unwrap().clone();
+        let blue = atlas.region("blue").unwrap().clone();
+        let mut stale = atlas.texture().clone();
+        stale.update_region(red.x, red.y, red.width, red.height, &[0, 255, 0, 255]).unwrap();
+        assert_eq!(texel(&stale, red.x, red.y), [0, 255, 0, 255]);
+        assert_eq!(texel(&stale, red.x - 1, red.y), [255, 0, 0, 255]);
+        assert_eq!(texel(&stale, blue.x, blue.y), [0, 0, 255, 128]);
+
+        let mut fresh = atlas.texture().clone();
+        atlas.replace_source(&mut fresh, "red", &[0, 255, 0, 64]).unwrap();
+        for y in red.y - 1..=red.y + 1 {
+            for x in red.x - 1..=red.x + 1 {
+                assert_eq!(texel(&fresh, x, y), [0, 255, 0, 64], "gutter {x},{y}");
+            }
+        }
+        assert_eq!(texel(&fresh, blue.x, blue.y), [0, 0, 255, 128]);
+        assert_eq!(texel(&fresh, blue.x - 1, blue.y), [0, 0, 255, 128]);
+        assert_eq!(atlas.region("red").unwrap(), &red);
+        assert_eq!(atlas.region("blue").unwrap(), &blue);
+        let TexturePixelEdits::Journal(edits) = fresh.pixel_edits() else { panic!("expected one region write") };
+        assert_eq!(edits.len(), 1);
+        assert_eq!(edits[0].rect, TexelRect { x: red.x - 1, y: red.y - 1, width: 3, height: 3 });
+
+        let wider = pack(AtlasConfig::new(5, 5).with_padding(2).with_extrusion(2), &[("dot", 1, 1, [1, 2, 3, 4])]);
+        let mut texture = wider.texture().clone();
+        wider.replace_source(&mut texture, "dot", &[9, 8, 7, 6]).unwrap();
+        let region = wider.region("dot").unwrap();
+        assert_eq!(texel(&texture, region.x, region.y), [9, 8, 7, 6]);
+        assert_eq!(texel(&texture, region.x - 2, region.y - 2), [9, 8, 7, 6]);
+        assert_eq!(texel(&texture, region.x + 2, region.y), [9, 8, 7, 6]);
+    }
+
+    #[test]
+    fn replace_source_rejects_unknown_names_and_the_wrong_bytes() {
+        let atlas = pack(AtlasConfig::new(1, 1), &[("dot", 1, 1, [1, 2, 3, 4])]);
+        let mut texture = atlas.texture().clone();
+        assert_eq!(
+            atlas.replace_source(&mut texture, "missing", &[1, 2, 3, 4]).unwrap_err(),
+            AtlasReplaceError::UnknownName { name: "missing".into() }
+        );
+        assert_eq!(
+            atlas.replace_source(&mut texture, "dot", &[1, 2, 3]).unwrap_err(),
+            AtlasReplaceError::InsufficientData { name: "dot".into(), expected: 4, actual: 3 }
+        );
+        assert_eq!(
+            atlas.replace_source(&mut texture, "dot", &[1, 2, 3, 4, 5]).unwrap_err(),
+            AtlasReplaceError::ExcessData { name: "dot".into(), expected: 4, actual: 5 }
+        );
+        let mut other = Texture::solid(2, 2, [0, 0, 0, 0]);
+        assert!(matches!(
+            atlas.replace_source(&mut other, "dot", &[9, 9, 9, 9]),
+            Err(AtlasReplaceError::TextureSize { .. })
+        ));
+        assert_eq!(texture.rgba, [1, 2, 3, 4]);
     }
 }
