@@ -387,14 +387,17 @@ Missing from the original category list and now tracked: **save games** (34), **
   device cannot store that chain, in which case the base level is kept and the fallback is logged once.
   A mip filter does not allocate levels. Samplers are cached by the effective descriptor, including the LOD
   clamp. Pixel bytes are re-uploaded, and a chain is rebuilt, when the image storage changes, not when
-  only the sampler changes. `Texture::update_region` replaces a CPU rectangle and records it.
-  The GPU still uploads the whole base level (KI-6, KI-25). GPU partial uploads are not implemented.
-* **Required.** The rest of ADR-0017: a GPU sub-region upload that follows the operation it
-  calls (`write_texture` keeps a tight row stride), mip regions rebuilt from the CPU record, and a texel
-  shelf packer. The padding-to-mip formula is a provisional estimate until the atlas GPU tests exist.
-  Wrap, separate filters, anisotropy normalization, per-texture colour space, the split GPU image and
-  sampler caches, and mip generation are implemented (M5-2B is `11b914f`; M5-2C is `622ef80`). The CPU
-  region update, its validation, and the dirty-rectangle record are M5-3A and are not a GPU upload.
+  only the sampler changes. `Texture::update_region` replaces a CPU rectangle and records up to eight
+  fingerprint transitions (M5-3A, `b51f1fb`). When that journal proves the difference from the cached
+  GPU image, the renderer uploads those base-level rectangles with `write_texture` and, if a chain is
+  allocated, regenerates the whole chain (M5-3B, working tree, not committed). A missing proof uploads
+  the whole base level. Sampler-only changes still do not upload pixels (KI-6).
+* **Required.** The rest of ADR-0017: localized mip regeneration, and a texel shelf packer. The
+  padding-to-mip formula is a provisional estimate until the atlas GPU tests exist. Wrap, separate
+  filters, anisotropy normalization, per-texture colour space, the split GPU image and sampler caches,
+  and mip generation are implemented (M5-2B is `11b914f`; M5-2C is `622ef80`). The CPU region journal
+  is M5-3A (`b51f1fb`). Proved rectangle uploads and whole-chain mip rebuilds are M5-3B and are not
+  committed. Localized mip updates are not implemented.
   **Depends on.** ADR-0016.
   D-06 (snapping) stays M6.
 * **Integration.** The glyph atlas (M10), sheets (M8), normal maps (M14), render targets (M6).
@@ -436,12 +439,12 @@ Missing from the original category list and now tracked: **save games** (34), **
 * **Now.** GPU texture and mesh caches keyed by asset id and revision; evicted when the asset is removed
   or idle for N frames (default 120) with counts exposed (`CacheStats`); instance buffers grow and never
   shrink; surface loss and resize handled; frame stats. **No performance measurements on real hardware**;
-  device limits are not queried at upload time (e.g. max texture size, instance buffer limits).
-  `validate_texture_dimensions` can reject a size against injected limits and is not called before
-  GPU texture creation yet. No GPU timing.
+  device limits are not queried for instance buffers. Texture creation calls
+  `validate_texture_dimensions` with `max_texture_dimension_2d` before allocation. A test can tighten
+  that limit without allocating a huge texture. No GPU timing.
 * **Planned.** Baseline and `docs/PERFORMANCE.md` (M6). **Depends on.** D-07, D-08.
 * **Tests/examples.** Cache-count tests exist; benchmark binary (M6).
-* **Unresolved.** GPU texture creation does not call `validate_texture_dimensions` yet. Device-lost recovery is not implemented.
+* **Unresolved.** Device-lost recovery is not implemented. Instance-buffer limits are not queried.
 
 ---
 
@@ -517,8 +520,9 @@ Missing from the original category list and now tracked: **save games** (34), **
 
 ### 26. UI runtime (screen-space and world-space)
 * **Now.** Absent. No font loading, text, layout, widgets, focus or overlay pass; `RenderScene` is
-  world-only. The device scale and logical pointer conversion exist (M3b Phase 3, `9c99edf`). Whole-texture
-  re-upload still blocks a glyph atlas (KI-25). Reference-resolution UI scaling is not built (D-39).
+  world-only. The device scale and logical pointer conversion exist (M3b Phase 3, `9c99edf`). A proved
+  rectangle can upload without a whole-texture rewrite (M5-3B, uncommitted). A glyph atlas packer is
+  still not implemented (KI-25). Reference-resolution UI scaling is not built (D-39).
 * **Planned.** M10: a retained node tree with pure-function layout, a plain-data draw list, an overlay
   pass (no depth, painter's order, scissor), shared device/texture cache/atlases, world-anchored UI by
   projecting an entity through the active camera, input captured before gameplay. Runtime UI is

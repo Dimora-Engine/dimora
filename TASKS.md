@@ -34,8 +34,9 @@ commit `2b79806` and is not pushed. Evidence is under "M4 Phase 1 results", "M4 
 **M5 is in progress and is not complete.** M5-1 records ADR-0015, ADR-0016, and ADR-0017. M5-2A, the
 CPU texture descriptors, is committed locally as `c687d5b` and is not pushed. M5-2B, GPU formats and
 the sampler cache, is commit `11b914f` and is not pushed. M5-2C, GPU mip generation, is commit
-`622ef80` and is not pushed. M5-3A, CPU texture region updates, is in the working tree and is not
-committed. The GPU still uploads whole textures. M6's camera-configuration prototype remains the only verified M6 work.
+`622ef80` and is not pushed. M5-3A, bounded CPU region transitions, is commit `b51f1fb` and is not
+pushed. M5-3B, GPU rectangle uploads, is in the working tree and is not committed. Localized mip
+regeneration and the atlas packer have not started. M6's camera-configuration prototype remains the only verified M6 work.
 The manual window note under M4-4E and M4-5 is unchanged: the framebuffer and the keyboard were not observed.
 
 ## Completed work
@@ -855,7 +856,7 @@ Documentation checkpoint. Committed locally and not pushed. No renderer, texture
 
 ## M5-2 specification
 
-M5-2A is committed locally as `c687d5b` and is not pushed. M5-2B is commit `11b914f` and is not pushed. M5-2C is commit `622ef80` and is not pushed. M5-3A is in the working tree and is not committed. GPU partial uploads have not started.
+M5-2A is committed locally as `c687d5b` and is not pushed. M5-2B is commit `11b914f` and is not pushed. M5-2C is commit `622ef80` and is not pushed. M5-3A is commit `b51f1fb` and is not pushed. M5-3B is in the working tree and is not committed.
 
 Texture parameters and mipmaps only. No `MaterialAsset`, no atlas packer, no sub-rectangle upload, no blended meshes, no shader rewrite beyond what a colour-space or mip sample requires. Defaults must keep the four screenshots against `6dbabb8` byte-identical unless a separately reviewed correctness issue requires a change.
 
@@ -986,7 +987,7 @@ Commit `622ef80`. Not pushed. M5-2B is commit `11b914f`.
 
 ## M5-3A results (2026-10-19)
 
-In the working tree. Not committed. M5-2C is commit `622ef80`. GPU partial uploads are not implemented. M5-3B has not started.
+Commit `b51f1fb`. Not pushed. M5-2C is commit `622ef80`. This commit records CPU transitions and does not upload them.
 
 **API.** `Texture::update_region(x, y, width, height, rgba)` writes one tightly packed RGBA8 rectangle into the existing buffer. Source rows are `width * 4` bytes. Destination rows stay `width_of_texture * 4` apart. Dimensions, colour space, sampler, mip preference, and asset id stay. Bytes are not converted between sRGB and linear. `AssetManager` is unchanged: the game clones the texture, edits the clone, and `insert`s it under the same name. That bumps the revision.
 
@@ -1000,7 +1001,27 @@ In the working tree. Not committed. M5-2C is commit `622ef80`. GPU partial uploa
 
 **Repository check.** `scripts/check.sh` on 2026-10-19, macOS 27.0 arm64, `rustc 1.99.0`, exit 0, after the transition journal. All 4 steps passed: `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` with `DIMORA_REQUIRE_GPU=1` (**438 passed, 0 failed, 0 ignored**, 41 suites), `cargo doc --workspace --no-deps` with `-D warnings`. `headless.rs` ran 32 tests. `spatial_scene` `configurations.rs` ran 16, `switching.rs` 12, `prefab.rs` 5. The passing-test log hides adapter lines. GPU tests passed with `DIMORA_REQUIRE_GPU=1`. GPU partial uploads are not in this commit.
 
-**Screenshots.** GPU sampling and the upload path are unchanged, so the four release screenshots were not regenerated for M5-3A. The M5-2C comparison against `6dbabb8` remains the baseline.
+**Screenshots.** GPU sampling and the upload path are unchanged in this commit, so the four release screenshots were not regenerated for M5-3A. The M5-2C comparison against `6dbabb8` remains the baseline for that commit.
+
+## M5-3B results (2026-10-19)
+
+In the working tree. Not committed. M5-3A is commit `b51f1fb`. M5-4 atlas packing has not started.
+
+**Upload selection.** A new asset revision hashes pixels once. An unchanged revision does not. Matching dimensions, format, and mip allocation keep the GPU image. `base_upload` then returns `Unchanged` (no pixel write, no mip rebuild), `Partial` (each proved rectangle, from the current CPU bytes), or `Full`. A partial or full base upload regenerates the allocated chain with the M5-2C blit. `Mipmaps::None` does not blit. Sampler-only changes do not upload pixels or rebuild mips. Dimensions, colour space, or mip allocation still replace the image. Removal and idle eviction are unchanged.
+
+**Rectangles.** Each partial write uses mip 0, origin `(x, y, 0)`, the rectangle extent, and tightly packed RGBA8 (`bytes_per_row = 4 * width`). Rows are not padded to 256 bytes. Several rectangles, including overlaps and a skipped revision, are written before the mip rebuild. The GPU image then matches the latest CPU bytes. A journal that cannot prove that difference, including a GPU fingerprint older than the eight retained transitions, uses one full base upload. Later edits can be partial again. A failed dimension or byte check does not update the cached revision or fingerprint.
+
+**Counters.** `full_base_uploads` counts whole base writes, including the two placeholders. `partial_base_uploads` counts one `write_texture` per rectangle. `base_upload_bytes` is logical source bytes, not measured bandwidth. `mip_generations` counts a whole-chain rebuild and is not a partial mip update. Texture, sampler, bind-group, and fingerprint counters are unchanged in meaning. A partial pixel update does not recreate the texture, view, sampler, or bind group unless sampling actually changes.
+
+**Limits.** `create_texture` is preceded by `validate_texture_dimensions` against `max_texture_dimension_2d`. `set_texture_dimension_limits` can only tighten that limit. A rejection logs the asset name when `name_of` has one, otherwise the id, and does not allocate.
+
+**Missing textures.** A present sprite with an absent texture still draws and samples the magenta placeholder. A mesh with `base_texture: Some` and no image still samples the white placeholder. `None` is untextured white and is not a warning. The miss logs once per texture id. A registered name is included. A handle that was never registered, or whose entry was removed, has no name on `AssetHandle`; the log uses the id and the parent sprite or mesh name when that entry exists. It does not invent a texture name. A pending load does not warn. The warning memory holds 64 ids, does not grow, and does not rotate. A distinct miss after that is still counted in `missing_assets` and is not logged individually. The first dropped id logs one aggregate line. Later drops stay silent until a remembered asset loads and frees a slot. Worlds without `MissingAssetWarnings` log every miss.
+
+**Not in this checkpoint.** Localized mip regeneration, shelf atlas packing, sprite-sheet animation, `MaterialAsset`, blended meshes, texture compression, and streaming. M5 stays in progress.
+
+**Repository check.** `scripts/check.sh` on 2026-10-19, macOS 27.0 arm64, `rustc 1.99.0`, exit 0, including the 64-id aggregate warning. All 4 steps passed: `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` with `DIMORA_REQUIRE_GPU=1` (**449 passed, 0 failed, 0 ignored**, 41 suites), `cargo doc --workspace --no-deps` with `-D warnings`. `headless.rs` ran 39 tests. `spatial_scene` `configurations.rs` ran 16, `switching.rs` 12, `prefab.rs` 5. A direct GPU run printed Apple M5, Metal, `IntegratedGpu`, with `ANISOTROPIC_FILTERING` and `NON_POWER_OF_TWO_MIPMAPPED_TEXTURES` both present. This paragraph was written after that check.
+
+**Screenshots.** Release 1280×720 images rendered on 2026-10-19 from this working tree and compared with `cmp -s` to the `6dbabb8` baselines. All four matched. Baselines were not replaced. `basic_2_5d` 746071 bytes, SHA-256 `c3c5874adeea119c98255c6c1d08208c0244224d930d86e8736c280ef88b38fe`. `basic_2_5d --ortho` 462130 bytes, `f2aedc0c4a65e13a33187f391d2a778d073b3befbf1ce207bc6484d961ac980f`. `spatial_scene --camera perspective` 136991 bytes, `ec5f6252a88f642b454ae768f9eec8cdd5fba88a5aeb7a424fcefe5fda12275e`. `spatial_scene --camera orthographic` 34046 bytes, `3551d84fe2ec1c14fc0729c7a86e2031c068285a6551597ee32d100f76805cde`.
 
 ## Planned systems and their state
 
@@ -1019,7 +1040,7 @@ in the current scope.
 
 ## Not in scope now
 
-M5-2A, CPU texture descriptors, is committed locally as `c687d5b` and is not pushed. M5-2B is commit `11b914f` and is not pushed. M5-2C is commit `622ef80` and is not pushed. M5-3A, CPU region updates, is in the working tree and is not committed. M5 is not complete. GPU partial uploads, the atlas packer, and M5-3B have not started. M6's remaining tasks, and everything after M5, are not in progress. In particular: no scene format, no prefab assets, no new rendering features in this change, no collision, no
+M5-2A, CPU texture descriptors, is committed locally as `c687d5b` and is not pushed. M5-2B is commit `11b914f` and is not pushed. M5-2C is commit `622ef80` and is not pushed. M5-3A, bounded region transitions, is commit `b51f1fb` and is not pushed. M5-3B, GPU rectangle uploads, is in the working tree and is not committed. M5 is not complete. Localized mip regeneration and the atlas packer have not started. M6's remaining tasks, and everything after M5, are not in progress. In particular: no scene format, no prefab assets, no new rendering features in this change, no collision, no
 editor work, and no work on UI, scripting or any of the three character representations. M4 Phase 1 is commit `cdb5ec3`. Phase 2 is commit `2c76f71`. Phase 3 is commit `f9a4aab`. M4-4A is commit `302622b`. M4-4B is commit `128c70e`. M4-4C is commit `e12fb5b`. M4-4D is commit `8398e49`. M4-4E is commit `d58c66b`. M4-5 is commit `2b79806`. None of M4 is pushed. M4 is complete locally. M3b is complete locally and is not pushed. These systems are deliberately
 not being started together: each has its own milestone, prerequisites and decisions. Decisions that data
 formats or public APIs will bake in are made before their first consumer (see

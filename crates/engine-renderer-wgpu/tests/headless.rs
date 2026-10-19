@@ -7,13 +7,17 @@
 
 use engine_assets::{
     AddressMode, AssetHandle, AssetManager, ColorSpace, MeshData, MipFilter, Mipmaps, SamplerDesc, SpriteAsset,
-    Texture, TextureFilter,
+    Texture, TextureDimensionLimits, TextureFilter, TextureRegionError, MAX_TRACKED_REGIONS,
 };
 use engine_core::Color;
 use engine_math::{Quat, Rect, Transform, Vec2, Vec3};
 use engine_renderer::*;
 use engine_renderer_wgpu::{GpuContext, RenderError, SceneRenderer};
 use engine_world::{propagate_transforms, Visibility, World};
+
+mod capture {
+    include!("../../log_capture.rs");
+}
 
 const W: u32 = 128;
 const H: u32 = 128;
@@ -1448,4 +1452,382 @@ fn npot_mip_allocation_follows_the_device_flag() {
     render(&gpu, &mut renderer, &mut world, &assets);
     assert_eq!(renderer.cached_texture(point.id()).unwrap().mip_level_count, 1);
     assert_eq!(renderer.resource_stats().mip_generations, generations);
+}
+
+fn gpu_texel(image: &[u8], width: u32, x: u32, y: u32) -> [u8; 4] {
+    let i = ((y * width + x) * 4) as usize;
+    [image[i], image[i + 1], image[i + 2], image[i + 3]]
+}
+
+fn publish_tex(assets: &mut AssetManager, edit: impl FnOnce(&mut Texture)) {
+    let handle = assets.texture("tex");
+    let mut texture = assets.get(handle).expect("tex").clone();
+    edit(&mut texture);
+    assets.insert("tex", texture).unwrap();
+}
+
+#[test]
+fn a_region_update_uploads_only_that_rectangle() {
+    let Some((gpu, mut renderer)) = setup() else { return };
+    let mut assets = AssetManager::in_memory();
+    let handle = insert_sampling_texture(&mut assets, Texture::solid(8, 8, [10, 20, 30, 255]));
+    let (size, at) = full_sprite();
+    let mut world = sampling_world(size, None, at);
+    render(&gpu, &mut renderer, &mut world, &assets);
+    let before = renderer.resource_stats();
+
+    publish_tex(&mut assets, |texture| {
+        texture.update_region(2, 3, 2, 1, &[255, 0, 0, 255, 0, 255, 0, 255]).unwrap();
+    });
+    render(&gpu, &mut renderer, &mut world, &assets);
+    let after = renderer.resource_stats();
+    assert_eq!(after.partial_base_uploads, before.partial_base_uploads + 1);
+    assert_eq!(after.full_base_uploads, before.full_base_uploads);
+    assert_eq!(after.texture_writes, before.texture_writes + 1);
+    assert_eq!(after.base_upload_bytes, before.base_upload_bytes + 8);
+    assert_eq!(after.texture_creates, before.texture_creates);
+    assert_eq!(after.sampler_creates, before.sampler_creates);
+    assert_eq!(after.bind_group_creates, before.bind_group_creates);
+    assert_eq!(after.mip_generations, before.mip_generations);
+    assert_eq!(after.pixel_fingerprints, before.pixel_fingerprints + 1);
+
+    let uploaded = renderer.read_cached_mip(&gpu, handle.id(), 0).expect("base level");
+    assert_eq!(uploaded, assets.get(handle).unwrap().rgba);
+    assert_eq!(gpu_texel(&uploaded, 8, 1, 3), [10, 20, 30, 255]);
+    assert_eq!(gpu_texel(&uploaded, 8, 2, 3), [255, 0, 0, 255]);
+    assert_eq!(gpu_texel(&uploaded, 8, 3, 3), [0, 255, 0, 255]);
+    assert_eq!(gpu_texel(&uploaded, 8, 4, 3), [10, 20, 30, 255]);
+
+    render(&gpu, &mut renderer, &mut world, &assets);
+    let again = renderer.resource_stats();
+    assert_eq!(again.partial_base_uploads, after.partial_base_uploads);
+    assert_eq!(again.full_base_uploads, after.full_base_uploads);
+    assert_eq!(again.pixel_fingerprints, after.pixel_fingerprints);
+}
+
+#[test]
+fn successive_frames_upload_each_new_region_and_keep_the_earlier_ones() {
+    let Some((gpu, mut renderer)) = setup() else { return };
+    let mut assets = AssetManager::in_memory();
+    let handle = insert_sampling_texture(&mut assets, Texture::solid(8, 8, [0, 0, 0, 255]));
+    let (size, at) = full_sprite();
+    let mut world = sampling_world(size, None, at);
+    render(&gpu, &mut renderer, &mut world, &assets);
+    let uploaded = renderer.resource_stats();
+
+    publish_tex(&mut assets, |texture| {
+        texture.update_region(0, 0, 2, 2, &[255, 0, 0, 255].repeat(4)).unwrap();
+    });
+    render(&gpu, &mut renderer, &mut world, &assets);
+    let frame_a = renderer.resource_stats();
+    assert_eq!(frame_a.partial_base_uploads, uploaded.partial_base_uploads + 1);
+    assert_eq!(frame_a.full_base_uploads, uploaded.full_base_uploads);
+    assert_eq!(frame_a.texture_creates, uploaded.texture_creates);
+
+    publish_tex(&mut assets, |texture| {
+        texture.update_region(6, 6, 2, 2, &[0, 255, 0, 255].repeat(4)).unwrap();
+    });
+    render(&gpu, &mut renderer, &mut world, &assets);
+    let frame_b = renderer.resource_stats();
+    assert_eq!(frame_b.partial_base_uploads, frame_a.partial_base_uploads + 1);
+    assert_eq!(frame_b.full_base_uploads, uploaded.full_base_uploads);
+
+    publish_tex(&mut assets, |texture| {
+        texture.update_region(1, 1, 2, 2, &[0, 0, 255, 255].repeat(4)).unwrap();
+    });
+    render(&gpu, &mut renderer, &mut world, &assets);
+    let frame_c = renderer.resource_stats();
+    assert_eq!(frame_c.partial_base_uploads, frame_b.partial_base_uploads + 1);
+    assert_eq!(frame_c.full_base_uploads, uploaded.full_base_uploads);
+    assert_eq!(frame_c.base_upload_bytes, uploaded.base_upload_bytes + 16 + 16 + 16);
+
+    let pixels = renderer.read_cached_mip(&gpu, handle.id(), 0).unwrap();
+    assert_eq!(pixels, assets.get(handle).unwrap().rgba);
+    assert_eq!(gpu_texel(&pixels, 8, 0, 0), [255, 0, 0, 255], "the first region stays");
+    assert_eq!(gpu_texel(&pixels, 8, 1, 1), [0, 0, 255, 255], "the overlap uses the latest bytes");
+    assert_eq!(gpu_texel(&pixels, 8, 2, 2), [0, 0, 255, 255]);
+    assert_eq!(gpu_texel(&pixels, 8, 6, 6), [0, 255, 0, 255], "the disjoint region stays");
+    assert_eq!(gpu_texel(&pixels, 8, 4, 4), [0, 0, 0, 255]);
+}
+
+#[test]
+fn skipped_revisions_upload_the_retained_suffix_and_old_history_falls_back_to_full() {
+    let Some((gpu, mut renderer)) = setup() else { return };
+    let mut assets = AssetManager::in_memory();
+    let handle = insert_sampling_texture(&mut assets, Texture::solid(4, 4, [1, 1, 1, 255]));
+    let (size, at) = full_sprite();
+    let mut world = sampling_world(size, None, at);
+    render(&gpu, &mut renderer, &mut world, &assets);
+    let baseline = renderer.resource_stats();
+
+    publish_tex(&mut assets, |texture| {
+        texture.update_region(0, 0, 1, 1, &[255, 0, 0, 255]).unwrap();
+        texture.update_region(3, 3, 1, 1, &[0, 0, 255, 255]).unwrap();
+    });
+    render(&gpu, &mut renderer, &mut world, &assets);
+    let skipped = renderer.resource_stats();
+    assert_eq!(skipped.partial_base_uploads, baseline.partial_base_uploads + 2);
+    assert_eq!(skipped.full_base_uploads, baseline.full_base_uploads);
+    assert_eq!(skipped.base_upload_bytes, baseline.base_upload_bytes + 8);
+    assert_eq!(skipped.texture_creates, baseline.texture_creates);
+    let pixels = renderer.read_cached_mip(&gpu, handle.id(), 0).unwrap();
+    assert_eq!(gpu_texel(&pixels, 4, 0, 0), [255, 0, 0, 255]);
+    assert_eq!(gpu_texel(&pixels, 4, 3, 3), [0, 0, 255, 255]);
+    assert_eq!(gpu_texel(&pixels, 4, 1, 1), [1, 1, 1, 255]);
+
+    publish_tex(&mut assets, |texture| {
+        for step in 0..MAX_TRACKED_REGIONS + 1 {
+            let byte = u8::try_from(step + 2).unwrap();
+            texture.update_region(0, 0, 1, 1, &[byte, 0, 0, 255]).unwrap();
+        }
+    });
+    render(&gpu, &mut renderer, &mut world, &assets);
+    let overflow = renderer.resource_stats();
+    assert_eq!(overflow.full_base_uploads, skipped.full_base_uploads + 1);
+    assert_eq!(overflow.partial_base_uploads, skipped.partial_base_uploads);
+    assert_eq!(overflow.texture_creates, skipped.texture_creates);
+    let after_full = renderer.read_cached_mip(&gpu, handle.id(), 0).unwrap();
+    assert_eq!(after_full, assets.get(handle).unwrap().rgba);
+
+    publish_tex(&mut assets, |texture| {
+        texture.update_region(2, 2, 1, 1, &[0, 255, 0, 255]).unwrap();
+    });
+    render(&gpu, &mut renderer, &mut world, &assets);
+    let resumed = renderer.resource_stats();
+    assert_eq!(resumed.partial_base_uploads, overflow.partial_base_uploads + 1);
+    assert_eq!(resumed.full_base_uploads, overflow.full_base_uploads);
+    let resumed_pixels = renderer.read_cached_mip(&gpu, handle.id(), 0).unwrap();
+    assert_eq!(gpu_texel(&resumed_pixels, 4, 2, 2), [0, 255, 0, 255]);
+    assert_eq!(gpu_texel(&resumed_pixels, 4, 3, 3), [0, 0, 255, 255]);
+}
+
+#[test]
+fn a_partial_base_upload_regenerates_the_mip_chain_from_the_new_base() {
+    let Some((gpu, _)) = setup() else { return };
+    let npot = gpu
+        .adapter
+        .get_downlevel_capabilities()
+        .flags
+        .contains(wgpu::DownlevelFlags::NON_POWER_OF_TWO_MIPMAPPED_TEXTURES);
+    for (space, size) in [(ColorSpace::Srgb, 8u32), (ColorSpace::Linear, 8), (ColorSpace::Linear, 5)] {
+        let mut renderer = SceneRenderer::new(&gpu, wgpu::TextureFormat::Rgba8Unorm);
+        let mut assets = AssetManager::in_memory();
+        let source = Texture::from_fn(size, size, |x, y| [x as u8 * 20, y as u8 * 20, 40, 255])
+            .with_color_space(space)
+            .with_mipmaps(Mipmaps::Generate);
+        let handle = insert_sampling_texture(&mut assets, source);
+        let (sprite, at) = full_sprite();
+        let mut world = sampling_world(sprite, None, at);
+        render(&gpu, &mut renderer, &mut world, &assets);
+        let before = renderer.resource_stats();
+        let levels = renderer.cached_texture(handle.id()).unwrap().mip_level_count;
+        if size == 5 && !npot {
+            assert_eq!(levels, 1);
+        } else {
+            assert!(levels > 1, "{space:?} {size} allocated {levels}");
+        }
+
+        publish_tex(&mut assets, |texture| {
+            texture.update_region(1, 1, 1, 1, &[255, 255, 255, 128]).unwrap();
+        });
+        render(&gpu, &mut renderer, &mut world, &assets);
+        let after = renderer.resource_stats();
+        assert_eq!(after.partial_base_uploads, before.partial_base_uploads + 1);
+        assert_eq!(after.full_base_uploads, before.full_base_uploads);
+        assert_eq!(after.base_upload_bytes, before.base_upload_bytes + 4);
+        assert_eq!(after.texture_creates, before.texture_creates);
+        assert_eq!(after.sampler_creates, before.sampler_creates);
+        if levels > 1 {
+            assert_eq!(after.mip_generations, before.mip_generations + 1);
+        } else {
+            assert_eq!(after.mip_generations, before.mip_generations);
+        }
+
+        let final_cpu = assets.get(handle).unwrap().clone();
+        let mut fresh_assets = AssetManager::in_memory();
+        let mut fresh = SceneRenderer::new(&gpu, wgpu::TextureFormat::Rgba8Unorm);
+        let fresh_handle = insert_sampling_texture(&mut fresh_assets, final_cpu.clone());
+        let mut fresh_world = sampling_world(sprite, None, at);
+        render(&gpu, &mut fresh, &mut fresh_world, &fresh_assets);
+        assert_eq!(fresh.resource_stats().partial_base_uploads, 0);
+        assert!(fresh.resource_stats().full_base_uploads >= 1);
+        let fresh_levels = fresh.cached_texture(fresh_handle.id()).unwrap().mip_level_count;
+        assert_eq!(fresh_levels, levels);
+        for level in 0..levels {
+            let updated = renderer.read_cached_mip(&gpu, handle.id(), level).unwrap();
+            let rebuilt = fresh.read_cached_mip(&gpu, fresh_handle.id(), level).unwrap();
+            assert_eq!(updated.len(), rebuilt.len(), "{space:?} {size} level {level}");
+            for (index, (got, want)) in updated.iter().zip(rebuilt.iter()).enumerate() {
+                let delta = (*got as i16 - *want as i16).abs();
+                assert!(delta <= 1, "{space:?} {size} level {level} byte {index}: {got} vs {want}");
+            }
+        }
+    }
+}
+
+#[test]
+fn cache_policy_selects_full_partial_or_no_upload_and_rejects_oversized_textures() {
+    let Some((gpu, mut renderer)) = setup() else { return };
+    capture::begin();
+    let mut assets = AssetManager::in_memory();
+    let handle =
+        insert_sampling_texture(&mut assets, Texture::solid(4, 4, [8, 8, 8, 255]).with_mipmaps(Mipmaps::Generate));
+    let (size, at) = full_sprite();
+    let mut world = sampling_world(size, None, at);
+    render(&gpu, &mut renderer, &mut world, &assets);
+    let baseline = renderer.resource_stats();
+    assert!(baseline.mip_generations >= 1);
+    let groups = baseline.bind_group_creates;
+
+    publish_tex(&mut assets, |texture| {
+        *texture =
+            texture.clone().with_sampler(SamplerDesc { address_u: AddressMode::Repeat, ..texture.sampler }).unwrap();
+    });
+    render(&gpu, &mut renderer, &mut world, &assets);
+    let sampled = renderer.resource_stats();
+    assert_eq!(sampled.texture_writes, baseline.texture_writes);
+    assert_eq!(sampled.full_base_uploads, baseline.full_base_uploads);
+    assert_eq!(sampled.partial_base_uploads, baseline.partial_base_uploads);
+    assert_eq!(sampled.mip_generations, baseline.mip_generations);
+    assert_eq!(sampled.texture_creates, baseline.texture_creates);
+    assert!(sampled.bind_group_creates > groups);
+    assert_eq!(sampled.pixel_fingerprints, baseline.pixel_fingerprints + 1);
+
+    assets.insert("tex", Texture::solid(4, 4, [8, 8, 8, 255]).with_mipmaps(Mipmaps::Generate)).unwrap();
+    render(&gpu, &mut renderer, &mut world, &assets);
+    let same = renderer.resource_stats();
+    assert_eq!(same.texture_writes, sampled.texture_writes);
+    assert_eq!(same.full_base_uploads, sampled.full_base_uploads);
+    assert_eq!(same.partial_base_uploads, sampled.partial_base_uploads);
+
+    assets.insert("tex", Texture::solid(4, 4, [9, 8, 8, 255]).with_mipmaps(Mipmaps::Generate)).unwrap();
+    render(&gpu, &mut renderer, &mut world, &assets);
+    let replaced = renderer.resource_stats();
+    assert_eq!(replaced.full_base_uploads, same.full_base_uploads + 1);
+    assert_eq!(replaced.partial_base_uploads, same.partial_base_uploads);
+    assert_eq!(replaced.texture_creates, same.texture_creates);
+    assert_eq!(replaced.mip_generations, same.mip_generations + 1);
+    assert_eq!(replaced.base_upload_bytes, same.base_upload_bytes + 4 * 4 * 4);
+
+    assets.insert("tex", Texture::solid(2, 2, [9, 8, 8, 255]).with_mipmaps(Mipmaps::Generate)).unwrap();
+    render(&gpu, &mut renderer, &mut world, &assets);
+    let resized = renderer.resource_stats();
+    assert_eq!(renderer.cached_texture(handle.id()).unwrap().width, 2);
+    assert_eq!(resized.texture_creates, replaced.texture_creates + 1);
+    assert_eq!(resized.full_base_uploads, replaced.full_base_uploads + 1);
+
+    assets
+        .insert(
+            "tex",
+            Texture::solid(2, 2, [9, 8, 8, 255]).with_color_space(ColorSpace::Linear).with_mipmaps(Mipmaps::Generate),
+        )
+        .unwrap();
+    render(&gpu, &mut renderer, &mut world, &assets);
+    let recolored = renderer.resource_stats();
+    assert_eq!(renderer.cached_texture(handle.id()).unwrap().color_space, ColorSpace::Linear);
+    assert_eq!(recolored.texture_creates, resized.texture_creates + 1);
+
+    assets.insert("tex", Texture::solid(2, 2, [9, 8, 8, 255]).with_color_space(ColorSpace::Linear)).unwrap();
+    render(&gpu, &mut renderer, &mut world, &assets);
+    let one_level = renderer.resource_stats();
+    assert_eq!(renderer.cached_texture(handle.id()).unwrap().mip_level_count, 1);
+    assert_eq!(one_level.texture_creates, recolored.texture_creates + 1);
+    assert_eq!(one_level.mip_generations, recolored.mip_generations);
+
+    publish_tex(&mut assets, |texture| {
+        texture.rgba[0] = 3;
+    });
+    render(&gpu, &mut renderer, &mut world, &assets);
+    let mutated = renderer.resource_stats();
+    assert_eq!(mutated.full_base_uploads, one_level.full_base_uploads + 1);
+    assert_eq!(mutated.partial_base_uploads, one_level.partial_base_uploads);
+
+    let mut invalid = assets.get(handle).unwrap().clone();
+    let error = invalid.update_region(0, 0, 0, 1, &[]).unwrap_err();
+    assert_eq!(error, TextureRegionError::ZeroWidth);
+    let held = renderer.resource_stats();
+    render(&gpu, &mut renderer, &mut world, &assets);
+    assert_eq!(renderer.resource_stats(), held);
+
+    publish_tex(&mut assets, |texture| {
+        texture.rgba.pop();
+    });
+    render(&gpu, &mut renderer, &mut world, &assets);
+    let refused = renderer.resource_stats();
+    assert_eq!(refused.texture_writes, mutated.texture_writes);
+    assert_eq!(refused.texture_creates, mutated.texture_creates);
+    assert_eq!(refused.full_base_uploads, mutated.full_base_uploads);
+    render(&gpu, &mut renderer, &mut world, &assets);
+    assert_eq!(renderer.resource_stats().pixel_fingerprints, refused.pixel_fingerprints);
+
+    assets.remove(handle);
+    let mut empty = World::new();
+    empty.spawn((Camera::orthographic(2.0).with_clear_color(Color::BLACK), Transform::from_xyz(0.0, 0.0, -4.0)));
+    render(&gpu, &mut renderer, &mut empty, &assets);
+    assert!(renderer.cached_texture(handle.id()).is_none());
+    assert_eq!(renderer.cache_stats().textures, 0);
+
+    renderer.set_texture_dimension_limits(Some(TextureDimensionLimits { max_width: 4, max_height: 4 }));
+    let creates = renderer.resource_stats().texture_creates;
+    let wide = assets.insert("wide", Texture::solid(8, 4, [4, 5, 6, 255])).unwrap();
+    assets.insert("sprite", SpriteAsset::whole_texture(wide, 8, 4).with_pixels_per_unit(1.0)).unwrap();
+    render(&gpu, &mut renderer, &mut world, &assets);
+    render(&gpu, &mut renderer, &mut world, &assets);
+    assert_eq!(renderer.resource_stats().texture_creates, creates);
+    assert!(renderer.cached_texture(wide.id()).is_none());
+    assert_eq!(px(&render(&gpu, &mut renderer, &mut world, &assets), W / 2, H / 2), [255, 0, 255, 255]);
+    let warnings = capture::messages().into_iter().filter(|message| message.contains("wide")).collect::<Vec<_>>();
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(warnings[0].contains("was not uploaded"), "{warnings:?}");
+    assert!(warnings[0].contains("exceeds"), "{warnings:?}");
+}
+
+#[test]
+fn a_missing_sprite_texture_stays_magenta_and_warns_once() {
+    let Some((gpu, mut renderer)) = setup() else { return };
+    capture::begin();
+    let mut assets = AssetManager::in_memory();
+    let missing = AssetHandle::<Texture>::from_name("no-such-texture");
+    assets.insert("hero", SpriteAsset::whole_texture(missing, 4, 4).with_pixels_per_unit(1.0)).unwrap();
+    let mut world = world_with_camera();
+    world.insert_resource(MissingAssetWarnings::default());
+    let sprite = Sprite::new("hero").with_size(Vec2::splat(12.0)).with_anchor(Vec2::splat(0.5)).unlit().cutout();
+    world.spawn((Transform::from_xyz(0.0, 0.0, 10.0), sprite));
+    world.spawn((Transform::from_xyz(0.2, 0.0, 10.0), sprite));
+    let image = render(&gpu, &mut renderer, &mut world, &assets);
+    assert_eq!(px(&image, W / 2, H / 2), [255, 0, 255, 255]);
+    render(&gpu, &mut renderer, &mut world, &assets);
+    let records = capture::records();
+    let warnings =
+        records.iter().filter(|record| record.message.contains("missing sprite texture")).collect::<Vec<_>>();
+    let text = records.iter().map(|record| record.message.as_str()).collect::<Vec<_>>();
+    assert_eq!(warnings.len(), 1, "{text:?}");
+    assert_eq!(warnings[0].level, log::Level::Warn);
+    assert!(warnings[0].message.contains(&format!("{:016x}", missing.id().0)), "{text:?}");
+    assert!(warnings[0].message.contains("referenced by sprite 'hero'"), "{text:?}");
+    assert!(!warnings[0].message.contains("no-such-texture"), "{text:?}");
+}
+
+#[test]
+fn a_missing_mesh_texture_stays_white_and_warns_once() {
+    let Some((gpu, mut renderer)) = setup() else { return };
+    capture::begin();
+    let mut assets = AssetManager::in_memory();
+    assets.insert("cube", MeshData::cuboid(Vec3::splat(2.0))).unwrap();
+    let missing = AssetHandle::<Texture>::from_name("no-mesh-texture");
+    let mut world = world_with_camera();
+    world.insert_resource(MissingAssetWarnings::default());
+    world.spawn((
+        Transform::IDENTITY,
+        Mesh::new("cube").with_material(Material { base_color: Color::WHITE, base_texture: Some(missing), lit: false }),
+    ));
+    let image = render(&gpu, &mut renderer, &mut world, &assets);
+    assert_eq!(px(&image, W / 2, H / 2), [255, 255, 255, 255]);
+    render(&gpu, &mut renderer, &mut world, &assets);
+    let messages = capture::messages();
+    let warnings = messages.iter().filter(|message| message.contains("missing mesh texture")).collect::<Vec<_>>();
+    assert_eq!(warnings.len(), 1, "{messages:?}");
+    assert!(warnings[0].contains(&format!("{:016x}", missing.id().0)), "{warnings:?}");
+    assert!(warnings[0].contains("referenced by mesh 'cube'"), "{warnings:?}");
+    assert!(!warnings[0].contains("no-mesh-texture"), "{warnings:?}");
 }

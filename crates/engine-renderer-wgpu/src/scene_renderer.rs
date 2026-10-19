@@ -2,8 +2,9 @@ use std::collections::{HashMap, HashSet};
 
 use bytemuck::Pod;
 use engine_assets::{
-    AddressMode, AssetHandle, AssetId, AssetManager, ColorSpace, MeshData, MipFilter, SamplerDesc, Texture,
-    TextureFilter,
+    validate_texture_dimensions, AddressMode, AssetHandle, AssetId, AssetManager, BaseLevelUpload, ColorSpace,
+    MeshData, MipFilter, SamplerDesc, TexelRect, Texture, TextureDimensionLimits, TextureEdit, TextureFilter,
+    TexturePixelEdits,
 };
 use engine_renderer::{RenderScene, SpriteLayer};
 use wgpu::util::DeviceExt;
@@ -64,11 +65,19 @@ pub struct GpuResourceStats {
     /// Incremented once per renderer, when the fallback is first logged.
     pub invalid_anisotropy_fallbacks: u64,
     /// Chains filled by the private blit. A one-level texture does not increment this.
-    /// Sampler-only changes do not increment it.
+    /// Sampler-only changes do not increment it. A partial base upload that rebuilds the whole
+    /// chain increments it once. That rebuild is not a partial mip update.
     pub mip_generations: u64,
     /// Times a non-power-of-two `Mipmaps::Generate` texture was kept at one level because
     /// `DownlevelFlags::NON_POWER_OF_TWO_MIPMAPPED_TEXTURES` is absent. Once per asset name.
     pub npot_mip_fallbacks: u64,
+    /// Whole base-level `write_texture` calls. The two placeholder images are included.
+    pub full_base_uploads: u64,
+    /// Rectangle `write_texture` calls. One per selected region, not per asset revision.
+    pub partial_base_uploads: u64,
+    /// Logical source bytes submitted to [`Self::full_base_uploads`] and [`Self::partial_base_uploads`].
+    /// This is not measured GPU memory bandwidth, and a mip-chain rebuild is not added.
+    pub base_upload_bytes: u64,
 }
 
 /// Effective GPU sampling and storage for one cached asset texture.
@@ -220,6 +229,10 @@ pub struct SceneRenderer {
     /// Number of `render` calls so far; the clock for idle eviction.
     frame: u64,
     cache_max_idle_frames: u32,
+    /// Tighter than the device limit when set. `None` uses the device limit on both axes.
+    dimension_limit_override: Option<TextureDimensionLimits>,
+    /// Asset revision already refused, so a later frame does not hash or allocate it again.
+    refused_uploads: HashMap<AssetId, u32>,
 }
 
 impl SceneRenderer {
@@ -377,6 +390,7 @@ impl SceneRenderer {
                 format: wgpu::TextureFormat::Rgba8UnormSrgb,
                 mip_levels: 1,
                 label: "white",
+                fingerprint: pixel_fingerprint(&[255, 255, 255, 255]),
             },
             &mut resource_stats,
         );
@@ -392,6 +406,7 @@ impl SceneRenderer {
                 format: wgpu::TextureFormat::Rgba8UnormSrgb,
                 mip_levels: 1,
                 label: "missing",
+                fingerprint: pixel_fingerprint(&[255, 0, 255, 255]),
             },
             &mut resource_stats,
         );
@@ -424,6 +439,8 @@ impl SceneRenderer {
             stats: FrameStats::default(),
             frame: 0,
             cache_max_idle_frames: DEFAULT_CACHE_MAX_IDLE_FRAMES,
+            dimension_limit_override: None,
+            refused_uploads: HashMap::new(),
         }
     }
 
@@ -490,6 +507,26 @@ impl SceneRenderer {
 
     pub fn cache_max_idle_frames(&self) -> u32 {
         self.cache_max_idle_frames
+    }
+
+    /// Limits texture allocation to the smaller of the device `max_texture_dimension_2d` and `limits`.
+    ///
+    /// `None` uses the device limit for both axes. A size past the limit is not allocated. The two
+    /// placeholder images are already created and are not checked again.
+    pub fn set_texture_dimension_limits(&mut self, limits: Option<TextureDimensionLimits>) {
+        self.dimension_limit_override = limits;
+    }
+
+    /// Tightly packed RGBA8 of one allocated mip on a cached asset texture.
+    ///
+    /// Placeholders are not returned. `level` must be inside the allocated chain.
+    pub fn read_cached_mip(&self, gpu: &GpuContext, id: AssetId, level: u32) -> Option<Vec<u8>> {
+        let cached = self.textures.get(&id)?;
+        if level >= cached.mip_level_count {
+            return None;
+        }
+        let (width, height) = mip::mip_extent(cached.width, cached.height, level);
+        read_texture_level(gpu, &cached.texture, level, width, height)
     }
 
     /// Records and submits one frame into `target`.
@@ -706,6 +743,7 @@ impl SceneRenderer {
         let keep = |last_used: u64, exists: bool| exists && frame - last_used < max_idle;
         self.textures.retain(|id, t| keep(t.last_used, assets.get(AssetHandle::<Texture>::from_id(*id)).is_some()));
         self.meshes.retain(|id, m| keep(m.last_used, assets.get(AssetHandle::<MeshData>::from_id(*id)).is_some()));
+        self.refused_uploads.retain(|id, _| assets.get(AssetHandle::<Texture>::from_id(*id)).is_some());
         let mut live = HashSet::new();
         live.insert(self.white.sampling.key);
         live.insert(self.missing.sampling.key);
@@ -718,27 +756,46 @@ impl SceneRenderer {
     /// Ensures a GPU image for `handle` and marks it used this frame.
     ///
     /// An unchanged asset revision does no work and does not hash pixels. A new revision is
-    /// inspected: matching dimensions, format, mip allocation, and pixel fingerprint keep the
-    /// image. A pixel change rewrites the whole base level and, when a chain is allocated, rebuilds
-    /// it. A CPU region update is still that whole-base rewrite. Partial uploads are not implemented.
-    /// A sampler change only rebuilds the bind group and, when the sampled level range changes, the
-    /// view. Storage that no longer matches is replaced. Missing assets get no entry; sprite draws
-    /// then use the magenta placeholder.
+    /// inspected: matching dimensions, format, and mip allocation keep the image.
+    /// [`TexturePixelEdits::base_upload`] then chooses no upload, the recorded rectangles, or the
+    /// whole base level. A partial or full base upload rebuilds an allocated mip chain. A sampler
+    /// change only rebuilds the bind group and, when the sampled level range changes, the view.
+    /// Storage that no longer matches is replaced. A size the device cannot allocate is not created.
+    /// Missing assets get no entry; sprite draws then use the magenta placeholder.
     fn ensure_texture(&mut self, gpu: &GpuContext, assets: &AssetManager, handle: AssetHandle<Texture>) {
         let revision = assets.revision(handle);
+        let id = handle.id();
         if revision == 0 {
+            self.refused_uploads.remove(&id);
             return;
         }
-        if let Some(cached) = self.textures.get_mut(&handle.id()) {
+        if let Some(cached) = self.textures.get_mut(&id) {
             if cached.revision == revision {
                 cached.last_used = self.frame;
                 return;
             }
         }
+        if self.refused_uploads.get(&id) == Some(&revision) {
+            if let Some(cached) = self.textures.get_mut(&id) {
+                cached.last_used = self.frame;
+            }
+            return;
+        }
         let Some(tex) = assets.get(handle) else { return };
+        let (width, height) = (tex.width, tex.height);
+        if let Err(error) = validate_texture_dimensions(width, height, self.dimension_limits(gpu)) {
+            self.textures.remove(&id);
+            self.refuse_texture_upload(assets, handle, revision, &error.to_string());
+            return;
+        }
+        if width == 0 || height == 0 {
+            self.textures.remove(&id);
+            self.refuse_texture_upload(assets, handle, revision, "width and height must be at least 1");
+            return;
+        }
         let format = gpu_format(tex.color_space);
         let can_blit = self.format_can_blit(gpu, format);
-        let allocation = mip::allocate_mip_levels(tex.mips, tex.width, tex.height, self.npot_mipmaps, can_blit);
+        let allocation = mip::allocate_mip_levels(tex.mips, width, height, self.npot_mipmaps, can_blit);
         if allocation.npot_fallback {
             let name = assets.name_of(handle).unwrap_or("unnamed texture").to_string();
             self.note_npot_fallback(&name);
@@ -747,43 +804,76 @@ impl SceneRenderer {
         self.note_fallbacks(&sampling);
         let fingerprint = pixel_fingerprint(&tex.rgba);
         self.resource_stats.pixel_fingerprints += 1;
-        let (width, height) = (tex.width, tex.height);
         let sampler = self.cached_sampler(gpu, &sampling);
-        let id = handle.id();
-        let mut replaced_base: Option<wgpu::Texture> = None;
+        let mut rebuild_mips = false;
+        let mut in_place_refused = false;
         if let Some(cached) = self.textures.get_mut(&id) {
             let storage_matches = cached.width == width
                 && cached.height == height
                 && cached.format == format
                 && cached.mip_level_count == allocation.levels;
             if storage_matches {
-                let pixels_changed = cached.fingerprint != fingerprint;
-                if pixels_changed {
-                    write_base_level(&gpu.queue, &cached.texture, width, height, &tex.rgba);
-                    cached.fingerprint = fingerprint;
-                    self.resource_stats.texture_writes += 1;
-                    if allocation.levels > 1 {
-                        replaced_base = Some(cached.texture.clone());
+                match apply_base_upload(
+                    &gpu.queue,
+                    cached,
+                    BasePixels {
+                        rgba: &tex.rgba,
+                        width,
+                        height,
+                        fingerprint,
+                        edits: tex.pixel_edits(),
+                        levels: allocation.levels,
+                    },
+                    &mut self.resource_stats,
+                ) {
+                    Some(rebuild) => {
+                        if cached.sampling.view_levels != sampling.view_levels {
+                            cached.view = sampling_view(&cached.texture, sampling.view_levels);
+                        }
+                        if cached.sampling.key != sampling.key {
+                            cached.bind_group = texture_bind_group(
+                                &gpu.device,
+                                &self.texture_layout,
+                                &cached.view,
+                                &sampler,
+                                "asset texture",
+                            );
+                            self.resource_stats.bind_group_creates += 1;
+                        }
+                        cached.sampling = sampling;
+                        cached.revision = revision;
+                        cached.last_used = self.frame;
+                        rebuild_mips = rebuild;
                     }
+                    None => in_place_refused = true,
                 }
-                if cached.sampling.view_levels != sampling.view_levels {
-                    cached.view = sampling_view(&cached.texture, sampling.view_levels);
-                }
-                if cached.sampling.key != sampling.key {
-                    cached.bind_group =
-                        texture_bind_group(&gpu.device, &self.texture_layout, &cached.view, &sampler, "asset texture");
-                    self.resource_stats.bind_group_creates += 1;
-                }
-                cached.sampling = sampling;
-                cached.revision = revision;
-                cached.last_used = self.frame;
             }
         }
-        if let Some(texture) = replaced_base {
-            self.generate_mips(gpu, &texture, format, width, height, allocation.levels);
+        if in_place_refused {
+            self.refuse_texture_upload(
+                assets,
+                handle,
+                revision,
+                "base-level bytes do not match the texture dimensions",
+            );
             return;
         }
         if self.textures.get(&id).is_some_and(|cached| cached.revision == revision) {
+            self.refused_uploads.remove(&id);
+            if rebuild_mips {
+                let texture = self.textures.get(&id).expect("revision was just stored").texture.clone();
+                self.generate_mips(gpu, &texture, format, width, height, allocation.levels);
+            }
+            return;
+        }
+        if !base_bytes_match(&tex.rgba, width, height) {
+            self.textures.remove(&id);
+            self.refuse_texture_upload(
+                assets,
+                handle,
+                revision,
+                "base-level bytes do not match the texture dimensions",
+            );
             return;
         }
         let mut gpu_tex = upload_image(
@@ -798,16 +888,42 @@ impl SceneRenderer {
                 format,
                 mip_levels: allocation.levels,
                 label: "asset texture",
+                fingerprint,
             },
             &mut self.resource_stats,
         );
         gpu_tex.revision = revision;
         gpu_tex.last_used = self.frame;
-        gpu_tex.fingerprint = fingerprint;
         let texture = gpu_tex.texture.clone();
         self.textures.insert(id, gpu_tex);
+        self.refused_uploads.remove(&id);
         if allocation.levels > 1 {
             self.generate_mips(gpu, &texture, format, width, height, allocation.levels);
+        }
+    }
+
+    fn dimension_limits(&self, gpu: &GpuContext) -> TextureDimensionLimits {
+        let device_limit = gpu.device.limits().max_texture_dimension_2d;
+        let mut limits = TextureDimensionLimits { max_width: device_limit, max_height: device_limit };
+        if let Some(tighter) = self.dimension_limit_override {
+            limits.max_width = limits.max_width.min(tighter.max_width);
+            limits.max_height = limits.max_height.min(tighter.max_height);
+        }
+        limits
+    }
+
+    fn refuse_texture_upload(
+        &mut self,
+        assets: &AssetManager,
+        handle: AssetHandle<Texture>,
+        revision: u32,
+        reason: &str,
+    ) {
+        let id = handle.id();
+        self.refused_uploads.insert(id, revision);
+        match assets.name_of(handle) {
+            Some(name) => log::warn!("texture '{name}' was not uploaded: {reason}"),
+            None => log::warn!("texture {:016x} was not uploaded: {reason}", id.0),
         }
     }
 
@@ -948,6 +1064,7 @@ struct ImageUpload<'a> {
     format: wgpu::TextureFormat,
     mip_levels: u32,
     label: &'a str,
+    fingerprint: u64,
 }
 
 fn upload_image(
@@ -958,7 +1075,8 @@ fn upload_image(
     stats: &mut GpuResourceStats,
 ) -> GpuTexture {
     let size = wgpu::Extent3d { width: image.width, height: image.height, depth_or_array_layers: 1 };
-    let mut usage = wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST;
+    let mut usage =
+        wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::COPY_SRC;
     if image.mip_levels > 1 {
         usage |= wgpu::TextureUsages::RENDER_ATTACHMENT;
     }
@@ -974,14 +1092,14 @@ fn upload_image(
     });
     stats.texture_creates += 1;
     write_base_level(&gpu.queue, &texture, image.width, image.height, image.rgba);
-    stats.texture_writes += 1;
+    note_full_upload(stats, image.rgba.len() as u64);
     let view = sampling_view(&texture, image.sampling.view_levels);
     let bind_group = texture_bind_group(&gpu.device, layout, &view, sampler, image.label);
     stats.bind_group_creates += 1;
     GpuTexture {
         revision: 0,
         last_used: 0,
-        fingerprint: pixel_fingerprint(image.rgba),
+        fingerprint: image.fingerprint,
         width: image.width,
         height: image.height,
         format: image.format,
@@ -993,8 +1111,84 @@ fn upload_image(
     }
 }
 
-fn write_base_level(queue: &wgpu::Queue, texture: &wgpu::Texture, width: u32, height: u32, rgba: &[u8]) {
-    let size = wgpu::Extent3d { width, height, depth_or_array_layers: 1 };
+fn note_full_upload(stats: &mut GpuResourceStats, bytes: u64) {
+    stats.texture_writes += 1;
+    stats.full_base_uploads += 1;
+    stats.base_upload_bytes += bytes;
+}
+
+fn note_partial_upload(stats: &mut GpuResourceStats, bytes: u64) {
+    stats.texture_writes += 1;
+    stats.partial_base_uploads += 1;
+    stats.base_upload_bytes += bytes;
+}
+
+fn base_bytes_match(rgba: &[u8], width: u32, height: u32) -> bool {
+    match u64::from(width).checked_mul(u64::from(height)).and_then(|texels| texels.checked_mul(4)) {
+        Some(len) => rgba.len() as u64 == len,
+        None => false,
+    }
+}
+
+struct BasePixels<'a> {
+    rgba: &'a [u8],
+    width: u32,
+    height: u32,
+    fingerprint: u64,
+    edits: &'a TexturePixelEdits,
+    levels: u32,
+}
+
+/// `Some(rebuild_mips)` when the GPU base level now matches `pixels.fingerprint`.
+/// `None` when the bytes could not be validated, in which case nothing was submitted.
+fn apply_base_upload(
+    queue: &wgpu::Queue,
+    cached: &mut GpuTexture,
+    pixels: BasePixels<'_>,
+    stats: &mut GpuResourceStats,
+) -> Option<bool> {
+    match pixels.edits.base_upload(Some(cached.fingerprint), pixels.fingerprint) {
+        BaseLevelUpload::Unchanged => Some(false),
+        BaseLevelUpload::Partial(edits) if !edits.is_empty() => {
+            if let Some(packed) = pack_regions(pixels.rgba, pixels.width, pixels.height, edits) {
+                let mut submitted = true;
+                for (rect, bytes) in &packed {
+                    if !write_region(queue, &cached.texture, *rect, bytes) {
+                        submitted = false;
+                        break;
+                    }
+                    note_partial_upload(stats, bytes.len() as u64);
+                }
+                if submitted {
+                    cached.fingerprint = pixels.fingerprint;
+                    return Some(pixels.levels > 1);
+                }
+            }
+            submit_full_base(queue, cached, &pixels, stats)
+        }
+        BaseLevelUpload::Partial(_) | BaseLevelUpload::Full => submit_full_base(queue, cached, &pixels, stats),
+    }
+}
+
+fn submit_full_base(
+    queue: &wgpu::Queue,
+    cached: &mut GpuTexture,
+    pixels: &BasePixels<'_>,
+    stats: &mut GpuResourceStats,
+) -> Option<bool> {
+    if !write_base_level(queue, &cached.texture, pixels.width, pixels.height, pixels.rgba) {
+        return None;
+    }
+    note_full_upload(stats, pixels.rgba.len() as u64);
+    cached.fingerprint = pixels.fingerprint;
+    Some(pixels.levels > 1)
+}
+
+fn write_base_level(queue: &wgpu::Queue, texture: &wgpu::Texture, width: u32, height: u32, rgba: &[u8]) -> bool {
+    if !base_bytes_match(rgba, width, height) {
+        return false;
+    }
+    let Some(row_bytes) = width.checked_mul(4) else { return false };
     queue.write_texture(
         wgpu::TexelCopyTextureInfo {
             texture,
@@ -1003,9 +1197,122 @@ fn write_base_level(queue: &wgpu::Queue, texture: &wgpu::Texture, width: u32, he
             aspect: wgpu::TextureAspect::All,
         },
         rgba,
-        wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(4 * width), rows_per_image: Some(height) },
-        size,
+        wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(row_bytes), rows_per_image: Some(height) },
+        wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
     );
+    true
+}
+
+fn write_region(queue: &wgpu::Queue, texture: &wgpu::Texture, rect: TexelRect, rgba: &[u8]) -> bool {
+    let Some(row_bytes) = rect.width.checked_mul(4) else { return false };
+    let Some(expected) = u64::from(row_bytes).checked_mul(u64::from(rect.height)) else { return false };
+    if rgba.len() as u64 != expected {
+        return false;
+    }
+    queue.write_texture(
+        wgpu::TexelCopyTextureInfo {
+            texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d { x: rect.x, y: rect.y, z: 0 },
+            aspect: wgpu::TextureAspect::All,
+        },
+        rgba,
+        wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(row_bytes), rows_per_image: Some(rect.height) },
+        wgpu::Extent3d { width: rect.width, height: rect.height, depth_or_array_layers: 1 },
+    );
+    true
+}
+
+fn pack_regions(rgba: &[u8], width: u32, height: u32, edits: &[TextureEdit]) -> Option<Vec<(TexelRect, Vec<u8>)>> {
+    let mut packed = Vec::with_capacity(edits.len());
+    for edit in edits {
+        packed.push((edit.rect, pack_rect(rgba, width, height, edit.rect)?));
+    }
+    Some(packed)
+}
+
+fn pack_rect(rgba: &[u8], texture_width: u32, texture_height: u32, rect: TexelRect) -> Option<Vec<u8>> {
+    if rect.width == 0 || rect.height == 0 {
+        return None;
+    }
+    let x_end = rect.x.checked_add(rect.width)?;
+    let y_end = rect.y.checked_add(rect.height)?;
+    if x_end > texture_width || y_end > texture_height {
+        return None;
+    }
+    let row_bytes = u64::from(rect.width).checked_mul(4)?;
+    let row_bytes_u32 = u32::try_from(row_bytes).ok()?;
+    let total = row_bytes.checked_mul(u64::from(rect.height))?;
+    let stride = u64::from(texture_width).checked_mul(4)?;
+    let total_usize = usize::try_from(total).ok()?;
+    let mut out = vec![0u8; total_usize];
+    for row in 0..rect.height {
+        let y = u64::from(rect.y) + u64::from(row);
+        let start = y.checked_mul(stride)?.checked_add(u64::from(rect.x).checked_mul(4)?)?;
+        let start = usize::try_from(start).ok()?;
+        let end = start.checked_add(row_bytes_u32 as usize)?;
+        let src = rgba.get(start..end)?;
+        let dest = (u64::from(row) * row_bytes) as usize;
+        out[dest..dest + src.len()].copy_from_slice(src);
+    }
+    Some(out)
+}
+
+fn read_texture_level(
+    gpu: &GpuContext,
+    texture: &wgpu::Texture,
+    level: u32,
+    width: u32,
+    height: u32,
+) -> Option<Vec<u8>> {
+    let row_bytes = width.checked_mul(4)?;
+    let padded = row_bytes.checked_next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)?;
+    let size = u64::from(padded).checked_mul(u64::from(height))?;
+    let buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("texture readback"),
+        size,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    let mut encoder =
+        gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("texture read") });
+    encoder.copy_texture_to_buffer(
+        wgpu::TexelCopyTextureInfo {
+            texture,
+            mip_level: level,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        wgpu::TexelCopyBufferInfo {
+            buffer: &buffer,
+            layout: wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(padded),
+                rows_per_image: Some(height),
+            },
+        },
+        wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+    );
+    gpu.queue.submit([encoder.finish()]);
+    let (tx, rx) = std::sync::mpsc::channel();
+    buffer.slice(..).map_async(wgpu::MapMode::Read, move |result| {
+        let _ = tx.send(result);
+    });
+    gpu.device.poll(wgpu::PollType::wait_indefinitely()).ok()?;
+    rx.recv().ok()?.ok()?;
+    let data = buffer.slice(..).get_mapped_range().ok()?;
+    let mut out = Vec::with_capacity((row_bytes as usize).saturating_mul(height as usize));
+    for row in data.chunks(padded as usize).take(height as usize) {
+        let Some(texels) = row.get(..row_bytes as usize) else {
+            drop(data);
+            buffer.unmap();
+            return None;
+        };
+        out.extend_from_slice(texels);
+    }
+    drop(data);
+    buffer.unmap();
+    Some(out)
 }
 
 fn texture_bind_group(

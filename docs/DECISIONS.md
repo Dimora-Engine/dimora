@@ -435,8 +435,9 @@ detail and the proposed boundaries are in [ARCHITECTURE.md](ARCHITECTURE.md#prop
 * **Options.** Rasteriser (`fontdue`, `ab_glyph`) with a glyph atlas; a fuller text stack
   (`cosmic-text`/`swash`) with shaping; bitmap or signed-distance-field fonts. Scope: Latin first, or
   complex scripts and bidirectional text.
-* **Constraint found in the code.** Textures re-upload whole on any change (KI-25), so a glyph atlas
-  needs the sub-rectangle update planned in M5.
+* **Constraint found in the code.** M5-3B can upload a proved rectangle and then rebuilds the whole mip
+  chain. A glyph atlas still needs the M5 packer, which is not implemented. History older than eight
+  region transitions uploads the whole base level.
 * **Needed by.** M10 (before text work). **Blocks.** M10 text, localisation later.
 
 ### D-38 UI rendering integration and world-space UI

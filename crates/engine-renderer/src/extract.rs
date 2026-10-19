@@ -10,7 +10,7 @@ use crate::components::{
 };
 use crate::frustum::Frustum;
 use crate::interpolate::{render_poses, RenderPoses};
-use crate::missing::{resolve, MissingAssetWarnings};
+use crate::missing::{report_absent_texture, resolve, MissingAssetWarnings};
 use crate::scene::*;
 
 /// Snapshots the world into a [`RenderScene`] for the active camera. `target_size` is the render
@@ -54,6 +54,15 @@ pub fn extract_scene(world: &World, assets: &AssetManager, target_size: Vec2) ->
         let Some(asset) = resolve(world, assets, sprite.asset, "sprite", &mut watch, &mut stats) else {
             continue;
         };
+        report_absent_texture(
+            world,
+            assets,
+            asset.texture,
+            "sprite texture",
+            assets.name_of(sprite.asset).map(|name| ("sprite", name)),
+            &mut watch,
+            &mut stats,
+        );
         let size = sprite.size.unwrap_or_else(|| asset.world_size());
         let anchor = sprite.anchor.unwrap_or(asset.pivot);
         let placement = sprite_placement(&poses.matrix(entity, global), sprite.orientation, &view);
@@ -98,6 +107,17 @@ pub fn extract_scene(world: &World, assets: &AssetManager, target_size: Vec2) ->
         let Some(data) = resolve(world, assets, mesh.asset, "mesh", &mut watch, &mut stats) else {
             continue;
         };
+        if let Some(texture) = mesh.material.base_texture {
+            report_absent_texture(
+                world,
+                assets,
+                texture,
+                "mesh texture",
+                assets.name_of(mesh.asset).map(|name| ("mesh", name)),
+                &mut watch,
+                &mut stats,
+            );
+        }
         let (center, radius) = data.bounding_sphere();
         let m = poses.matrix(entity, global);
         let max_scale = m.cols[0].xyz().length().max(m.cols[1].xyz().length()).max(m.cols[2].xyz().length());

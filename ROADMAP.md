@@ -82,8 +82,10 @@ first" tiers in [docs/DECISIONS.md](docs/DECISIONS.md#what-to-resolve-first).
 * **Now: M5, materials and textures.** Decisions are recorded (ADR-0015, ADR-0016, ADR-0017). M5-2A,
   the CPU texture descriptors, is committed locally as `c687d5b` and is not pushed. M5-2B, GPU formats
   and the sampler cache, is commit `11b914f` and is not pushed. M5-2C, GPU mip generation, is
-  commit `622ef80` and is not pushed. M5-3A records CPU texture region updates in the working tree
-  and is not committed. The GPU still uploads whole textures. The milestone is in progress and is not complete.
+  commit `622ef80` and is not pushed. M5-3A, bounded CPU region transitions, is commit `b51f1fb` and
+  is not pushed. M5-3B, GPU rectangle uploads and whole-chain mip rebuilds, is in the working tree and
+  is not committed. Localized mip regeneration and the atlas packer have not started. The milestone is
+  in progress and is not complete.
 * **M6 stays after M5.** The camera-configuration prototype is verified. The rest of M6 is not started.
   M7 and M8 can proceed in parallel after M3a, M4, M5, and M6 as stated below. M9 freezes the foundational
   gameplay, scene, and component-integration contracts. Later milestones may add public APIs through a
@@ -483,7 +485,9 @@ updates, and atlas mip limits are
 anisotropy fallback, `write_texture` alignment, split texture and sampler caches, and the provisional
 atlas estimate. M5-2A stores the CPU descriptors (`c687d5b`). M5-2B (`11b914f`) connects those
 descriptors to the wgpu renderer. M5-2C (`622ef80`) generates mip chains for `Mipmaps::Generate`.
-M5-3A records CPU region updates, validation, and dirty rectangles. It does not upload a sub-rectangle.
+M5-3A (`b51f1fb`) records CPU region updates, validation, and a bounded transition journal. M5-3B,
+in the working tree and not committed, uploads a proved rectangle and regenerates the whole allocated
+mip chain. It does not pack an atlas and does not regenerate only the affected mip texels.
 
 **Acceptance criteria.**
 - GPU test: a minified high-frequency texture approaches its mean colour with mipmaps, and aliases
