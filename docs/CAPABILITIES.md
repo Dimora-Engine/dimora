@@ -387,12 +387,15 @@ Missing from the original category list and now tracked: **save games** (34), **
   device cannot store that chain, in which case the base level is kept and the fallback is logged once.
   A mip filter does not allocate levels. Samplers are cached by the effective descriptor, including the LOD
   clamp. Pixel bytes are re-uploaded, and a chain is rebuilt, when the image storage changes, not when
-  only the sampler changes (KI-6, KI-25 for partial updates, which are not implemented).
-* **Required.** The rest of ADR-0017: sub-region updates that follow the operation they
-  call (`write_texture` keeps a tight row stride), and a texel shelf packer. The padding-to-mip formula is a
-  provisional estimate until the atlas GPU tests exist. Wrap, separate filters, anisotropy normalization,
-  per-texture colour space, the split GPU image and sampler caches, and mip generation are implemented
-  (M5-2B is `11b914f`; M5-2C is implemented in this checkpoint). **Depends on.** ADR-0016.
+  only the sampler changes. `Texture::update_region` replaces a CPU rectangle and records it.
+  The GPU still uploads the whole base level (KI-6, KI-25). GPU partial uploads are not implemented.
+* **Required.** The rest of ADR-0017: a GPU sub-region upload that follows the operation it
+  calls (`write_texture` keeps a tight row stride), mip regions rebuilt from the CPU record, and a texel
+  shelf packer. The padding-to-mip formula is a provisional estimate until the atlas GPU tests exist.
+  Wrap, separate filters, anisotropy normalization, per-texture colour space, the split GPU image and
+  sampler caches, and mip generation are implemented (M5-2B is `11b914f`; M5-2C is `622ef80`). The CPU
+  region update, its validation, and the dirty-rectangle record are M5-3A and are not a GPU upload.
+  **Depends on.** ADR-0016.
   D-06 (snapping) stays M6.
 * **Integration.** The glyph atlas (M10), sheets (M8), normal maps (M14), render targets (M6).
 * **Tests/examples.** GPU tests in M5's acceptance list.
@@ -433,10 +436,12 @@ Missing from the original category list and now tracked: **save games** (34), **
 * **Now.** GPU texture and mesh caches keyed by asset id and revision; evicted when the asset is removed
   or idle for N frames (default 120) with counts exposed (`CacheStats`); instance buffers grow and never
   shrink; surface loss and resize handled; frame stats. **No performance measurements on real hardware**;
-  device limits are not queried (e.g. max texture size, instance buffer limits); no GPU timing.
+  device limits are not queried at upload time (e.g. max texture size, instance buffer limits).
+  `validate_texture_dimensions` can reject a size against injected limits and is not called before
+  GPU texture creation yet. No GPU timing.
 * **Planned.** Baseline and `docs/PERFORMANCE.md` (M6). **Depends on.** D-07, D-08.
 * **Tests/examples.** Cache-count tests exist; benchmark binary (M6).
-* **Unresolved.** Device-limit policy; device-lost recovery (not implemented).
+* **Unresolved.** GPU texture creation does not call `validate_texture_dimensions` yet. Device-lost recovery is not implemented.
 
 ---
 

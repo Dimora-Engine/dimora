@@ -58,6 +58,97 @@ pub(crate) fn mip_extent(width: u32, height: u32, level: u32) -> (u32, u32) {
     ((width >> level).max(1), (height >> level).max(1))
 }
 
+/// Destination texels whose linear footprint intersects `region` of the previous level.
+///
+/// This is the blit in `mip.wgsl`: destination pixel `(x, y)` samples
+/// `((x + 0.5) / dest_width, (y + 0.5) / dest_height)`. The texel coordinate is
+/// `u * src_size - 0.5`. A linear sample reads `floor(p)` and, when the fraction is not zero,
+/// `floor(p) + 1`, then clamps both to the source. It is not "half the rectangle" and it is not a
+/// guarantee that every source texel lands in some destination. A 5-wide level sampled down to 2
+/// leaves the middle texel out of both footprints.
+///
+/// `None` means this level does not change, so later levels do not change either. The rectangle is
+/// the tight bounds of the affected destination pixels. Hardware can disagree by about a texel at
+/// odd edges; a later upload may expand by one destination texel or rebuild the level. Rebuilding
+/// the whole chain remains a correct fallback. This function does not render.
+#[cfg_attr(not(test), expect(dead_code))]
+pub(crate) fn affected_mip_rect(
+    src_width: u32,
+    src_height: u32,
+    dest_width: u32,
+    dest_height: u32,
+    region: engine_assets::TexelRect,
+) -> Option<engine_assets::TexelRect> {
+    if src_width == 0
+        || src_height == 0
+        || dest_width == 0
+        || dest_height == 0
+        || region.width == 0
+        || region.height == 0
+    {
+        return None;
+    }
+    let x = covered_dest(src_width, dest_width, region.x, region.width)?;
+    let y = covered_dest(src_height, dest_height, region.y, region.height)?;
+    Some(engine_assets::TexelRect { x: x.0, y: y.0, width: x.1, height: y.1 })
+}
+
+/// Affected rectangles for levels `1..level_count`, chained from the base `region`.
+///
+/// A level that the footprint misses ends the chain. Entries after that are `None`.
+#[cfg_attr(not(test), expect(dead_code))]
+pub(crate) fn affected_mip_chain(
+    base_width: u32,
+    base_height: u32,
+    level_count: u32,
+    region: engine_assets::TexelRect,
+) -> Vec<Option<engine_assets::TexelRect>> {
+    let mut out = Vec::new();
+    let mut source = Some(region);
+    let mut src_w = base_width;
+    let mut src_h = base_height;
+    for level in 1..level_count {
+        let (dest_w, dest_h) = mip_extent(base_width, base_height, level);
+        let next = source.and_then(|rect| affected_mip_rect(src_w, src_h, dest_w, dest_h, rect));
+        out.push(next);
+        source = next;
+        src_w = dest_w;
+        src_h = dest_h;
+    }
+    out
+}
+
+#[cfg_attr(not(test), expect(dead_code))]
+fn covered_dest(src_size: u32, dest_size: u32, origin: u32, length: u32) -> Option<(u32, u32)> {
+    let mut min_d = None;
+    let mut max_d = 0u32;
+    for dest in 0..dest_size {
+        let (lo, hi) = footprint(sample_p(dest, src_size, dest_size), src_size);
+        if lo < origin.saturating_add(length) && hi >= origin {
+            min_d = Some(min_d.unwrap_or(dest).min(dest));
+            max_d = dest;
+        }
+    }
+    let min_d = min_d?;
+    Some((min_d, max_d - min_d + 1))
+}
+
+#[cfg_attr(not(test), expect(dead_code))]
+fn sample_p(dest: u32, src_size: u32, dest_size: u32) -> f64 {
+    (f64::from(dest) + 0.5) * (f64::from(src_size) / f64::from(dest_size)) - 0.5
+}
+
+#[cfg_attr(not(test), expect(dead_code))]
+fn footprint(p: f64, src_size: u32) -> (u32, u32) {
+    let max_i = i64::from(src_size - 1);
+    let t0 = p.floor() as i64;
+    let t1 = if p - p.floor() > 0.0 { t0 + 1 } else { t0 };
+    let clamp = |t: i64| t.clamp(0, max_i) as u32;
+    let a = clamp(t0);
+    let b = clamp(t1);
+    (a.min(b), a.max(b))
+}
+
 /// One blit pipeline per texture format, plus one linear clamp sampler reused for every asset.
 pub(crate) struct MipGenerator {
     layout: wgpu::BindGroupLayout,
@@ -259,6 +350,44 @@ mod tests {
         assert_eq!(mip_extent(5, 3, 1), (2, 1));
         assert_eq!(mip_extent(5, 3, 2), (1, 1));
         assert_eq!(mip_extent(1, 8, 3), (1, 1));
+    }
+
+    fn texel(x: u32, y: u32, width: u32, height: u32) -> engine_assets::TexelRect {
+        engine_assets::TexelRect { x, y, width, height }
+    }
+
+    #[test]
+    fn a_power_of_two_footprint_is_the_pair_that_covers_the_source_texel() {
+        let left = affected_mip_rect(4, 4, 2, 2, texel(0, 0, 2, 1)).unwrap();
+        assert_eq!(left, texel(0, 0, 1, 1));
+        let both = affected_mip_rect(4, 4, 2, 2, texel(1, 0, 2, 1)).unwrap();
+        assert_eq!(both, texel(0, 0, 2, 1));
+        let edge = affected_mip_rect(8, 1, 4, 1, texel(3, 0, 2, 1)).unwrap();
+        assert_eq!(edge, texel(1, 0, 2, 1));
+    }
+
+    #[test]
+    fn an_odd_width_can_leave_the_middle_texel_out_of_every_footprint() {
+        assert_eq!(affected_mip_rect(5, 1, 2, 1, texel(2, 0, 1, 1)), None);
+        assert_eq!(affected_mip_rect(5, 1, 2, 1, texel(1, 0, 1, 1)), Some(texel(0, 0, 1, 1)));
+        assert_eq!(affected_mip_rect(5, 1, 2, 1, texel(4, 0, 1, 1)), Some(texel(1, 0, 1, 1)));
+        assert_eq!(affected_mip_rect(3, 1, 2, 1, texel(2, 0, 1, 1)), Some(texel(1, 0, 1, 1)));
+    }
+
+    #[test]
+    fn narrow_and_final_levels_follow_the_same_footprint() {
+        assert_eq!(affected_mip_rect(1, 16, 1, 8, texel(0, 0, 1, 1)), Some(texel(0, 0, 1, 1)));
+        assert_eq!(affected_mip_rect(1, 16, 1, 8, texel(0, 15, 1, 1)), Some(texel(0, 7, 1, 1)));
+        assert_eq!(affected_mip_rect(2, 2, 1, 1, texel(0, 1, 1, 1)), Some(texel(0, 0, 1, 1)));
+        assert_eq!(affected_mip_rect(2, 2, 1, 1, texel(1, 0, 1, 1)), Some(texel(0, 0, 1, 1)));
+    }
+
+    #[test]
+    fn the_chain_stops_when_a_level_does_not_sample_the_region() {
+        let chain = affected_mip_chain(8, 8, 4, texel(0, 0, 2, 2));
+        assert_eq!(chain, vec![Some(texel(0, 0, 1, 1)), Some(texel(0, 0, 1, 1)), Some(texel(0, 0, 1, 1))]);
+        let skipped = affected_mip_chain(5, 1, 3, texel(2, 0, 1, 1));
+        assert_eq!(skipped, vec![None, None]);
     }
 
     fn gpu_or_skip() -> Option<GpuContext> {

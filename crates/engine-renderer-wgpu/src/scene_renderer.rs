@@ -719,7 +719,8 @@ impl SceneRenderer {
     ///
     /// An unchanged asset revision does no work and does not hash pixels. A new revision is
     /// inspected: matching dimensions, format, mip allocation, and pixel fingerprint keep the
-    /// image. A pixel change rewrites the base level and, when a chain is allocated, rebuilds it.
+    /// image. A pixel change rewrites the whole base level and, when a chain is allocated, rebuilds
+    /// it. A CPU region update is still that whole-base rewrite. Partial uploads are not implemented.
     /// A sampler change only rebuilds the bind group and, when the sampled level range changes, the
     /// view. Storage that no longer matches is replaced. Missing assets get no entry; sprite draws
     /// then use the magenta placeholder.
@@ -1129,12 +1130,7 @@ fn wgpu_address(mode: AddressMode) -> wgpu::AddressMode {
 }
 
 fn pixel_fingerprint(rgba: &[u8]) -> u64 {
-    let mut hash = 0xcbf29ce484222325u64;
-    for &byte in rgba {
-        hash ^= u64::from(byte);
-        hash = hash.wrapping_mul(0x100000001b3);
-    }
-    hash ^ (rgba.len() as u64)
+    engine_assets::rgba_fingerprint(rgba)
 }
 
 #[cfg(test)]

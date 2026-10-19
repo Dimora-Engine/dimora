@@ -33,8 +33,9 @@ commit `2b79806` and is not pushed. Evidence is under "M4 Phase 1 results", "M4 
 
 **M5 is in progress and is not complete.** M5-1 records ADR-0015, ADR-0016, and ADR-0017. M5-2A, the
 CPU texture descriptors, is committed locally as `c687d5b` and is not pushed. M5-2B, GPU formats and
-the sampler cache, is commit `11b914f` and is not pushed. M5-2C, GPU mip generation, is implemented
-in this checkpoint and is not pushed. M5-3 has not started. M6's camera-configuration prototype remains the only verified M6 work.
+the sampler cache, is commit `11b914f` and is not pushed. M5-2C, GPU mip generation, is commit
+`622ef80` and is not pushed. M5-3A, CPU texture region updates, is in the working tree and is not
+committed. The GPU still uploads whole textures. M6's camera-configuration prototype remains the only verified M6 work.
 The manual window note under M4-4E and M4-5 is unchanged: the framebuffer and the keyboard were not observed.
 
 ## Completed work
@@ -854,7 +855,7 @@ Documentation checkpoint. Committed locally and not pushed. No renderer, texture
 
 ## M5-2 specification
 
-M5-2A is committed locally as `c687d5b` and is not pushed. M5-2B is commit `11b914f` and is not pushed. M5-2C is implemented in this checkpoint and is not pushed. M5-3 has not started.
+M5-2A is committed locally as `c687d5b` and is not pushed. M5-2B is commit `11b914f` and is not pushed. M5-2C is commit `622ef80` and is not pushed. M5-3A is in the working tree and is not committed. GPU partial uploads have not started.
 
 Texture parameters and mipmaps only. No `MaterialAsset`, no atlas packer, no sub-rectangle upload, no blended meshes, no shader rewrite beyond what a colour-space or mip sample requires. Defaults must keep the four screenshots against `6dbabb8` byte-identical unless a separately reviewed correctness issue requires a change.
 
@@ -967,7 +968,7 @@ Implemented in this checkpoint. Not pushed.
 
 ## M5-2C results (2026-10-19)
 
-Implemented in this checkpoint. Not pushed. M5-2B is commit `11b914f`.
+Commit `622ef80`. Not pushed. M5-2B is commit `11b914f`.
 
 **Allocation.** `Mipmaps::None` is one level and is not blitted. `Mipmaps::Generate` is `floor(log2(max(width, height))) + 1`, including 1×1 (one level), power-of-two, non-power-of-two, non-square, 1×N, and N×1. The count is `Mipmaps::level_count`. A mip filter does not change it.
 
@@ -982,6 +983,24 @@ Implemented in this checkpoint. Not pushed. M5-2B is commit `11b914f`.
 **Repository check.** `scripts/check.sh` on 2026-10-19, macOS 27.0 arm64, `rustc 1.99.0`, exit 0. All 4 steps passed: `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` with `DIMORA_REQUIRE_GPU=1` (**413 passed, 0 failed, 0 ignored**, 41 suites), `cargo doc --workspace --no-deps` with `-D warnings`. `headless.rs` ran 32 tests. `spatial_scene` `configurations.rs` ran 16, `switching.rs` 12, `prefab.rs` 5. The passing-test log hides adapter lines. A direct GPU run printed Apple M5, Metal, `IntegratedGpu`, with both `ANISOTROPIC_FILTERING` and `NON_POWER_OF_TWO_MIPMAPPED_TEXTURES` present.
 
 **Screenshots.** Release 1280×720 images rendered on 2026-10-19 from this tree and from `6dbabb8`, compared with `cmp -s`. All four matched. Baselines were not replaced. `basic_2_5d` 746071 bytes, SHA-256 `c3c5874adeea119c98255c6c1d08208c0244224d930d86e8736c280ef88b38fe`. `basic_2_5d --ortho` 462130 bytes, `f2aedc0c4a65e13a33187f391d2a778d073b3befbf1ce207bc6484d961ac980f`. `spatial_scene --camera perspective` 136991 bytes, `ec5f6252a88f642b454ae768f9eec8cdd5fba88a5aeb7a424fcefe5fda12275e`. `spatial_scene --camera orthographic` 34046 bytes, `3551d84fe2ec1c14fc0729c7a86e2031c068285a6551597ee32d100f76805cde`.
+
+## M5-3A results (2026-10-19)
+
+In the working tree. Not committed. M5-2C is commit `622ef80`. GPU partial uploads are not implemented. M5-3B has not started.
+
+**API.** `Texture::update_region(x, y, width, height, rgba)` writes one tightly packed RGBA8 rectangle into the existing buffer. Source rows are `width * 4` bytes. Destination rows stay `width_of_texture * 4` apart. Dimensions, colour space, sampler, mip preference, and asset id stay. Bytes are not converted between sRGB and linear. `AssetManager` is unchanged: the game clones the texture, edits the clone, and `insert`s it under the same name. That bumps the revision.
+
+**Validation.** `TextureRegionError` is returned before any write. Zero width, zero height, either edge past the texture, `u32` coordinate overflow, byte-length overflow, too few bytes, too many bytes, and a buffer shorter than the claimed dimensions are rejected. Pixels and `Texture::pixel_edits` stay as they were. The error does not store an asset name. `AssetManager::name_of` is how a caller adds one. `AssetHandle` still stores only the name hash.
+
+**Dirty regions.** `TexturePixelEdits::Clean` is a texture with no successful region update, including a whole-texture replace. `Journal` stores at most 8 transitions, oldest first. Each transition is the fingerprint before that update, the fingerprint after it, and the rectangle. A ninth transition drops the oldest and keeps the newest eight. Sampler, colour-space, and mip-preference changes do not mark pixels dirty. Writing `rgba` directly does not update the record. `base_upload` returns `Unchanged` when the current fingerprint matches the cached GPU image. It returns `Partial` for the newest contiguous chain from that GPU fingerprint to the current bytes, including a later frame whose GPU image is a middle entry. It returns `Full` when the GPU image is older than the retained window, the value is a whole-texture replace, or the bytes were written outside `update_region`. Several edits before the next `insert` stay on that one value. The renderer does not see intermediate revisions it was never given.
+
+**Mips.** A successful region update reports `generated_mips_may_be_stale`. No mip is built on the CPU. `affected_mip_rect` names destination texels from the `mip.wgsl` linear footprint, including odd sizes where a middle texel can miss every destination. A miss ends the chain. M5-3B may expand by one texel or rebuild the level. A full chain rebuild is a correct fallback and is not a partial mip update.
+
+**Not in this checkpoint.** `Queue::write_texture` for a sub-rectangle, GPU mip regeneration, device-limit checks before `create_texture`, and a new missing-texture log. `validate_texture_dimensions` is CPU-only and takes injected limits. Extraction already logs a missing renderable once per id and includes `name_of` when an entry exists. A sprite texture miss inside a present sprite, and a mesh `base_texture` miss, still draw the existing placeholder (magenta for sprites, white for meshes) and are not separately logged. The handle cannot recover a name that was never stored. Do not invent one.
+
+**Repository check.** `scripts/check.sh` on 2026-10-19, macOS 27.0 arm64, `rustc 1.99.0`, exit 0, after the transition journal. All 4 steps passed: `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` with `DIMORA_REQUIRE_GPU=1` (**438 passed, 0 failed, 0 ignored**, 41 suites), `cargo doc --workspace --no-deps` with `-D warnings`. `headless.rs` ran 32 tests. `spatial_scene` `configurations.rs` ran 16, `switching.rs` 12, `prefab.rs` 5. The passing-test log hides adapter lines. GPU tests passed with `DIMORA_REQUIRE_GPU=1`. GPU partial uploads are not in this commit.
+
+**Screenshots.** GPU sampling and the upload path are unchanged, so the four release screenshots were not regenerated for M5-3A. The M5-2C comparison against `6dbabb8` remains the baseline.
 
 ## Planned systems and their state
 
@@ -1000,7 +1019,7 @@ in the current scope.
 
 ## Not in scope now
 
-M5-2A, CPU texture descriptors, is committed locally as `c687d5b` and is not pushed. M5-2B is commit `11b914f` and is not pushed. M5-2C is implemented in this checkpoint and is not pushed. M5 is not complete. M5-3 has not started. M6's remaining tasks, and everything after M5, are not in progress. In particular: no scene format, no prefab assets, no new rendering features in this change, no collision, no
+M5-2A, CPU texture descriptors, is committed locally as `c687d5b` and is not pushed. M5-2B is commit `11b914f` and is not pushed. M5-2C is commit `622ef80` and is not pushed. M5-3A, CPU region updates, is in the working tree and is not committed. M5 is not complete. GPU partial uploads, the atlas packer, and M5-3B have not started. M6's remaining tasks, and everything after M5, are not in progress. In particular: no scene format, no prefab assets, no new rendering features in this change, no collision, no
 editor work, and no work on UI, scripting or any of the three character representations. M4 Phase 1 is commit `cdb5ec3`. Phase 2 is commit `2c76f71`. Phase 3 is commit `f9a4aab`. M4-4A is commit `302622b`. M4-4B is commit `128c70e`. M4-4C is commit `e12fb5b`. M4-4D is commit `8398e49`. M4-4E is commit `d58c66b`. M4-5 is commit `2b79806`. None of M4 is pushed. M4 is complete locally. M3b is complete locally and is not pushed. These systems are deliberately
 not being started together: each has its own milestone, prerequisites and decisions. Decisions that data
 formats or public APIs will bake in are made before their first consumer (see

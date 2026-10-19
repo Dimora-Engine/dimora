@@ -1,6 +1,6 @@
 # ADR-0017: Texture colour space, samplers, partial updates, and atlas mip limits
 
-* **Status:** Settled as the M5 contract. M5-2A (`c687d5b`) and M5-2B (`11b914f`) implement the CPU descriptors, GPU formats, and sampler cache. M5-2C generates mip chains on the GPU. The atlas packer and partial updates are not implemented. M5-3 has not started.
+* **Status:** Settled as the M5 contract. M5-2A (`c687d5b`) and M5-2B (`11b914f`) implement the CPU descriptors, GPU formats, and sampler cache. M5-2C (`622ef80`) generates mip chains on the GPU. M5-3A records CPU region updates and does not upload them. GPU partial uploads and the atlas packer are not implemented.
 * **Date:** 2026-10-16
 * **Backlog id:** M5 texture tasks (KI-6, KI-25). D-06 stays open for texel snapping.
 * **Decided by:** project owner (M5-1 planning approval, corrected in the M5-1 final review)
@@ -93,18 +93,30 @@ A bind group pairs one texture view with one sampler. Rebuilding it when the sam
 
 Eviction of a texture stays "removed from the manager, or idle for N frames" (D-04, ADR-0002). A sampler stays while a cached image or a placeholder still uses it. Scene unload does not call `remove` (D-16).
 
-**Partial update (later phase, contract now).** Not implemented in M5-1 or M5-2. The transfer uses the alignment of the operation it calls.
+**CPU region update (M5-3A, implemented).** `Texture::update_region(x, y, width, height, rgba)` replaces one texel rectangle. Coordinates are integers. `(0, 0)` is the top-left texel. `rgba` is the rectangle only, four bytes per texel, rows of `width * 4`. Destination rows stay `texture.width * 4` apart. The call does not change dimensions, colour space, sampler, mipmap preference, or asset identity, and it does not convert bytes between sRGB and linear.
 
-`Queue::write_texture` is the upload used today. The caller passes the rectangle's tight texel stride. wgpu aligns the staging copy. The engine does not pad those rows to 256 bytes.
+Validation happens before any write. A failure returns `TextureRegionError` and leaves pixels and the edit record unchanged. Rejected inputs are a zero width, a zero height, a rectangle past either edge, `x + width` or `y + height` overflowing `u32`, a byte length that overflows, fewer bytes than the rectangle, more bytes than the rectangle, and a texture buffer shorter than its own dimensions claim. The error does not contain the asset name. The caller that has an `AssetManager` attaches `name_of`. `AssetHandle` stores the name hash, not the name.
 
-A later path that calls `copy_buffer_to_texture` follows that call's rule: `bytes_per_row` respects `COPY_BYTES_PER_ROW_ALIGNMENT` when the copy is validated as aligned. The screenshot readback already does this for `copy_texture_to_buffer`. That requirement stays on the buffer-copy path.
+**Dirty rectangles (M5-3A, implemented).** The record lives on the `Texture` value, so it survives the clone-and-`insert` path. There is no `AssetManager::get_mut`. A game edits a clone and inserts it under the same name. `insert` still bumps the revision on every replace, including a sampler-only replace and a replace whose pixels match (ADR-0002). A revision change is not itself a full pixel change.
 
-One rectangle, when the later phase exists:
+`TexturePixelEdits::Clean` means this value has had no successful region update. Constructors, PNG decode, `with_sampler`, `with_filter`, `with_color_space`, and `with_mipmaps` stay `Clean`. Assigning the public `rgba` field does not update the record. `Journal` stores at most `MAX_TRACKED_REGIONS` (8) transitions, oldest first. Each transition is the fingerprint before the update, the fingerprint after it, and the rectangle. A ninth transition drops the oldest. The newest eight stay. Passing the cap does not force every later edit to a full upload.
 
-1. CPU storage changes only those pixels.
-2. The base-level transfer covers that rectangle. On `write_texture`, the row stride is the tight texel stride of the rectangle.
-3. Mip levels that the rectangle affects are rebuilt for that region. That work is required. It is separate from uploading the rest of the base image.
-4. Pixels outside the rectangle stay. One rectangle is enough. Merging many dirty rects is not an M5 requirement. The M10 glyph atlas is the consumer.
+`TexturePixelEdits::base_upload` is the rule for the GPU step.
+
+1. No cached GPU image: full base upload.
+2. The current `rgba_fingerprint` equals the cached fingerprint: pixels did not change. Do not upload and do not rebuild mips. This covers a sampler-only replace after the pixels were already uploaded, and it stops a second frame from replaying an update.
+3. The newest contiguous chain whose first fingerprint is the GPU image and whose last fingerprint is the current bytes: upload those rectangles in order from the current bytes. Several edits before the next render are one chain. An edit on the next frame, after the GPU holds the previous fingerprint, is only the new transition. A GPU fingerprint in the middle of the journal selects the suffix. Overlapping and repeated rectangles stay in order. Disjoint rectangles stay separate.
+4. Anything else is a full base upload. That includes a GPU image older than the retained window, a `Clean` value whose bytes differ (a whole-texture replace), a direct `rgba` write, and a chain that does not connect. The renderer does not skip a real pixel change, and it does not clear the CPU record. The `AssetManager` stores an `Arc`, so the renderer cannot edit it.
+
+**GPU partial upload (M5-3B, not implemented).** The renderer still writes the whole base level on a pixel change. M5-3B uploads one base-level rectangle with `Queue::write_texture`: `origin` is `(x, y, 0)` at mip 0, `size` is the rectangle, and the source is tightly packed (`bytes_per_row = 4 * width`, `rows_per_image = height`). `write_texture` does not require 256-byte row alignment. The engine does not pad that source. A later `copy_buffer_to_texture` still respects `COPY_BYTES_PER_ROW_ALIGNMENT` when the copy is validated as aligned. The screenshot readback already pads for `copy_texture_to_buffer`.
+
+Counters for that phase count base-level upload calls, the source bytes submitted to those calls, full uploads and partial uploads separately, mip-chain regeneration calls, and the texel size of each partial mip region. A full mip rebuild is not a partial mip update. The counters are logical sizes, not measured GPU memory bandwidth.
+
+**Mip invalidation (CPU rule now, GPU rebuild later).** A successful region update sets `generated_mips_may_be_stale`. M5-3A does not build mip pixels on the CPU or the GPU. A sampler-only change does not set the flag. `affected_mip_rect` in `engine-renderer-wgpu` names the destination texels whose `mip.wgsl` footprint intersects the dirty source rectangle. Destination pixel `(x, y)` samples `((x + 0.5) / dest_width, (y + 0.5) / dest_height)`. The texel coordinate is `u * src_size - 0.5`. The linear sample reads `floor(p)` and, when the fraction is not zero, the next texel, then clamps. Even sizes land on a 2×2. Odd sizes do not: a 5-wide image reduced to 2 leaves the middle texel in neither footprint, and that level can stay untouched. The next level uses the previous level's affected rectangle, and a miss ends the chain. The rectangle is the tight bounds, not half of every side. Hardware may differ by about one destination texel at an odd edge. M5-3B may expand the rectangle by one texel or rebuild that level. Rebuilding the whole chain is a correct fallback. Untouched mip texels stay. A partial rebuild must match a full rebuild within the tolerance already used for mip readback.
+
+**Device limits (CPU check now, GPU call later).** `validate_texture_dimensions` takes a width, a height, and injected maximums. It rejects the width first when both axes are past the limit. It does not allocate and it does not read a device. M5-3B calls it with `max_texture_dimension_2d` (8192 on wgpu 30.0.1's default limits) before `create_texture`. The error has no asset name. `name_of` supplies the name when an entry exists. When it does not, the log uses the id. A test must not allocate a texture large enough to trip the real device limit.
+
+**Missing textures (current behaviour, naming gap).** Extraction logs a missing renderable once per id, up to 64 ids, and counts every miss in `missing_assets`. The log includes `name_of` when the manager has an entry. It otherwise prints the id. It does not invent a name. A sprite resolves the `SpriteAsset`. A missing texture inside a present sprite is drawn with the magenta placeholder and is not logged today. A tilemap resolves its texture. A mesh resolves the mesh asset. `Material.base_texture == None` draws the white placeholder. A `Some` handle with no GPU image also draws white, and that miss is not logged. Placeholders stay as they are. The smallest later correction is to report the texture id through the same once-per-id log, with `name_of` when it returns `Some`, without changing the placeholder and without storing a second name on `AssetHandle`. There is no atlas asset to miss. The packer is not implemented.
 
 **Atlas and mips (later phase).** Not implemented. Shelf packing is deterministic, in texels, with padding and edge extrusion, no overlap, and UV rectangles inside the atlas. A zero-sized region is an error named with the asset. The packer does not set world size (ADR-0016).
 
@@ -119,7 +131,8 @@ The M5 atlas acceptance tests, when that phase is implemented, establish the sup
 * M5-2 implements the descriptor, formats, mip generation, the split caches, and the GPU tests. It does not implement the packer, partial upload, or blended meshes.
 * M5-2A adds the CPU types, the backward-compatible constructors, CPU validation, and unit tests. It does not generate mipmaps.
 * M5-2B (`11b914f`) selects `Rgba8UnormSrgb` or `Rgba8Unorm` from `ColorSpace`, translates `SamplerDesc` into the wgpu sampler, and caches samplers separately from image storage. Its one-level LOD range is `0..32`.
-* M5-2C generates the `Mipmaps::Generate` chain with the private blit above. Partial uploads and the atlas packer have not started.
+* M5-2C (`622ef80`) generates the `Mipmaps::Generate` chain with the private blit above.
+* M5-3A adds `Texture::update_region`, the dirty-rectangle record, `base_upload`, and `validate_texture_dimensions`. It does not upload a rectangle, regenerate a mip on the GPU, or pack an atlas. M5 stays in progress.
 * M5-2 preserves the constructors, defaults, handles, and sprite and mesh rendering listed above. The four screenshots against `6dbabb8` stay byte-identical unless a separately reviewed correctness issue requires a change.
 * M14 is the first consumer of `ColorSpace::Linear` for normals. The slot exists only as storage until then (ADR-0015).
 * D-06 remains open.

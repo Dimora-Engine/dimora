@@ -27,5 +27,7 @@ pub use mesh::{MeshData, Vertex};
 pub use source::{AssetSource, FileSystemSource, MemorySource};
 pub use sprite::SpriteAsset;
 pub use texture::{
-    AddressMode, ColorSpace, MipFilter, Mipmaps, SamplerConfigError, SamplerDesc, Texture, TextureFilter,
+    rgba_fingerprint, validate_texture_dimensions, AddressMode, BaseLevelUpload, ColorSpace, MipFilter, Mipmaps,
+    SamplerConfigError, SamplerDesc, TexelRect, Texture, TextureDimensionError, TextureDimensionLimits, TextureEdit,
+    TextureFilter, TexturePixelEdits, TextureRegionError, MAX_TRACKED_REGIONS,
 };
