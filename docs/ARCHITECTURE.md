@@ -316,9 +316,10 @@ here are binding on milestone designs; open choices point to a decision in [DECI
 `view_proj`; one `Depth32Float` buffer; GPU tests show a nearer mesh occluding a sprite and the reverse
 (`nearer_mesh_occludes_sprite_and_farther_mesh_does_not`), blended sprites interleaving with meshes
 (`blended_sprites_interleave_with_meshes_by_depth`), and `sprites_and_meshes_share_one_spatial_world`.
+Blended meshes and blended sprites share `RenderScene.transparent` and one GPU submission order.
 *Requirement:* any new renderable (tile, particle, skinned mesh, world-UI quad) enters through the same
 transform, camera and depth contract and declares one **transparency class**: opaque, cutout, or blended.
-*Gap:* the class is encoded in the `RenderScene` shape rather than as data, see R-1.
+*Gap:* particles and skinned characters are not in that sequence yet. See R-1.
 
 **2. Depth, transparency, render layers and occlusion.** The rule to preserve: *depth decides
 visibility; a transparency class decides the pass; sort keys exist only for blended content.* Opaque
@@ -329,8 +330,8 @@ render order; an arbitrary sort value never replaces spatial depth, deliberate o
 separate supported override whose mechanism is not yet chosen (D-48), and room is left for sort or occlusion
 policies for isometric styles without building an occlusion framework now. Shadows, particles and
 skinned meshes must pick a class and may not introduce a second ordering concept. Screen-space UI is
-outside this model (painter's order, no depth). Open: blended meshes and intersecting blended quads
-(D-05, KI-14).
+outside this model (painter's order, no depth). Blended meshes use the bounding-sphere centre.
+Intersecting blended objects stay an accepted limit (D-05, KI-14), not a second ordering policy.
 
 **3. Character animation, attachment and world transforms.** Bones and sockets are entities in the
 world, so an attached sword or particle emitter is an ordinary child and follows `propagate_transforms`.
@@ -431,7 +432,7 @@ systems they touch. Each cites evidence from this audit.
 
 | Id | Risk | Evidence | Cost if found late | Response |
 |---|---|---|---|---|
-| R-1 | **`RenderScene` is partitioned by primitive type** (meshes, cutout sprites, blended sprites), not by transparency class. A blended mesh, particle or skinned character has no place to sort against blended sprites | `scene.rs`; the pass order in `scene_renderer.rs`; meshes have no blend mode | Moderate to high: extraction, backend passes and tests for all renderables | D-05 is settled in ADR-0015 and is not implemented. The code split remains until the M5 material phase |
+| R-1 | **Later transparent primitives still need the shared sequence.** Blended sprites and blended meshes sort and submit together. Particles and skinned characters are not in that list yet. Opaque and mask content stays in the depth-writing passes | `scene.rs` `transparent`; the walk in `scene_renderer.rs` | Moderate for the next transparent primitive if it grows a private list | D-05 is implemented for sprites and meshes (ADR-0015, M5-5C working tree). A new blended primitive joins `transparent` instead of a second order |
 | R-2 | **One camera, one target per frame**; `RenderScene` holds a single view | `extract.rs::active_camera`; KI-5 | High: shadows, editor viewports, render-to-texture and minimaps need a list of views | D-08 in M6 turns the scene into a list of camera passes; do not add features that assume one view |
 | R-3 | **No transform timeline beyond one previous local.** `Transform` is current simulation state. `Interpolate` stores one previous local for opt-in extract interpolation. There is still no dirty tracking, propagation is still a full pass, and camera-dependent animation still has a one-frame latency rule | `interpolate.rs`, `hierarchy.rs`; KI-9, KI-10, D-02 | Moderate if a later system starts reading the render matrix as simulation | M3a-5 stores the previous local and blends only at extract. Dirty tracking stays out (ADR-0009) until a profile |
 | R-4 | **Asset identity and retention.** Handles are name hashes with no recoverable name, no reference counting, ids change on rename, and the collision guard is per type | `handle.rs`, `manager.rs`; D-16 | High once scene files, sheets or bundles exist | Decide D-16 before any persisted format (sheet descriptors in M8 are the first); keep names in the manager so handles can be serialized by name or id |
@@ -441,7 +442,7 @@ systems they touch. Each cites evidence from this audit.
 | R-8 | **Threading model.** `World` is `!Sync` (`RefCell` resources), systems are non-`Send` closures, asset data is `Send + Sync`. The simulation is single-threaded; async loading, parallel extraction and scripts cross this line only as `Send` data | `schedule.rs`, `resources.rs`, `Asset` bound | High if parallel systems are wanted later | Settled in ADR-0006. The calling thread owns `World`. M3a's scheduler must not assume parallel systems |
 | R-9 | **Numeric determinism.** `f32` throughout; trigonometry comes from the platform libm and can differ between operating systems, so state hashes for replay may differ across OSes. World size is small enough for `f32` positions today | `engine-math`; M9 replay criterion | Moderate; surfaces as a flaky cross-OS replay test | Policy at M3: replay equality is required on one platform; cross-platform equality is not promised unless simulation avoids platform trig |
 | R-10 | **Animation write path and bone cost.** `animate_system` writes straight onto bone entities; entity-per-bone makes propagation scale with bone count | `clip.rs`; D-33, D-34 | Moderate; contained inside `engine-animation` if the evaluator stays world-free | D-34 first in M11; D-33 by measurement |
-| R-11 | **Material and texture format still incomplete.** The inline `Material` is still what extraction reads. CPU `MaterialAsset` exists in the working tree and is not rendered. Batching is still keyed by texture. Proved region journals upload rectangles (M5-3B, `84d5ab1`). Mip generation and per-texture colour space exist. A CPU shelf packer is commit `bf4d9bb`. GPU atlas samples are commit `1666695` and isolate regions only for the layouts in ADR-0017. Localized mip regeneration does not | `components.rs`, `material.rs`, `scene_renderer.rs`, `atlas.rs`; KI-6, KI-25 | Moderate: normal maps, glyph atlases and shadows depend on the rest | M5, before M8/M10/M14 |
+| R-11 | **Material and texture format still incomplete.** Assigned sprites and meshes read `MaterialAsset`. Unassigned meshes still read the inline `Material`. Batching is not yet keyed by material id. Proved region journals upload rectangles (M5-3B, `84d5ab1`). Mip generation and per-texture colour space exist. A CPU shelf packer is commit `bf4d9bb`. GPU atlas samples are commit `1666695` and isolate regions only for the layouts in ADR-0017. Localized mip regeneration does not. The 1,000-sprite material batch does not | `components.rs`, `material.rs`, `scene_renderer.rs`, `atlas.rs`; KI-6, KI-25 | Moderate: normal maps, glyph atlases and shadows depend on the rest | M5-5D, before M8/M10/M14 |
 | R-12 | **Logical versus physical pixels.** `Viewport` stores physical pixels, logical pixels, and the device scale. Rendering and extraction use physical pixels. UI reference-resolution modes are still open | KI-24 (DPI part done in M3b Phase 3, `9c99edf`); D-39 | Lower for the coordinate split. UI fit modes can still spread if they invent a third size | Device scale is M3b Phase 3. Fit/expand/integer modes stay with D-39 at M10 |
 | R-13 | **Diagnostics are counters, not a profile.** Logging is the `log` crate. `Diagnostics` holds one step of CPU stage times, the frame delta, and the latest render stats. There is no history, no per-system timing, and no GPU timestamp | `logging.rs`, `diagnostics.rs`, `missing.rs`; ADR-0012 | Low for the current call sites. A profiler bolted on later would duplicate them | M3a-4 implemented the records and the resource. M20 may add `tracing` or another profiler. The on-screen overlay stays in M10 |
 | R-14 | **Verification is narrower than it looks.** CI now runs on Windows, macOS and Linux (first run green), but only on software or paravirtual adapters, offscreen; GPU tests skip unless `DIMORA_REQUIRE_GPU=1` (CI sets it). A macOS window was checked for DPI (Phase 3). Phase 4's macOS window check is the one recorded in TASKS.md; Windows and Linux windowed paths are unverified. Performance is unmeasured. Pixel tests use tolerances that held on three rasterisers | TASKS.md "CI results" and "M3b Phase 4 results"; KI-3, KI-24, KI-27 | Rises slowly; regressions on real GPUs or untested windowed paths found by users | Keep CI green and required. Real-GPU timing needs a different runner (ADR-0005 option B) |
@@ -470,7 +471,7 @@ These are settled; revisit only with a concrete problem.
 | Math | Own `f32` crate | Small, deterministic, shaped for `Transform`/`Quat` |
 | Handedness | Left-handed, `+Z` deeper | "Z = 800" means far |
 | Extraction seam | World -> plain `RenderScene` -> backend | Keeps the world GPU-free; enables headless tests and backends |
-| Ordering | Depth buffer for opaque/cutout; sorted blended sprites; `RenderOrder` optional override | Position, not layers, decides visibility |
+| Ordering | Depth buffer for opaque and mask; one sorted list for blended sprites and blended meshes; `RenderOrder` optional inside that list | Position, not layers, decides visibility |
 | Sprite geometry | Unit quad + per-instance matrix; orientation resolved in extraction | One shader path for sprites, tiles, bones |
 | Sprite orientation | `Billboard` (default), `Upright`, `Fixed` | See SPATIAL_RENDERING.md |
 | Hierarchy | `Parent`/`Children` components + `GlobalTransform` system | Bones and attachments are ordinary entities |
@@ -478,7 +479,7 @@ These are settled; revisit only with a concrete problem.
 | Despawn (D-03) | `despawn` removes the whole subtree; `detach_children` keeps children as roots with their world transform | Bones and attachments are owned by their parent, so orphans are never wanted. Cost: a caller who wants children to survive must say so |
 | GPU cache lifetime (D-04) | Evict a cached texture or mesh when its asset is removed, and when unused for N frames (configurable) | Removed assets are freed promptly and off-screen assets are not re-uploaded every frame. Cost: an asset unused for N frames is re-uploaded when it returns |
 | Scene model and registry (D-18) | One world; internal `SceneManager`; `SceneBuilder` without `&mut World`; load publishes only on success; unload lifts non-members and does not remove assets; deferred scene ops use the command queue and store `SceneOpStatus`; `spatial_scene` replaces one environment at the stage flush; a prefab is `fn(&mut World) -> Entity` | ADR-0014. Phase 1 is `cdb5ec3`. Phase 2 is `2c76f71`. Phase 3 is `f9a4aab`. M4-4A is `302622b`. M4-4B is `128c70e`. M4-4C is `e12fb5b`. M4-4D is `8398e49`. M4-4E is `d58c66b`. M4-5 is `2b79806`. Scene files stay in M19. D-16 stays open |
-| Material alpha classes (D-05) | Opaque, Mask, and Blend. Blended sprites and meshes share one sort. A blended mesh uses the camera-space Z of its world-space bounding-sphere centre. `RenderOrder` on blended sprites is unchanged. Coplanar conflicts stay with D-48 | ADR-0015. M5-5A is `e0c29ef`. M5-5B (working tree) draws assigned sprites in all three classes and assigned opaque and mask meshes. Blended meshes and the 1,000-sprite batch are not implemented |
+| Material alpha classes (D-05) | Opaque, Mask, and Blend. Blended sprites and meshes share one sort and one GPU submission list. A blended mesh uses the camera-space Z of its world-space bounding-sphere centre. `RenderOrder` applies to that list only. Coplanar conflicts stay with D-48 | ADR-0015. M5-5A is `e0c29ef`. M5-5B is `3b3cd4a`. M5-5C (working tree) draws blended meshes in the shared sequence. The 1,000-sprite batch is not implemented |
 | Sprite units (D-27) | Per-sprite `pixels_per_unit`, default 16. No global constant. Atlases are in texels | ADR-0016. The field already exists. M5-1 does not change it |
 | Texture sampling (M5) | Per-texture sRGB or linear. GPU image storage and samplers are separate caches. `write_texture` keeps a tight row stride. A CPU shelf packer places RGBA8 images in insertion order. GPU atlas isolation is the measured layouts in ADR-0017, not `floor(log2(padding))` | ADR-0017. M5-2B (`11b914f`) reads `Texture.sampler` and selects the format from `ColorSpace`. M5-2C (`622ef80`) generates `Mipmaps::Generate` in the wgpu backend. M5-3A (`b51f1fb`) records CPU region transitions. M5-3B (`84d5ab1`) uploads proved rectangles and rebuilds the whole allocated chain. M5-4A (`bf4d9bb`) adds `AtlasBuilder`. M5-4B (`1666695`) samples those atlases and adds `Atlas::replace_source`. Localized mip regeneration is not implemented |
 
@@ -498,8 +499,9 @@ criteria. Open decisions stay in [DECISIONS.md](DECISIONS.md).
   M4-5 adds `spawn_lamp` as the code-defined prefab and makes the empty-instance helpers crate-private.
   That change is commit `2b79806` and is not pushed. Serialization stays in M19.
 * **Material-driven rendering** (rest of M5). Sampler parameters, colour space, mip generation, rectangle
-  uploads, and GPU atlas sampling are implemented. CPU `MaterialAsset` is specified and present as data.
-  Pipelines, blended meshes, and material batching are not in the renderer.
+  uploads, and GPU atlas sampling are implemented. Assigned opaque, mask, and blend sprites and meshes
+  draw through the existing renderer. Material-aware batching of 1,000 sprites is not implemented.
+  Localized mip regeneration is not implemented.
 * **A list of camera passes** instead of one `RenderScene` camera, plus render-to-texture (M6).
 * **A collision world** as a resource rebuilt in the fixed stage, with spatial 3D queries (M7).
 * **Sprite-sheet animation** (M8), **a character gameplay layer with an API surface list** (M9), **a UI

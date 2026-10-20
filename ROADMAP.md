@@ -47,8 +47,8 @@ pulled into M5.
 (`c687d5b`, `11b914f`, `622ef80`, `b51f1fb`, `84d5ab1`). M5-4A, the CPU shelf packer, is commit
 `bf4d9bb` and is not pushed. M5-4B, GPU atlas sampling, is commit `1666695` and is not pushed.
 M5-5A, the CPU `MaterialAsset`, is commit `e0c29ef` and is not pushed. M5-5B, material-driven
-rendering, is in the working tree and is not committed. Localized mip regeneration, blended meshes,
-and the 1,000-sprite material batch have not started.
+rendering, is commit `3b3cd4a` and is not pushed. M5-5C, unified blended rendering, is in the working
+tree and is not committed. Localized mip regeneration and the 1,000-sprite material batch have not started.
 
 **Implemented and tested, beyond the 2026-10-13 audit.** Named stages, commands and events, the `log`
 crate and `Diagnostics`, actions and window controls, scene load/unload/replace on the command flush,
@@ -60,9 +60,10 @@ not add a new test run.
 are PNG and synchronous. Materials are an inline colour, one albedo, and a lit flag. Textures are RGBA8
 with per-texture colour space, samplers, optional mip generation, and proved rectangle uploads. A CPU
 shelf packer is commit `bf4d9bb`. GPU atlas samples are commit `1666695`. A CPU `MaterialAsset`
-is commit `e0c29ef`. M5-5B, in the working tree, draws an assigned material on sprites and on opaque
-or mask meshes. Unassigned meshes still use the inline material. Localized mip regeneration, blended
-meshes, and the 1,000-sprite material batch are not done.
+is commit `e0c29ef`. M5-5B (`3b3cd4a`) draws an assigned material on sprites and on opaque
+or mask meshes. M5-5C, in the working tree, draws blended meshes in the same sequence as blended
+sprites. Unassigned meshes still use the inline material. Localized mip regeneration and the
+1,000-sprite material batch are not done.
 
 **Still absent.** Collision, sprite-sheet animation, 3D characters, UI, audio, particles, shadows,
 scripting, serialization, a general importer, bundles, an editor, and packaging. CI exists as a workflow
@@ -95,8 +96,9 @@ first" tiers in [docs/DECISIONS.md](docs/DECISIONS.md#what-to-resolve-first).
   is not pushed. M5-3B, GPU rectangle uploads and whole-chain mip rebuilds, is commit `84d5ab1` and
   is not pushed. M5-4A, the CPU shelf packer, is commit `bf4d9bb` and is not pushed. M5-4B, GPU atlas
   sampling, is commit `1666695` and is not pushed. M5-5A, the CPU `MaterialAsset`, is commit `e0c29ef`
-  and is not pushed. M5-5B, material handles and material-driven rendering, is in the working tree and
-  is not committed. Localized mip regeneration has not started.
+  and is not pushed. M5-5B, material handles and material-driven rendering, is commit `3b3cd4a` and
+  is not pushed. M5-5C, unified blended rendering, is in the working tree and is not committed.
+  Localized mip regeneration has not started. The 1,000-sprite batch has not started.
   The milestone is in progress and is not complete.
 * **M6 stays after M5.** The camera-configuration prototype is verified. The rest of M6 is not started.
   M7 and M8 can proceed in parallel after M3a, M4, M5, and M6 as stated below. M9 freezes the foundational
@@ -489,8 +491,9 @@ filtering are equal first-class choices, and nothing here is specific to pixel a
 - Asset validation, first slice: texture and atlas loads report size beyond device limits, a missing
   texture and a zero-sized region with the asset name (logging from M3a; see "Incremental developer tooling").
 
-**Dependencies.** D-05 ([ADR-0015](docs/adr/0015-material-alpha-classes.md), settled, not implemented;
-blended-mesh depth is the camera-space Z of the world-space bounding-sphere centre), D-27
+**Dependencies.** D-05 ([ADR-0015](docs/adr/0015-material-alpha-classes.md), settled; blended sprites
+and blended meshes share one sequence; blended-mesh depth is the camera-space Z of the world-space
+bounding-sphere centre), D-27
 ([ADR-0016](docs/adr/0016-per-sprite-pixels-per-unit.md)). Texture sampling, colour space, partial
 updates, and atlas mip limits are
 [ADR-0017](docs/adr/0017-texture-sampling-colour-space-and-atlases.md), including the corrected
@@ -500,9 +503,10 @@ descriptors to the wgpu renderer. M5-2C (`622ef80`) generates mip chains for `Mi
 M5-3A (`b51f1fb`) records CPU region updates, validation, and a bounded transition journal. M5-3B
 (`84d5ab1`) uploads a proved rectangle and regenerates the whole allocated mip chain. It does not
 regenerate only the affected mip texels. M5-4A (`bf4d9bb`) packs images on the CPU. M5-4B (`1666695`) samples those atlases on the GPU.
-M5-5A (`e0c29ef`) adds the CPU `MaterialAsset` and `AlphaMode`. M5-5B, in the working tree, binds a
+M5-5A (`e0c29ef`) adds the CPU `MaterialAsset` and `AlphaMode`. M5-5B (`3b3cd4a`) binds a
 handle on sprites and meshes and draws opaque, mask, and blended sprites plus opaque and mask meshes.
-It does not draw blended meshes or satisfy the 1,000-sprite batch.
+M5-5C, in the working tree, draws blended meshes in that same sequence. It does not satisfy the
+1,000-sprite batch.
 
 **Acceptance criteria.**
 - GPU test: a minified high-frequency texture approaches its mean colour with mipmaps, and aliases

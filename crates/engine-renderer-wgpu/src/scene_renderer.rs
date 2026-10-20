@@ -6,7 +6,7 @@ use engine_assets::{
     MeshData, MipFilter, SamplerDesc, TexelRect, Texture, TextureDimensionLimits, TextureEdit, TextureFilter,
     TexturePixelEdits,
 };
-use engine_renderer::{MeshDraw, RenderScene, SpriteLayer, SpritePipelineKind};
+use engine_renderer::{MeshDraw, RenderScene, SpriteLayer, SpritePipelineKind, TransparentBatch};
 use wgpu::util::DeviceExt;
 
 use crate::mip::{self, MipGenerator};
@@ -192,9 +192,10 @@ impl InstanceBuffer {
 
 /// Draws [`RenderScene`]s into any texture view of a given color format.
 ///
-/// Pass order in one render pass: opaque meshes, cutout sprites/tiles (both write depth), then
-/// alpha-blended sprites back-to-front (depth-tested, no depth write). Real depth testing is what
-/// lets sprites and 3D geometry interleave correctly.
+/// Pass order in one render pass: depth-writing meshes, opaque sprites, mask sprites, then
+/// cutout sprites and tiles. Blended sprites and blended meshes follow in one back-to-front
+/// sequence. A pipeline change does not pull one primitive ahead of the other. Depth testing is
+/// what lets opaque and mask geometry occlude a later blend.
 pub struct SceneRenderer {
     format: wgpu::TextureFormat,
     globals: wgpu::Buffer,
@@ -225,6 +226,8 @@ pub struct SceneRenderer {
     mesh_solid_double: wgpu::RenderPipeline,
     mesh_mask: wgpu::RenderPipeline,
     mesh_mask_double: wgpu::RenderPipeline,
+    mesh_blend: wgpu::RenderPipeline,
+    mesh_blend_double: wgpu::RenderPipeline,
     textures: HashMap<AssetId, GpuTexture>,
     white: GpuTexture,
     missing: GpuTexture,
@@ -234,6 +237,7 @@ pub struct SceneRenderer {
     cutout_instances: InstanceBuffer,
     blend_instances: InstanceBuffer,
     mesh_instances: InstanceBuffer,
+    blend_mesh_instances: InstanceBuffer,
     depth: Option<(wgpu::TextureView, (u32, u32))>,
     stats: FrameStats,
     /// Number of `render` calls so far; the clock for idle eviction.
@@ -369,41 +373,47 @@ impl SceneRenderer {
             step_mode: wgpu::VertexStepMode::Instance,
             attributes: &mesh_instance_attrs,
         };
-        let mesh_pipeline = |label, entry, cull: Option<wgpu::Face>| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some(label),
-                layout: Some(&layout),
-                vertex: wgpu::VertexState {
-                    module: &mesh_module,
-                    entry_point: Some("vs_main"),
-                    compilation_options: Default::default(),
-                    buffers: &[Some(mesh_vertex_layout.clone()), Some(mesh_instance_layout.clone())],
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &mesh_module,
-                    entry_point: Some(entry),
-                    compilation_options: Default::default(),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                }),
-                primitive: wgpu::PrimitiveState {
-                    cull_mode: cull,
-                    front_face: wgpu::FrontFace::Ccw,
-                    ..Default::default()
-                },
-                depth_stencil: Some(depth_state(true)),
-                multisample: wgpu::MultisampleState::default(),
-                multiview_mask: None,
-                cache: None,
-            })
-        };
-        let mesh_solid = mesh_pipeline("mesh", "fs_main", Some(wgpu::Face::Back));
-        let mesh_solid_double = mesh_pipeline("mesh double", "fs_main", None);
-        let mesh_mask = mesh_pipeline("mesh mask", "fs_mask", Some(wgpu::Face::Back));
-        let mesh_mask_double = mesh_pipeline("mesh mask double", "fs_mask", None);
+        let mesh_pipeline =
+            |label, entry, depth_write: bool, blend: Option<wgpu::BlendState>, cull: Option<wgpu::Face>| {
+                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some(label),
+                    layout: Some(&layout),
+                    vertex: wgpu::VertexState {
+                        module: &mesh_module,
+                        entry_point: Some("vs_main"),
+                        compilation_options: Default::default(),
+                        buffers: &[Some(mesh_vertex_layout.clone()), Some(mesh_instance_layout.clone())],
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: &mesh_module,
+                        entry_point: Some(entry),
+                        compilation_options: Default::default(),
+                        targets: &[Some(wgpu::ColorTargetState { format, blend, write_mask: wgpu::ColorWrites::ALL })],
+                    }),
+                    primitive: wgpu::PrimitiveState {
+                        cull_mode: cull,
+                        front_face: wgpu::FrontFace::Ccw,
+                        ..Default::default()
+                    },
+                    depth_stencil: Some(depth_state(depth_write)),
+                    multisample: wgpu::MultisampleState::default(),
+                    multiview_mask: None,
+                    cache: None,
+                })
+            };
+        let mesh_solid = mesh_pipeline("mesh", "fs_main", true, None, Some(wgpu::Face::Back));
+        let mesh_solid_double = mesh_pipeline("mesh double", "fs_main", true, None, None);
+        let mesh_mask = mesh_pipeline("mesh mask", "fs_mask", true, None, Some(wgpu::Face::Back));
+        let mesh_mask_double = mesh_pipeline("mesh mask double", "fs_mask", true, None, None);
+        let mesh_blend = mesh_pipeline(
+            "mesh blend",
+            "fs_blend",
+            false,
+            Some(wgpu::BlendState::ALPHA_BLENDING),
+            Some(wgpu::Face::Back),
+        );
+        let mesh_blend_double =
+            mesh_pipeline("mesh blend double", "fs_blend", false, Some(wgpu::BlendState::ALPHA_BLENDING), None);
 
         let downlevel = gpu.adapter.get_downlevel_capabilities().flags;
         let anisotropic_filtering = downlevel.contains(wgpu::DownlevelFlags::ANISOTROPIC_FILTERING);
@@ -474,6 +484,8 @@ impl SceneRenderer {
             mesh_solid_double,
             mesh_mask,
             mesh_mask_double,
+            mesh_blend,
+            mesh_blend_double,
             textures: HashMap::new(),
             meshes: HashMap::new(),
             opaque_instances: InstanceBuffer::new(device, "opaque sprite instances"),
@@ -481,6 +493,7 @@ impl SceneRenderer {
             cutout_instances: InstanceBuffer::new(device, "cutout sprite instances"),
             blend_instances: InstanceBuffer::new(device, "blended sprite instances"),
             mesh_instances: InstanceBuffer::new(device, "mesh instances"),
+            blend_mesh_instances: InstanceBuffer::new(device, "blended mesh instances"),
             depth: None,
             stats: FrameStats::default(),
             frame: 0,
@@ -592,7 +605,7 @@ impl SceneRenderer {
                 self.ensure_texture(gpu, assets, batch.texture);
             }
         }
-        for m in &scene.meshes {
+        for m in scene.meshes.iter().chain(scene.blended_meshes.iter()) {
             self.ensure_mesh(gpu, assets, m.mesh);
             if let Some(t) = m.texture {
                 self.ensure_texture(gpu, assets, t);
@@ -614,6 +627,16 @@ impl SceneRenderer {
             })
             .collect();
         self.mesh_instances.upload(gpu, &mesh_data);
+        let blend_mesh_data: Vec<GpuMeshInstance> = scene
+            .blended_meshes
+            .iter()
+            .map(|m| GpuMeshInstance {
+                model: m.model.to_cols_array(),
+                color: m.color,
+                flags: [m.lit as u32, m.cutoff.to_bits(), 0, 0],
+            })
+            .collect();
+        self.blend_mesh_instances.upload(gpu, &blend_mesh_data);
         self.ensure_depth(gpu, size);
 
         let sprite_count = scene.opaque_sprites.instances.len()
@@ -622,7 +645,7 @@ impl SceneRenderer {
             + scene.blended_sprites.instances.len();
         let mut stats = FrameStats {
             sprite_instances: sprite_count as u32,
-            mesh_instances: scene.meshes.len() as u32,
+            mesh_instances: (scene.meshes.len() + scene.blended_meshes.len()) as u32,
             draw_calls: 0,
         };
 
@@ -657,7 +680,7 @@ impl SceneRenderer {
             pass.set_viewport(x, y, w, h, 0.0, 1.0);
             pass.set_scissor_rect(x as u32, y as u32, w as u32, h as u32);
 
-            // Depth writers first, then blended sprites. A material blend shares that last list.
+            // Depth writers first. The transparent walk below is the only blended submission.
             pass.set_vertex_buffer(1, self.mesh_instances.buffer.slice(..));
             let mut i = 0;
             while i < scene.meshes.len() {
@@ -679,7 +702,7 @@ impl SceneRenderer {
             self.draw_sprites(&mut pass, &scene.opaque_sprites, &self.opaque_instances, &mut stats);
             self.draw_sprites(&mut pass, &scene.mask_sprites, &self.mask_instances, &mut stats);
             self.draw_sprites(&mut pass, &scene.cutout_sprites, &self.cutout_instances, &mut stats);
-            self.draw_sprites(&mut pass, &scene.blended_sprites, &self.blend_instances, &mut stats);
+            self.draw_transparent(&mut pass, scene, &mut stats);
         }
         gpu.queue.submit([encoder.finish()]);
         self.stats = stats;
@@ -691,6 +714,36 @@ impl SceneRenderer {
             MeshDraw::Solid { double_sided: true } => &self.mesh_solid_double,
             MeshDraw::Mask { double_sided: false } => &self.mesh_mask,
             MeshDraw::Mask { double_sided: true } => &self.mesh_mask_double,
+            MeshDraw::Blend { double_sided: false } => &self.mesh_blend,
+            MeshDraw::Blend { double_sided: true } => &self.mesh_blend_double,
+        }
+    }
+
+    /// Walks the combined blend sequence. Each item rebinds the pipeline and buffers it needs.
+    /// The walk does not sort again, and it does not draw every sprite before every mesh.
+    fn draw_transparent<'a>(&'a self, pass: &mut wgpu::RenderPass<'a>, scene: &'a RenderScene, stats: &mut FrameStats) {
+        for batch in &scene.transparent {
+            match batch {
+                TransparentBatch::Sprites(batch) => {
+                    pass.set_pipeline(self.sprite_pipeline(batch.pipeline));
+                    let texture = self.textures.get(&batch.texture.id()).unwrap_or(&self.missing);
+                    pass.set_bind_group(1, &texture.bind_group, &[]);
+                    pass.set_vertex_buffer(0, self.blend_instances.buffer.slice(..));
+                    pass.draw(0..6, batch.range.clone());
+                    stats.draw_calls += 1;
+                }
+                TransparentBatch::Meshes { mesh, texture, draw, range } => {
+                    let Some(gpu_mesh) = self.meshes.get(&mesh.id()) else { continue };
+                    pass.set_pipeline(self.mesh_pipeline(*draw));
+                    let bound = texture.and_then(|handle| self.textures.get(&handle.id())).unwrap_or(&self.white);
+                    pass.set_bind_group(1, &bound.bind_group, &[]);
+                    pass.set_vertex_buffer(0, gpu_mesh.vertices.slice(..));
+                    pass.set_vertex_buffer(1, self.blend_mesh_instances.buffer.slice(..));
+                    pass.set_index_buffer(gpu_mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
+                    pass.draw_indexed(0..gpu_mesh.index_count, 0, range.clone());
+                    stats.draw_calls += 1;
+                }
+            }
         }
     }
 

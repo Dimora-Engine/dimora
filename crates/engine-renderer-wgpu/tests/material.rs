@@ -427,7 +427,7 @@ fn assigned_mesh_lighting_and_culling_follow_the_material() {
 }
 
 #[test]
-fn a_blended_mesh_is_skipped_and_an_unassigned_mesh_still_draws() {
+fn a_blended_mesh_draws_and_an_unassigned_mesh_stays_opaque() {
     capture::begin();
     let Some(gpu) = gpu() else { return };
     let mut renderer = renderer(&gpu);
@@ -437,16 +437,16 @@ fn a_blended_mesh_is_skipped_and_an_unassigned_mesh_still_draws() {
     let blend = assets
         .insert("glass", MaterialAsset::unlit(Color::rgb(1.0, 0.0, 0.0)).with_alpha_mode(AlphaMode::Blend))
         .unwrap();
-    let mut skipped = ortho();
-    skipped.spawn((Transform::IDENTITY, Mesh::new("card").with_material_asset(blend)));
-    let image = render(&gpu, &mut renderer, &mut skipped, &assets);
-    expect_px(&image, 64, 64, [0, 0, 0, 255], 1, "a blended mesh is not drawn as opaque");
-    assert_eq!(renderer.stats().draw_calls, 0);
-    let messages = capture::messages();
-    assert!(messages.iter().any(|m| m.contains("glass") && m.contains("Blend is not drawn")), "{messages:?}");
+    let mut glass = ortho();
+    glass.spawn((Transform::IDENTITY, Mesh::new("card").with_material_asset(blend)));
+    let image = render(&gpu, &mut renderer, &mut glass, &assets);
+    expect_px(&image, 64, 64, [255, 0, 0, 255], 2, "a blended mesh draws its material colour");
+    assert_eq!(renderer.stats().draw_calls, 1);
+    assert_eq!(renderer.stats().mesh_instances, 1);
     assert!(
-        capture::records().iter().any(|r| r.level == log::Level::Warn && r.message.contains("Blend is not drawn")),
-        "{messages:?}"
+        capture::records().iter().all(|r| !r.message.contains("Blend is not drawn")),
+        "drawing a blend mesh does not log an unsupported-state warning: {:?}",
+        capture::messages()
     );
 
     let mut legacy = world(Camera::perspective(60.0), Transform::from_xyz(0.0, 0.0, -4.0));

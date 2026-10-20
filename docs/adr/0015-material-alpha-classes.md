@@ -1,7 +1,7 @@
 # ADR-0015: Material alpha classes and one blended sort
 
-* **Status:** Settled. The three alpha classes, the shared blended sort key, the sprite depth point, and the blended-mesh representative depth are accepted. M5-5A (`e0c29ef`) stores the CPU `MaterialAsset`. M5-5B (working tree, 2026-10-20) resolves handles on sprites and meshes and draws opaque, mask, and blended sprites plus opaque and mask meshes. Blended meshes and the 1,000-sprite material batch are not implemented.
-* **Date:** 2026-10-16. CPU asset 2026-10-19. Handle rendering 2026-10-20.
+* **Status:** Settled. The three alpha classes, the shared blended sort key, the sprite depth point, and the blended-mesh representative depth are accepted. M5-5A (`e0c29ef`) stores the CPU `MaterialAsset`. M5-5B (`3b3cd4a`) resolves handles and draws opaque, mask, and blended sprites plus opaque and mask meshes. M5-5C (working tree, 2026-10-20) draws blended meshes in that same sequence. The 1,000-sprite material batch is not implemented.
+* **Date:** 2026-10-16. CPU asset 2026-10-19. Handle rendering 2026-10-20. Blended meshes 2026-10-20.
 * **Backlog id:** D-05
 * **Decided by:** project owner (M5-1 planning approval, confirmed in the M5-1 final review)
 * **Affects:** `MaterialAsset`, extraction order, `RenderScene`, sprite and mesh pipelines, M5, M14, M15. Unassigned renderables keep the previous path.
@@ -12,7 +12,7 @@
 
 ADR-0004 keeps spatial depth, transparency sorting, render layers or queues, and explicit order distinct. It does not choose a coplanar mechanism (D-48). Three coplanar conflicts are pinned by tests in `examples/spatial_scene/tests/configurations.rs` and described in `docs/SPATIAL_RENDERING.md`. This decision does not remove those conflicts.
 
-M5-1 recorded the policy without changing the renderer. M5-5A adds the CPU asset. M5-5B reads a handle during extraction and selects a pipeline. Unassigned sprites, meshes, and tilemaps are unchanged.
+M5-1 recorded the policy without changing the renderer. M5-5A adds the CPU asset. M5-5B reads a handle during extraction and selects a pipeline. M5-5C puts blended meshes on the same sorted submission list as blended sprites. Unassigned sprites, meshes, and tilemaps are unchanged.
 
 ## Requirements and constraints
 
@@ -53,18 +53,18 @@ Option B.
 
 Mask's conventional blend state is off. The cutoff is data on the material. The sprite cutout shader's current threshold is 0.5; a material that does not set a cutoff uses 0.5 so that behaviour can be reproduced. That default is a compatibility rule, not a new shader in this change.
 
-**Sort.** Blended sprites and blended meshes share one list. They are not drawn as "all meshes, then all sprites". The key, already implemented for blended sprites in `extract.rs`, is:
+**Sort.** Blended sprites and blended meshes share one list. They are not drawn as "all meshes, then all sprites". The key is:
 
 1. `RenderOrder.layer` ascending.
 2. Camera-space depth descending (larger view Z is farther; the view is left-handed, +Z deeper).
 3. `RenderOrder.order` ascending.
-4. A full tie keeps extraction order, which follows spawn order for a given world. The sort is stable.
+4. Visit order. Sprites are extracted before meshes, and each blended item takes the next sequence number. Equal sprite keys keep the order they had when the sort was stable over sprites alone. A sprite and a mesh that tie draw the sprite first. A per-type index is not the shared key.
 
-A missing `RenderOrder` is `(0, 0)`, so depth decides. `layer` dominating depth is the existing blended-sprite rule (`render_order_layer_always_decides_between_overlapping_blended_sprites`). It is an explicit-order override inside the blended class. It is not a world z-index, and it does not apply to Opaque or Mask. ADR-0004's rule that an arbitrary order value does not replace spatial depth still holds for opaque and cutout visibility.
+A missing `RenderOrder` is `(0, 0)`, so depth decides. `layer` dominating depth is the existing blended-sprite rule (`render_order_layer_always_decides_between_overlapping_blended_sprites`). It is an explicit-order override inside the blended class. It is not a world z-index, and it does not apply to Opaque or Mask. ADR-0004's rule that an arbitrary order value does not replace spatial depth still holds for opaque and cutout visibility. The GPU walk follows this list. Switching a sprite pipeline for a mesh pipeline does not reorder it.
 
 **Sprite depth point (implemented, unchanged).** The depth is the camera-space Z of the sprite quad centre.
 
-**Mesh depth point (settled, not implemented).** The representative is the camera-space Z of the mesh's world-space bounding-sphere centre, the point `extract.rs` already uses for mesh culling. Blended meshes use the same sort key as blended sprites. This is an object-level approximation. It does not order intersecting transparent meshes, cyclic transparency, a large overlap whose centre misses the overlapping region, or a mesh that spans several depth ranges another object sits inside. Those cases stay outside M5. GPU tests are required in the phase that implements blended meshes. M5-1 and M5-2 do not implement them.
+**Mesh depth point (implemented).** The representative is the camera-space Z of the mesh's world-space bounding-sphere centre, the point `extract.rs` already transforms for mesh culling. Parent translation, rotation, and nonuniform scale are in that matrix. The local origin and the entity translation are not substitutes when they differ from the centre. Blended meshes use the same comparison direction as blended sprites. This is an object-level approximation. It does not order intersecting transparent meshes, cyclic transparency, a large overlap whose centre misses the overlapping region, a mesh that spans a depth range another object sits inside, or a transparent mesh passing through a sprite plane. Those limits are recorded, not solved. There is no order-independent transparency, per-triangle sort, depth peeling, or weighted blended transparency.
 
 **What a camera may change.** Perspective and an orthographic camera yawed and pitched into an isometric view use the same class rules and the same key. They may produce different visible order because the view direction changes the depth values. Tests state the expected pixels for each camera. They do not require the two pictures to match.
 
@@ -97,22 +97,22 @@ M5-5A registers `MaterialAsset` through the existing `AssetManager`. A replaceme
 
 **Handle set.** The asset supplies alpha class, cutoff, lit, double-sided, base colour, and albedo. Sprite tint still multiplies, including alpha. `SpriteBlend` and the inline mesh `Material` are not consulted for that renderable. The product is linear and is not clamped on the CPU. Albedo `Some` selects that texture. Albedo `None` uses `SpriteAsset.texture` for a sprite and leaves a mesh untextured. Sprite UVs, size, pivot, and pixels per unit stay on the sprite asset. An overriding albedo is sampled with those UVs and is not remapped onto another atlas. A missing material skips the renderable and logs once, using a known name or the id, and does not fall back to the legacy fields. A pending load does not log. A missing albedo uses the existing placeholder, magenta for a sprite and white for a mesh. `double_sided: false` culls back faces on both sprites and meshes. `true` disables that cull. Assigning `MaterialAsset::default` to a sprite therefore hides the back face and treats transparent texels as opaque. A sprite author who wants the back face sets `double_sided`. One who wants transparent texels uses Blend or Mask.
 
-**Classes that draw.** Opaque and Mask sprites and meshes write depth and do not blend. Mask discards when the combined alpha is below the material cutoff. That comparison is `effective_alpha < cutoff`. It is not a hardcoded 0.5 for an assigned material. Legacy cutout still uses 0.5. Blend sprites use the existing blended list and sort. A mesh material in Blend is not drawn and logs once. It is not reported as a missing asset.
+**Classes that draw.** Opaque and Mask sprites and meshes write depth and do not blend. Mask discards when the combined alpha is below the material cutoff. That comparison is `effective_alpha < cutoff`. It is not a hardcoded 0.5 for an assigned material. Legacy cutout still uses 0.5. Blend sprites and blend meshes share `RenderScene.transparent`. The mesh blend fragment keeps sampled alpha. The legacy mesh fragment still writes alpha 1. Lighting shades rgb and does not change alpha. The blend is straight alpha, the same state blended sprites already use.
 
 **Revisions.** Material identity is the `AssetId`. The revision is the asset-store revision. Both are copied onto the instance for a later batch key. A base-colour, lit, cutoff, class, or culling change is instance data or a pipeline selection. It does not allocate a texture image. An albedo change rebinds through the existing texture cache. The normal handle is not bound. There is no material GPU cache.
 
-**Batching, still short of the 1,000-sprite criterion.** Consecutive sprite instances merge when the texture and the pipeline match. Opaque and mask sprites are grouped by that pair. Blended sprites keep sort order, so they merge only when neighbours already match. Meshes merge on `(mesh, texture, draw class)`. Material id and revision are not part of the key yet. A measured group of 32 compatible opaque material sprites is one draw. M5-5D adds the material key and the 1,000-sprite measurement. Extraction must not reorder blended objects to enlarge a batch.
+**Batching, still short of the 1,000-sprite criterion.** Consecutive sprite instances merge when the texture and the pipeline match. Opaque and mask sprites are grouped by that pair. Blended items merge only when they are already neighbours in the sorted sequence and share a kind and a draw key. A mesh between two sprites splits those sprites. Meshes on the depth-writing list still merge on `(mesh, texture, draw class)`. Material id and revision are not part of the key yet. A measured group of 32 compatible opaque material sprites is one draw. Four compatible blended meshes were one draw. A sprite between two blended meshes was three draws. An alternating run was one draw per item. M5-5D adds the material key and the 1,000-sprite measurement. Extraction must not reorder blended objects to enlarge a batch.
 
 ## Consequences and follow-up
 
-* M5-5A (`e0c29ef`) stores `MaterialAsset`. M5-5B binds it for sprites and for opaque and mask meshes. Blended meshes stay M5-5C. The 1,000-sprite measurement stays M5-5D.
-* The blended-mesh depth point is settled as the camera-space Z of the world-space bounding-sphere centre. Implementing it requires GPU tests of the approximation limits above.
+* M5-5A (`e0c29ef`) stores `MaterialAsset`. M5-5B (`3b3cd4a`) binds it for sprites and for opaque and mask meshes. M5-5C draws blended meshes in the shared sequence. The 1,000-sprite measurement stays M5-5D.
+* The blended-mesh depth point is the camera-space Z of the world-space bounding-sphere centre. GPU readback covers ordinary non-intersecting order. The approximation limits above stay limits.
 * M14 samples the normal slot. M15 particles pick one of the three classes.
 * Screenshot baselines against `6dbabb8` stay in force. This ADR does not move them.
 * Not decided: PBR, material graphs, custom shaders, alpha-to-coverage, order-independent transparency, a coplanar mechanism (D-48), reverse-Z (D-07).
 
 ## Evidence and revisit conditions
 
-Today's sprite key and quad-centre depth are in `extract.rs` and the `RenderOrder` tests. Mesh culling already transforms the bounding-sphere centre. The three coplanar tests still describe current pixels. The 2026-10-16 review accepted the mesh depth point and left the three coplanar conflicts with M6 and D-48. M5-5A (`e0c29ef`) adds the CPU asset. M5-5B reads handles in extraction and adds GPU readback for assigned sprites and meshes. It does not draw blended meshes and does not change the coplanar tests.
+Today's sprite key and quad-centre depth are in `extract.rs` and the `RenderOrder` tests. Mesh culling transforms the bounding-sphere centre, and blended meshes reuse that point. The three coplanar tests still describe current pixels. The 2026-10-16 review accepted the mesh depth point and left the three coplanar conflicts with M6 and D-48. M5-5A (`e0c29ef`) adds the CPU asset. M5-5B (`3b3cd4a`) reads handles in extraction. M5-5C submits blended meshes in the same GPU order as blended sprites. It does not change the coplanar tests.
 
-Reopen the settled class, sort key, or mesh depth point only under the rule at the bottom of DECISIONS.md. The phase that implements blended meshes adds the GPU tests named above before the approximation is treated as verified behaviour.
+Reopen the settled class, sort key, or mesh depth point only under the rule at the bottom of DECISIONS.md.

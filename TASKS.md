@@ -38,9 +38,10 @@ the sampler cache, is commit `11b914f` and is not pushed. M5-2C, GPU mip generat
 pushed. M5-3B, GPU rectangle uploads, is commit `84d5ab1` and is not pushed. M5-4A, the CPU shelf
 packer, is commit `bf4d9bb` and is not pushed. M5-4B, GPU atlas sampling, is commit `1666695` and is
 not pushed. M5-5A, the CPU `MaterialAsset`, is commit `e0c29ef` and is not pushed. M5-5B, material
-handles and material-driven sprite and mesh rendering, is in the working tree and is not committed.
-Localized mip regeneration has not started. Blended meshes and the 1,000-sprite material batch have
-not started. M6's camera-configuration prototype remains the only verified M6 work.
+handles and material-driven sprite and mesh rendering, is commit `3b3cd4a` and is not pushed.
+M5-5C, unified blended sprite and mesh rendering, is in the working tree and is not committed.
+Localized mip regeneration has not started. The 1,000-sprite material batch has not started.
+M6's camera-configuration prototype remains the only verified M6 work.
 The manual window note under M4-4E and M4-5 is unchanged: the framebuffer and the keyboard were not observed.
 
 ## Completed work
@@ -1101,7 +1102,7 @@ Committed locally as `e0c29ef` on 2026-10-20. Not pushed. M5-4B is commit `16666
 
 ## M5-5B results (2026-10-20)
 
-In the working tree. Not committed. M5-5A is commit `e0c29ef`. M5 stays in progress. M5-5C and M5-5D have not started.
+Committed locally as `3b3cd4a` on 2026-10-20. Not pushed. M5-5A is commit `e0c29ef`. M5 stays in progress. The check below ran on the same tree before that commit.
 
 **Handles.** `Sprite.material` is `Option<AssetHandle<MaterialAsset>>`, default `None`, set with `with_material`. `Mesh.material` remains the inline `Material`. `Mesh.material_asset` is the optional handle, default `None`, set with `with_material_asset`. `TileMap` has no material handle. Existing constructors still build an unassigned renderable.
 
@@ -1116,6 +1117,26 @@ In the working tree. Not committed. M5-5A is commit `e0c29ef`. M5 stays in progr
 **Not in this checkpoint.** Blended mesh drawing, a unified sprite/mesh transparent list, material-aware batching of 1,000 sprites, normal-map shading, a material graph, custom shaders, sprite sheets, atlas repacking, localized mips, and asset reference counts.
 
 **Repository check.** `scripts/check.sh` on 2026-10-20, macOS 27.0 arm64, `rustc 1.99.0`, exit 0, with M5-5B in the working tree. All 4 steps passed: `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` with `DIMORA_REQUIRE_GPU=1` (**514 passed, 0 failed, 0 ignored**, 44 suites), `cargo doc --workspace --no-deps` with `-D warnings`. A direct GPU run of `material.rs` printed `GPU test adapter: Apple M5 (Metal, IntegratedGpu); DownlevelFlags::ANISOTROPIC_FILTERING=true`. The check log captures test output, so that line is not in the check transcript. The GPU tests ran because `DIMORA_REQUIRE_GPU=1` was set. This paragraph was written after that check.
+
+**Screenshots.** Release 1280×720 images rendered on 2026-10-20 from this working tree, compared with `cmp -s` to the `6dbabb8` images recorded under M5-4B. All four matched. Baselines were not replaced. `basic_2_5d` 746071 bytes, SHA-256 `c3c5874adeea119c98255c6c1d08208c0244224d930d86e8736c280ef88b38fe`. `basic_2_5d --ortho` 462130 bytes, `f2aedc0c4a65e13a33187f391d2a778d073b3befbf1ce207bc6484d961ac980f`. `spatial_scene --camera perspective` 136991 bytes, `ec5f6252a88f642b454ae768f9eec8cdd5fba88a5aeb7a424fcefe5fda12275e`. `spatial_scene --camera orthographic` 34046 bytes, `3551d84fe2ec1c14fc0729c7a86e2031c068285a6551597ee32d100f76805cde`.
+
+## M5-5C results (2026-10-20)
+
+In the working tree. Not committed. M5-5B is commit `3b3cd4a`. M5 stays in progress. M5-5D has not started.
+
+**Sequence.** Blended sprites and blended meshes are one list, `RenderScene.transparent`. The backend walks that list after the depth-writing passes. A pipeline, bind group, or vertex-buffer change does not pull every sprite ahead of every mesh, and the list is not sorted again for pipeline locality. The key is `RenderOrder.layer` ascending, camera-space depth descending, `RenderOrder.order` ascending, then visit order. Sprites are visited first, then meshes, so a tie draws the sprite first. Equal sprite keys keep the relative order they had before this checkpoint. A missing `RenderOrder` is `(0, 0)`. Opaque and mask meshes stay in `meshes` and ignore `RenderOrder`.
+
+**Mesh depth.** The representative is the camera-space Z of the world-space bounding-sphere centre, transformed by the same matrix mesh culling uses. Parent transforms, rotation, and nonuniform scale are in that matrix. Sprite depth stays the quad centre. Both values use view Z, and a larger Z is farther. Projection does not choose the class. Turning the camera can reverse which object is farther.
+
+**Drawing.** `MeshDraw::Blend` depth-tests, does not write depth, and uses the same straight-alpha state as blended sprites. `mesh.wgsl` `fs_blend` returns the sampled alpha. Lighting changes rgb only. `fs_main` still forces alpha 1, and unassigned meshes stay on that path. `double_sided` selects back-face culling or none. Two blend pipelines cover that pair. They are not compiled per material. A class change on the next extraction selects the pipeline. It does not allocate a texture image. Texture and sampler caches stay the existing ones. A removed albedo is evicted by the existing rule and the draw uses the white mesh placeholder.
+
+**Batching, still short of the M5 criterion.** A transparent run grows only while the next item is the same kind and the same draw key, so the submission order stays the sort order. Four compatible blended meshes were one draw. One sprite between two meshes was three draws. An alternating sprite and mesh sequence of four items was four draws. One blended mesh was one draw. The existing 32 compatible opaque material sprites remained one draw. Material id, revision, and sampler are not in the key. M5-5D adds that key and the 1,000-sprite measurement. It must not reorder this sequence to enlarge a blend batch.
+
+**Limits.** The centre is an object-level approximation. It does not order intersecting transparent meshes, cyclic overlaps, an overlap the centre misses, a mesh that spans another object's depth, or a transparent mesh passing through a sprite plane. Those cases are demonstrated as sort results where a test is useful, and they are not claimed as solved pictures. There is no order-independent transparency, per-triangle sort, depth peeling, or weighted blended transparency. The three D-48 coplanar conflicts are unchanged.
+
+**Not in this checkpoint.** The 1,000-sprite batch, mesh generators, tilemap materials, sprite sheets, normal-map shading, PBR, material graphs, custom shaders, asset reference counts, and the M6 coplanar fixes.
+
+**Repository check.** `scripts/check.sh` on 2026-10-20, macOS 27.0 arm64, `rustc 1.99.0`, exit 0, with M5-5C in the working tree. All 4 steps passed: `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` with `DIMORA_REQUIRE_GPU=1` (**529 passed, 0 failed, 0 ignored**, 46 suites), `cargo doc --workspace --no-deps` with `-D warnings`. A direct GPU run of `blend.rs` printed `GPU test adapter: Apple M5 (Metal, IntegratedGpu)`. The check log captures test output, so that line is not in the check transcript. The GPU tests ran because `DIMORA_REQUIRE_GPU=1` was set. This paragraph was written after that check.
 
 **Screenshots.** Release 1280×720 images rendered on 2026-10-20 from this working tree, compared with `cmp -s` to the `6dbabb8` images recorded under M5-4B. All four matched. Baselines were not replaced. `basic_2_5d` 746071 bytes, SHA-256 `c3c5874adeea119c98255c6c1d08208c0244224d930d86e8736c280ef88b38fe`. `basic_2_5d --ortho` 462130 bytes, `f2aedc0c4a65e13a33187f391d2a778d073b3befbf1ce207bc6484d961ac980f`. `spatial_scene --camera perspective` 136991 bytes, `ec5f6252a88f642b454ae768f9eec8cdd5fba88a5aeb7a424fcefe5fda12275e`. `spatial_scene --camera orthographic` 34046 bytes, `3551d84fe2ec1c14fc0729c7a86e2031c068285a6551597ee32d100f76805cde`.
 
@@ -1136,7 +1157,7 @@ in the current scope.
 
 ## Not in scope now
 
-M5-2A, CPU texture descriptors, is committed locally as `c687d5b` and is not pushed. M5-2B is commit `11b914f` and is not pushed. M5-2C is commit `622ef80` and is not pushed. M5-3A, bounded region transitions, is commit `b51f1fb` and is not pushed. M5-3B, GPU rectangle uploads, is commit `84d5ab1` and is not pushed. M5-4A, the CPU shelf packer, is commit `bf4d9bb` and is not pushed. M5-4B, GPU atlas sampling, is commit `1666695` and is not pushed. M5-5A, the CPU `MaterialAsset`, is commit `e0c29ef` and is not pushed. M5-5B, material-driven rendering, is in the working tree and is not committed. M5 is not complete. Localized mip regeneration has not started. Blended meshes and the 1,000-sprite batch have not started. M6's remaining tasks, and everything after M5, are not in progress. In particular: no scene format, no prefab assets, no new rendering features in this change, no collision, no
+M5-2A, CPU texture descriptors, is committed locally as `c687d5b` and is not pushed. M5-2B is commit `11b914f` and is not pushed. M5-2C is commit `622ef80` and is not pushed. M5-3A, bounded region transitions, is commit `b51f1fb` and is not pushed. M5-3B, GPU rectangle uploads, is commit `84d5ab1` and is not pushed. M5-4A, the CPU shelf packer, is commit `bf4d9bb` and is not pushed. M5-4B, GPU atlas sampling, is commit `1666695` and is not pushed. M5-5A, the CPU `MaterialAsset`, is commit `e0c29ef` and is not pushed. M5-5B, material-driven rendering, is commit `3b3cd4a` and is not pushed. M5-5C, unified blended rendering, is in the working tree and is not committed. M5 is not complete. Localized mip regeneration has not started. The 1,000-sprite batch has not started. M6's remaining tasks, and everything after M5, are not in progress. In particular: no scene format, no prefab assets, no rendering work beyond the current M5 checkpoint, no collision, no
 editor work, and no work on UI, scripting or any of the three character representations. M4 Phase 1 is commit `cdb5ec3`. Phase 2 is commit `2c76f71`. Phase 3 is commit `f9a4aab`. M4-4A is commit `302622b`. M4-4B is commit `128c70e`. M4-4C is commit `e12fb5b`. M4-4D is commit `8398e49`. M4-4E is commit `d58c66b`. M4-5 is commit `2b79806`. None of M4 is pushed. M4 is complete locally. M3b is complete locally and is not pushed. These systems are deliberately
 not being started together: each has its own milestone, prerequisites and decisions. Decisions that data
 formats or public APIs will bake in are made before their first consumer (see

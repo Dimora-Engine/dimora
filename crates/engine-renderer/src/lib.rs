@@ -32,5 +32,5 @@ pub use projection::{CameraProjection, Orthographic, Perspective, Projection, Sc
 pub use registry::register_render_components;
 pub use scene::{
     ExtractStats, LightData, MeshDraw, MeshInstance, RenderScene, SpriteBatch, SpriteInstance, SpriteLayer,
-    SpritePipelineKind, SpriteShading, MAX_LIGHTS,
+    SpritePipelineKind, SpriteShading, TransparentBatch, MAX_LIGHTS,
 };

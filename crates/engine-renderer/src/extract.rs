@@ -11,7 +11,7 @@ use crate::components::{
 };
 use crate::frustum::Frustum;
 use crate::interpolate::{render_poses, RenderPoses};
-use crate::missing::{report_absent_texture, report_unrendered_mesh_blend, resolve, MissingAssetWarnings};
+use crate::missing::{report_absent_texture, resolve, MissingAssetWarnings};
 use crate::scene::*;
 
 /// Snapshots the world into a [`RenderScene`] for the active camera. `target_size` is the render
@@ -47,7 +47,10 @@ pub fn extract_scene(world: &World, assets: &AssetManager, target_size: Vec2) ->
     let mut cutout: Vec<SpriteInstance> = Vec::new();
     let mut opaque: Vec<SpriteInstance> = Vec::new();
     let mut mask: Vec<SpriteInstance> = Vec::new();
-    let mut blended: Vec<(SortKey, SpriteInstance)> = Vec::new();
+    // Sprites are visited before meshes, so this counter is the cross-type tie-break. Equal
+    // sprite keys keep extraction order. A sprite and a mesh that tie draw the sprite first.
+    let mut sequence = 0u32;
+    let mut blended: Vec<BlendItem> = Vec::new();
     let mut watch = world.try_resource::<MissingAssetWarnings>().is_some_and(|warnings| !warnings.is_empty());
 
     for (entity, (sprite, global, order)) in world.query::<(&Sprite, &GlobalTransform, Option<&RenderOrder>)>().iter() {
@@ -86,7 +89,8 @@ pub fn extract_scene(world: &World, assets: &AssetManager, target_size: Vec2) ->
             SpriteShading::LegacyBlend | SpriteShading::Blend { .. } => {
                 let depth = view.view.transform_point3(quad_center(&model)).z;
                 let RenderOrder { layer, order } = order.copied().unwrap_or_default();
-                blended.push((SortKey { layer, depth, order }, instance));
+                blended.push(BlendItem { layer, depth, order, sequence, kind: BlendKind::Sprite(instance) });
+                sequence += 1;
             }
         }
     }
@@ -102,7 +106,7 @@ pub fn extract_scene(world: &World, assets: &AssetManager, target_size: Vec2) ->
     }
 
     let mut meshes = Vec::new();
-    for (entity, (mesh, global)) in world.query::<(&Mesh, &GlobalTransform)>().iter() {
+    for (entity, (mesh, global, order)) in world.query::<(&Mesh, &GlobalTransform, Option<&RenderOrder>)>().iter() {
         if hidden.hides(entity) {
             continue;
         }
@@ -114,13 +118,14 @@ pub fn extract_scene(world: &World, assets: &AssetManager, target_size: Vec2) ->
         };
         let (center, radius) = data.bounding_sphere();
         let m = poses.matrix(entity, global);
+        let world_center = m.transform_point3(center);
         let max_scale = m.cols[0].xyz().length().max(m.cols[1].xyz().length()).max(m.cols[2].xyz().length());
-        if !frustum.intersects_sphere(m.transform_point3(center), radius * max_scale) {
+        if !frustum.intersects_sphere(world_center, radius * max_scale) {
             stats.meshes_culled += 1;
             continue;
         }
         stats.meshes_visible += 1;
-        meshes.push(MeshInstance {
+        let instance = MeshInstance {
             model: m,
             mesh: mesh.asset,
             color: surface.color,
@@ -130,17 +135,34 @@ pub fn extract_scene(world: &World, assets: &AssetManager, target_size: Vec2) ->
             cutoff: surface.cutoff,
             material_id: surface.material_id,
             material_revision: surface.material_revision,
-        });
+        };
+        if matches!(surface.draw, MeshDraw::Blend { .. }) {
+            // Same view-space Z as a sprite quad centre. Larger is farther. The representative is
+            // the bounding-sphere centre after the same matrix culling used, not the entity origin.
+            let depth = view.view.transform_point3(world_center).z;
+            let RenderOrder { layer, order } = order.copied().unwrap_or_default();
+            blended.push(BlendItem { layer, depth, order, sequence, kind: BlendKind::Mesh(instance) });
+            sequence += 1;
+        } else {
+            meshes.push(instance);
+        }
     }
     // Group identical (mesh, texture, draw) triples so the backend can merge them into instanced draws.
     meshes.sort_by_key(|m| (m.mesh.id(), m.texture.map(|t| t.id()), m.draw));
 
-    // Far to near: larger view depth first. Stable, so equal keys keep ECS iteration order, which
-    // is deterministic for a given sequence of spawns.
-    blended
-        .sort_by(|(a, _), (b, _)| a.layer.cmp(&b.layer).then(b.depth.total_cmp(&a.depth)).then(a.order.cmp(&b.order)));
+    // One list. Layer ascending, view depth descending, order ascending, then visit order.
+    // Sorting the two primitive lists apart and concatenating them would draw every mesh on one
+    // side of every sprite.
+    blended.sort_by(|a, b| {
+        a.layer
+            .cmp(&b.layer)
+            .then(b.depth.total_cmp(&a.depth))
+            .then(a.order.cmp(&b.order))
+            .then(a.sequence.cmp(&b.sequence))
+    });
+    let (blended_sprites, blended_meshes, transparent) = pack_transparent(blended);
     // Opaque and mask sprites do not need ordering for correctness. Group by texture, then by cull
-    // mode, so a run shares one pipeline. Blended sprites stay in sort order.
+    // mode, so a run shares one pipeline. Blended sprites stay in the combined sort order.
     let group = |i: &SpriteInstance| (i.texture.id(), i.shading.pipeline());
     opaque.sort_by_key(group);
     mask.sort_by_key(group);
@@ -157,9 +179,80 @@ pub fn extract_scene(world: &World, assets: &AssetManager, target_size: Vec2) ->
         opaque_sprites: SpriteLayer::from_ordered(opaque),
         mask_sprites: SpriteLayer::from_ordered(mask),
         cutout_sprites: SpriteLayer::from_ordered(cutout),
-        blended_sprites: SpriteLayer::from_ordered(blended.into_iter().map(|(_, i)| i).collect()),
+        blended_sprites,
+        blended_meshes,
+        transparent,
         stats,
     })
+}
+
+enum BlendKind {
+    Sprite(SpriteInstance),
+    Mesh(MeshInstance),
+}
+
+struct BlendItem {
+    layer: i32,
+    depth: f32,
+    order: i32,
+    /// Extraction visit order. Sprites take the earlier numbers, then meshes.
+    sequence: u32,
+    kind: BlendKind,
+}
+
+/// Packs the sorted blend list. A run extends only when it is the same kind and the same draw key,
+/// and only when that run is the previous item. That keeps submission order equal to sort order.
+fn pack_transparent(items: Vec<BlendItem>) -> (SpriteLayer, Vec<MeshInstance>, Vec<TransparentBatch>) {
+    let mut sprites = Vec::new();
+    let mut meshes = Vec::new();
+    let mut transparent = Vec::new();
+    let mut sprite_batches = Vec::new();
+    for item in items {
+        match item.kind {
+            BlendKind::Sprite(instance) => append_sprite(&mut sprites, &mut transparent, &mut sprite_batches, instance),
+            BlendKind::Mesh(instance) => append_mesh(&mut meshes, &mut transparent, instance),
+        }
+    }
+    (SpriteLayer { instances: sprites, batches: sprite_batches }, meshes, transparent)
+}
+
+fn append_sprite(
+    sprites: &mut Vec<SpriteInstance>,
+    transparent: &mut Vec<TransparentBatch>,
+    sprite_batches: &mut Vec<SpriteBatch>,
+    instance: SpriteInstance,
+) {
+    let index = sprites.len() as u32;
+    let texture = instance.texture;
+    let pipeline = instance.shading.pipeline();
+    sprites.push(instance);
+    if let Some(TransparentBatch::Sprites(batch)) = transparent.last_mut() {
+        if batch.texture == texture && batch.pipeline == pipeline {
+            batch.range.end = index + 1;
+            sprite_batches.last_mut().expect("a sprite run has a matching sprite batch").range.end = index + 1;
+            return;
+        }
+    }
+    let batch = SpriteBatch { texture, pipeline, range: index..index + 1 };
+    transparent.push(TransparentBatch::Sprites(batch.clone()));
+    sprite_batches.push(batch);
+}
+
+fn append_mesh(meshes: &mut Vec<MeshInstance>, transparent: &mut Vec<TransparentBatch>, instance: MeshInstance) {
+    let index = meshes.len() as u32;
+    let mesh = instance.mesh;
+    let texture = instance.texture;
+    let draw = instance.draw;
+    meshes.push(instance);
+    if let Some(TransparentBatch::Meshes { mesh: previous, texture: previous_texture, draw: previous_draw, range }) =
+        transparent.last_mut()
+    {
+        if *previous == mesh && *previous_texture == texture && *previous_draw == draw {
+            range.end = index + 1;
+            return;
+        }
+    }
+    transparent.push(TransparentBatch::Meshes { mesh, texture, draw, range: index..index + 1 });
 }
 
 struct SpriteAppearance {
@@ -272,10 +365,6 @@ fn mesh_surface(
         });
     };
     let material = resolve(world, assets, handle, "material", watch, stats)?;
-    if matches!(material.alpha_mode, AlphaMode::Blend) {
-        report_unrendered_mesh_blend(world, assets, handle, watch);
-        return None;
-    }
     if let Some(texture) = material.albedo {
         report_absent_texture(
             world,
@@ -290,7 +379,7 @@ fn mesh_surface(
     let (draw, cutoff) = match material.alpha_mode {
         AlphaMode::Opaque => (MeshDraw::Solid { double_sided: material.double_sided }, 0.0),
         AlphaMode::Mask { cutoff } => (MeshDraw::Mask { double_sided: material.double_sided }, cutoff.get()),
-        AlphaMode::Blend => unreachable!("blend was returned above"),
+        AlphaMode::Blend => (MeshDraw::Blend { double_sided: material.double_sided }, 0.0),
     };
     Some(MeshSurface {
         color: material.base_color.to_array(),
@@ -305,12 +394,6 @@ fn mesh_surface(
 
 fn color_product(base: Color, tint: Color) -> [f32; 4] {
     [base.r * tint.r, base.g * tint.g, base.b * tint.b, base.a * tint.a]
-}
-
-struct SortKey {
-    layer: i32,
-    depth: f32,
-    order: i32,
 }
 
 /// Parent links and local [`Visibility::Hidden`] bits, copied out so extraction can walk

@@ -61,3 +61,13 @@ fn fs_mask(in: VsOut) -> @location(0) vec4<f32> {
     }
     return vec4<f32>(apply_fog(rgb, in.world_pos), 1.0);
 }
+
+@fragment
+fn fs_blend(in: VsOut) -> @location(0) vec4<f32> {
+    let texel = textureSample(albedo_tex, albedo_sampler, in.uv) * in.color;
+    var rgb = texel.rgb;
+    if in.lit != 0u {
+        rgb = shade(rgb, in.world_pos, in.normal, 0.0);
+    }
+    return vec4<f32>(apply_fog(rgb, in.world_pos), texel.a);
+}

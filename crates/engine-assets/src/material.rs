@@ -42,8 +42,9 @@ impl Default for AlphaCutoff {
 
 /// How a material treats coverage.
 ///
-/// These are the three classes from ADR-0015. Assigned sprites use all three. Assigned meshes use
-/// Opaque and Mask. Mesh [`Blend`](Self::Blend) is not drawn until blended meshes exist.
+/// These are the three classes from ADR-0015. Assigned sprites and meshes use all three.
+/// [`Blend`](Self::Blend) joins one back-to-front sequence. Primitive type does not pick a
+/// separate order.
 ///
 /// | Class | Depth test | Depth write | Blending |
 /// |---|---|---|---|

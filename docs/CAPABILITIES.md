@@ -357,27 +357,33 @@ Missing from the original category list and now tracked: **save games** (34), **
 ### 10. Depth, transparency, occlusion, render ordering
 * **Now.** One `Depth32Float` buffer, standard Z (`Less`). Order inside the single pass: opaque meshes,
   material opaque sprites, material mask sprites, legacy cutout sprites and tiles (depth write), then
-  alpha sprites back to front (depth test, no write). Material blend sprites share that last list.
-  `RenderOrder { layer, order }` overrides blended sprite order only. By decision (ADR-0004, amended 2026-10-13) spatial depth, transparency sorting, render layers or queues and explicit order are distinct concepts. A deliberate-ordering mechanism for coplanar opaque and cutout content is **not implemented and not chosen**. The M6 scene verified three limits, each pinned by a test in `configurations.rs` (D-48): equal-height cutout decals follow spawn order (`equal_height_cutout_decals_are_decided_by_draw_order_not_by_space`); a cutout decal coplanar with a slab is shown or hidden depending on the camera (`known_conflict_a_decal_coplanar_with_a_mesh_is_hidden_or_shown_by_rounding`); a blended decal at the same height as a cutout one is likewise camera-dependent (`known_conflict_a_blended_decal_at_the_same_height_as_a_cutout_one_depends_on_the_camera`). GPU tests: nearer mesh occludes a
-  sprite, farther does not, under all six example configurations; blended sprite interleaves with meshes by depth in the single-camera test (not re-run per configuration). Limits: blended sprites sort
-  by quad centre (KI-14); **an assigned mesh in Blend is skipped, not drawn**; `RenderScene` still has no
-  blended-mesh entry, so a blended mesh has no place to sort against blended sprites (R-1). Unassigned
-  meshes stay opaque.
+  one transparent sequence of blended sprites and blended meshes (depth test, no write). The GPU walks
+  that sequence. `RenderOrder { layer, order }` overrides order inside it only. A missing component is
+  `(0, 0)`. Sprite depth is the quad centre. Mesh depth is the camera-space Z of the world-space
+  bounding-sphere centre. Sprites are visited before meshes, so an equal key draws the sprite first.
+  By decision (ADR-0004, amended 2026-10-13) spatial depth, transparency sorting, render layers or queues and explicit order are distinct concepts. A deliberate-ordering mechanism for coplanar opaque and cutout content is **not implemented and not chosen**. The M6 scene verified three limits, each pinned by a test in `configurations.rs` (D-48): equal-height cutout decals follow spawn order (`equal_height_cutout_decals_are_decided_by_draw_order_not_by_space`); a cutout decal coplanar with a slab is shown or hidden depending on the camera (`known_conflict_a_decal_coplanar_with_a_mesh_is_hidden_or_shown_by_rounding`); a blended decal at the same height as a cutout one is likewise camera-dependent (`known_conflict_a_blended_decal_at_the_same_height_as_a_cutout_one_depends_on_the_camera`). GPU tests: nearer mesh occludes a
+  sprite, farther does not, under all six example configurations; a blended mesh, a blended sprite, and
+  another blended mesh composite in depth order; the opposite arrangement puts the sprite in front.
+  Limits: the mesh centre does not order intersections, cyclic overlaps, or a mesh that spans another
+  object's depth (KI-14). Unassigned meshes stay opaque.
 * **Required.** One documented rule for opaque, cutout and blended content from sprites, meshes, tiles,
   particles and skinned characters; defined behaviour when blended objects intersect.
-* **Planned.** Blended meshes from ADR-0015, using the camera-space Z of the world-space bounding-sphere centre. That approximation needs GPU tests in M5-5C. Material-aware batching of 1,000 sprites is M5-5D. Reverse-Z only if an artefact is shown (D-07). **Depends on.** M5-5B, which draws assigned opaque, mask, and blended sprites and assigned opaque and mask meshes. The three coplanar conflicts stay M6/D-48.
+* **Planned.** Material-aware batching of 1,000 sprites is M5-5D. Particles and skinned characters join
+  the same transparent sequence when they exist. Reverse-Z only if an artefact is shown (D-07).
+  **Depends on.** M5-5B (`3b3cd4a`) and M5-5C (working tree). The three coplanar conflicts stay M6/D-48.
 * **Integration.** Shadows, particles and skinned meshes all pick a class; UI is outside this model.
-* **Tests/examples.** A blended mesh in front of and behind a blended sprite (GPU test).
+* **Tests/examples.** `blend.rs` reads back a blended mesh behind a sprite and another in front, and the sprite-in-front arrangement.
 * **Not initially.** Order-independent transparency, per-pixel sorting.
 
 ### 11. Meshes and materials
 * **Now.** `MeshData` (position, normal, uv, `u32` indices), `Mesh` + inline `Material` (colour, one
   albedo texture, `lit`), `cuboid` and `cone` generators, back-face culled, instanced. Code-built only;
   no loader. `Mesh.material_asset` optionally selects a `MaterialAsset` (`e0c29ef`). When it resolves,
-  extraction uses that asset for colour, albedo, alpha class, lit, and culling. Opaque and Mask draw.
-  Blend does not. The inline field remains the unassigned path. The normal handle is not shaded.
-* **Required.** Blended meshes, more generators, tangents, a loader, skin data later. **Planned.** M5-5C,
-  M5-5D, then M12. **Depends on.** ADR-0015, D-36, D-17. The inline `Material` remains the rendered type
+  extraction uses that asset for colour, albedo, alpha class, lit, and culling. Opaque and Mask write
+  depth. Blend joins the transparent sequence, tests depth, and does not write it. The inline field
+  remains the unassigned opaque path. The normal handle is not shaded.
+* **Required.** More generators, tangents, a loader, skin data later. **Planned.** M5-5D, then M5-6
+  and M12. **Depends on.** ADR-0015, D-36, D-17. The inline `Material` remains the rendered type
   until a handle is assigned.
 * **Integration.** Sprites and meshes should share a material concept where sensible but need not share
   a pipeline (D-05, D-13).

@@ -113,7 +113,10 @@ impl SpriteLayer {
     }
 }
 
-/// Depth-writing mesh class. Blend is not a variant: that material is omitted at extraction.
+/// GPU state for one mesh draw. Variants are the real pipeline differences, not material ids.
+///
+/// [`Self::Blend`] is depth-tested, does not write depth, and joins the combined transparent
+/// sequence. Opaque and mask meshes stay in [`RenderScene::meshes`] and ignore [`crate::RenderOrder`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum MeshDraw {
     /// No blend and no alpha discard. Legacy meshes and opaque materials.
@@ -123,6 +126,21 @@ pub enum MeshDraw {
     Mask {
         double_sided: bool,
     },
+    /// Alpha blending. Depth test stays on. Depth write stays off.
+    Blend {
+        double_sided: bool,
+    },
+}
+
+/// One run in the combined back-to-front sequence.
+///
+/// Sprite ranges index [`RenderScene::blended_sprites`]. Mesh ranges index
+/// [`RenderScene::blended_meshes`]. A run grows only while the next item is the same kind and
+/// the same pipeline key, so a mesh between two sprites keeps those sprites as separate draws.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TransparentBatch {
+    Sprites(SpriteBatch),
+    Meshes { mesh: AssetHandle<MeshData>, texture: Option<AssetHandle<Texture>>, draw: MeshDraw, range: Range<u32> },
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -179,7 +197,12 @@ pub struct RenderScene {
     pub opaque_sprites: SpriteLayer,
     pub mask_sprites: SpriteLayer,
     pub cutout_sprites: SpriteLayer,
-    /// Alpha-blended sprites, back-to-front, drawn last with depth test but no depth write.
+    /// Blended sprites in transparent-sequence order. Batches are the contiguous sprite runs only.
+    /// A mesh between two sprites splits those runs even when the sprites share a texture.
     pub blended_sprites: SpriteLayer,
+    /// Blended meshes in transparent-sequence order. Ranges in [`Self::transparent`] index this.
+    pub blended_meshes: Vec<MeshInstance>,
+    /// Blended sprites and blended meshes, one back-to-front order. The backend walks this list.
+    pub transparent: Vec<TransparentBatch>,
     pub stats: ExtractStats,
 }

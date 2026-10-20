@@ -205,7 +205,8 @@ pub struct Mesh {
     /// Used when [`Self::material_asset`] is `None`. Meshes stay opaque on this path.
     pub material: Material,
     /// `None` keeps [`Self::material`]. `Some` supplies colour, albedo, alpha class, lit, and
-    /// culling. [`AlphaMode::Blend`](engine_assets::AlphaMode::Blend) is not drawn yet.
+    /// culling. [`AlphaMode::Blend`](engine_assets::AlphaMode::Blend) joins the same transparent
+    /// sequence as blended sprites. [`RenderOrder`] applies to that class only.
     pub material_asset: Option<AssetHandle<MaterialAsset>>,
 }
 

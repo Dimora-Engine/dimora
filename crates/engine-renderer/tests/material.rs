@@ -1,7 +1,7 @@
 //! Material handles on sprites and meshes, resolved at extraction.
 //!
 //! No handle keeps the legacy sprite or inline mesh path. A handle that does not resolve skips
-//! that renderable. A mesh material in `AlphaMode::Blend` is omitted until blended meshes exist.
+//! that renderable. A mesh material in `AlphaMode::Blend` joins the combined transparent sequence.
 
 use engine_assets::{AlphaMode, AssetHandle, AssetManager, LoadState, MaterialAsset, MeshData, SpriteAsset, Texture};
 use engine_core::Color;
@@ -264,7 +264,7 @@ fn replacing_a_shared_material_changes_the_next_extract() {
 }
 
 #[test]
-fn blended_sprites_share_one_sort_and_a_blended_mesh_is_not_drawn() {
+fn blended_sprites_and_a_blended_mesh_share_one_sort() {
     capture::begin();
     let mut assets = AssetManager::in_memory();
     sprite_asset(&mut assets, "red", [255, 0, 0, 255]);
@@ -288,17 +288,18 @@ fn blended_sprites_share_one_sort_and_a_blended_mesh_is_not_drawn() {
         .iter()
         .map(|i| if i.material_id.is_some() { "material" } else { "legacy" })
         .collect();
-    assert_eq!(names, ["material", "legacy", "material"], "far to near, with the same key for both kinds");
+    assert_eq!(names, ["material", "legacy", "material"], "sprite order stays far to near");
     assert_eq!(scene.blended_sprites.batches.len(), 3, "depth order is not rearranged to merge textures");
-    assert!(scene.meshes.is_empty());
+    assert!(scene.meshes.is_empty(), "a blend mesh is not an opaque draw");
+    assert_eq!(scene.blended_meshes.len(), 1);
+    assert_eq!(scene.blended_meshes[0].draw, MeshDraw::Blend { double_sided: false });
     assert_eq!(scene.stats.missing_assets, 0);
-    assert_eq!(scene.stats.meshes_visible, 0);
-    let messages = capture::messages();
-    assert_eq!(messages.len(), 1, "{messages:?}");
-    assert!(messages[0].contains("glass"), "{messages:?}");
-    assert!(messages[0].contains("Blend is not drawn"), "{messages:?}");
-    extract(&mut world, &assets);
-    assert_eq!(capture::messages().len(), 1, "the unsupported mesh blend logs once");
+    assert_eq!(scene.stats.meshes_visible, 1);
+    assert!(
+        scene.transparent.len() >= 4,
+        "the mesh at z = 0 follows the sprite at the same depth, after the farther sprites"
+    );
+    assert!(capture::messages().is_empty(), "a drawn blend mesh is not an unsupported-state warning");
 }
 
 #[test]

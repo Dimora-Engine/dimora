@@ -193,18 +193,19 @@ Rules that follow:
 
 These four ideas (spatial depth, transparency sorting, render layers or queues, explicit order) are kept
 distinct on purpose ([ADR-0004](adr/0004-one-spatial-world-many-camera-configurations.md), decision 4). Today
-`RenderOrder` reaches blended sprites only. The depth point used for sorting is the quad centre.
+`RenderOrder` reaches blended sprites and blended meshes. It does not reach opaque or mask draws. The
+sprite depth point is the quad centre. A blended mesh uses the camera-space Z of its world-space
+bounding-sphere centre.
 
-**Assigned materials (ADR-0015, M5-5B).** Opaque, Mask, and Blend are material classes. An assigned
+**Assigned materials (ADR-0015).** Opaque, Mask, and Blend are material classes. An assigned
 sprite uses the class instead of `SpriteBlend`. Opaque and Mask write depth and do not blend. Mask
-discards below the material cutoff. Blend sprites use the sort above, with depth test and no depth
-write, together with legacy blended sprites. `RenderOrder` still applies only inside that blended list.
-An assigned mesh draws Opaque and Mask. Blend on a mesh is skipped until M5-5C. The depth that
-checkpoint will use is the camera-space Z of the mesh's world-space bounding-sphere centre. That is
-an object-level approximation: intersecting transparent meshes, cyclic overlaps, an overlap whose centre
-misses the overlapping region, and a mesh that spans several depth ranges are outside what that point
-decides. GPU tests are required when blended meshes are implemented. The three coplanar conflicts below
-are unchanged and remain M6 (D-48).
+discards below the material cutoff. Blend sprites and blend meshes share one back-to-front list.
+The GPU submits that list in order. Depth test stays on and depth write stays off. `RenderOrder`
+applies inside that list only. A missing component is `(0, 0)`. Sprites are visited before meshes,
+so a tie draws the sprite first. The mesh centre is an object-level approximation: intersecting
+transparent meshes, cyclic overlaps, an overlap whose centre misses the overlapping region, a mesh
+that spans another object's depth, and a transparent mesh passing through a sprite plane are outside
+what that point decides. The three coplanar conflicts below are unchanged and remain M6 (D-48).
 Configurable sort or occlusion policies for isometric styles are left room for and not built. No mechanism
 was chosen from the cases below (D-48).
 
@@ -307,9 +308,11 @@ fixed quads are shaded consistently.
 `Mesh { asset, material, material_asset }` plus the entity's `Transform` is all a mesh needs. With
 `material_asset` unset, `Material` is a colour, an optional texture and a `lit` flag, and the mesh is
 opaque and back-face culled. With a handle, `MaterialAsset` supplies the colour, albedo, alpha class,
-lit flag, and `double_sided`. Albedo `None` is untextured. Blend is not drawn. Meshes use the same
-`GlobalTransform`, the same `CameraView` and the same depth buffer as sprites. Instances that share a
-mesh, a texture, and a draw class become one draw call.
+lit flag, and `double_sided`. Albedo `None` is untextured. Opaque and Mask write depth. Blend joins
+the same transparent sequence as blended sprites, tests depth, and does not write it. The fragment
+keeps the sampled alpha. Meshes use the same `GlobalTransform`, the same `CameraView` and the same
+depth buffer as sprites. Depth-writing instances that share a mesh, a texture, and a draw class
+become one draw. Blended meshes merge only while they stay contiguous in the sorted sequence.
 
 ## Batching
 
@@ -327,10 +330,12 @@ mesh, a texture, and a draw class become one draw call.
   (M5-4A, `bf4d9bb`); GPU samples of that path are M5-4B (`1666695`). A material albedo uses those
   UVs as stored and does not repack the atlas. Consecutive sprites merge when the texture and the
   pipeline match. Opaque and mask sprites are grouped by that pair. Blended sprites keep sort order.
-  Meshes merge on `(mesh, texture, draw class)`. Material id and revision are stored on the instance
-  and join the key in M5-5D. A measured group of 32 compatible opaque material sprites is one draw.
-  That is a baseline, not the 1,000-sprite criterion. GPU-driven instancing and culling beyond the
-  frustum test are still open.
+  Depth-writing meshes merge on `(mesh, texture, draw class)`. Blended sprites and blended meshes
+  merge only inside a contiguous run of the shared sequence. Material id and revision are stored on
+  the instance and join the key in M5-5D. A measured group of 32 compatible opaque material sprites
+  is one draw. Four compatible blended meshes were one draw. A sprite between two blended meshes was
+  three. That is a baseline, not the 1,000-sprite criterion. GPU-driven instancing and culling beyond
+  the frustum test are still open.
 
 ## Camera configurations
 
