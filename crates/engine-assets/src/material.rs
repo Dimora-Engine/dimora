@@ -1,8 +1,8 @@
 //! CPU material description.
 //!
-//! [`MaterialAsset`] is plain data for a future sprite, mesh, or tilemap draw. It holds no GPU
-//! object, shader, bind group, pipeline, entity, or world. The renderer does not read it yet.
-//! A sprite or mesh with no material handle keeps the appearance it has today.
+//! [`MaterialAsset`] is plain data. It holds no GPU object, shader, bind group, pipeline, entity,
+//! or world. Extraction reads it when a sprite or mesh stores a handle. The normal handle is not
+//! shaded. A sprite or mesh with no material handle keeps the appearance it had before materials.
 
 use engine_core::Color;
 
@@ -42,8 +42,8 @@ impl Default for AlphaCutoff {
 
 /// How a material treats coverage.
 ///
-/// These are the three classes from ADR-0015. Depth and blend state below are the policy a later
-/// checkpoint will apply. This checkpoint does not create that GPU state.
+/// These are the three classes from ADR-0015. Assigned sprites use all three. Assigned meshes use
+/// Opaque and Mask. Mesh [`Blend`](Self::Blend) is not drawn until blended meshes exist.
 ///
 /// | Class | Depth test | Depth write | Blending |
 /// |---|---|---|---|
@@ -110,8 +110,9 @@ impl std::error::Error for MaterialError {}
 ///
 /// The default matches the inline mesh material: linear white, no texture, lit, and opaque.
 /// `double_sided` defaults to `false`, which is how meshes are culled today. It does not
-/// reproduce a sprite. An unassigned sprite stays on `SpriteBlend`, its own tint, and its own
-/// lit flag until a later checkpoint reads a handle.
+/// reproduce an unassigned sprite. Assigning this default to a sprite culls its back face and
+/// treats coverage as opaque. A sprite that should show its back, or keep transparent texels,
+/// sets `double_sided` and [`AlphaMode::Blend`] or [`AlphaMode::Mask`].
 ///
 /// `normal` is stored for M14 and is not shaded. Texture handles are not resolved here. An
 /// asset that is not loaded yet is still a valid reference.

@@ -20,12 +20,16 @@ const SPRITE_FIELDS: &[FieldDesc] = &[
     FieldDesc::new("orientation", "SpriteOrientation"),
     FieldDesc::new("blend", "SpriteBlend"),
     FieldDesc::new("lit", "bool"),
+    FieldDesc::new("material", "Option<AssetHandle<MaterialAsset>>"),
 ];
 
 const ORDER_FIELDS: &[FieldDesc] = &[FieldDesc::new("layer", "i32"), FieldDesc::new("order", "i32")];
 
-const MESH_FIELDS: &[FieldDesc] =
-    &[FieldDesc::new("asset", "AssetHandle<MeshData>"), FieldDesc::new("material", "Material")];
+const MESH_FIELDS: &[FieldDesc] = &[
+    FieldDesc::new("asset", "AssetHandle<MeshData>"),
+    FieldDesc::new("material", "Material"),
+    FieldDesc::new("material_asset", "Option<AssetHandle<MaterialAsset>>"),
+];
 
 const TILE_FIELDS: &[FieldDesc] = &[
     FieldDesc::new("texture", "AssetHandle<Texture>"),
@@ -101,6 +105,7 @@ fn sprite_values(sprite: &Sprite) -> Vec<String> {
         format!("{:?}", sprite.orientation),
         format!("{:?}", sprite.blend),
         sprite.lit.to_string(),
+        option_asset(sprite.material),
     ]
 }
 
@@ -116,6 +121,7 @@ fn mesh_values(mesh: &Mesh) -> Vec<String> {
     vec![
         asset_id(mesh.asset),
         format!("base_color={} base_texture={texture} lit={}", color(mesh.material.base_color), mesh.material.lit),
+        option_asset(mesh.material_asset),
     ]
 }
 
@@ -148,6 +154,13 @@ fn light_values(light: &Light) -> Vec<String> {
 
 fn asset_id<T>(handle: AssetHandle<T>) -> String {
     format!("{:016x}", handle.id().0)
+}
+
+fn option_asset<T>(handle: Option<AssetHandle<T>>) -> String {
+    match handle {
+        Some(handle) => asset_id(handle),
+        None => "none".to_string(),
+    }
 }
 
 fn option_debug<T: core::fmt::Debug>(value: Option<T>) -> String {

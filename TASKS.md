@@ -37,8 +37,10 @@ the sampler cache, is commit `11b914f` and is not pushed. M5-2C, GPU mip generat
 `622ef80` and is not pushed. M5-3A, bounded CPU region transitions, is commit `b51f1fb` and is not
 pushed. M5-3B, GPU rectangle uploads, is commit `84d5ab1` and is not pushed. M5-4A, the CPU shelf
 packer, is commit `bf4d9bb` and is not pushed. M5-4B, GPU atlas sampling, is commit `1666695` and is
-not pushed. M5-5A, the CPU `MaterialAsset`, is in the working tree and is not committed. Localized mip
-regeneration has not started. Material rendering and material batching have not started. M6's camera-configuration prototype remains the only verified M6 work.
+not pushed. M5-5A, the CPU `MaterialAsset`, is commit `e0c29ef` and is not pushed. M5-5B, material
+handles and material-driven sprite and mesh rendering, is in the working tree and is not committed.
+Localized mip regeneration has not started. Blended meshes and the 1,000-sprite material batch have
+not started. M6's camera-configuration prototype remains the only verified M6 work.
 The manual window note under M4-4E and M4-5 is unchanged: the framebuffer and the keyboard were not observed.
 
 ## Completed work
@@ -1075,7 +1077,7 @@ Committed locally as `1666695`. Not pushed. M5-4A is commit `bf4d9bb`. M5 stays 
 
 ## M5-5A results (2026-10-19)
 
-In the working tree. Not committed. M5-4B is commit `1666695`. M5 stays in progress. Do not start M5-5B from this checkpoint.
+Committed locally as `e0c29ef` on 2026-10-20. Not pushed. M5-4B is commit `1666695`. The check below ran on the same tree before that commit. M5 stays in progress. M5-5B consumes this asset and is recorded in the next section.
 
 **API.** `MaterialAsset`, `AlphaMode`, `AlphaCutoff`, and `MaterialError` live in `engine-assets` and are re-exported from the engine prelude. The asset is plain data: linear `Color`, optional albedo `AssetHandle<Texture>`, optional normal `AssetHandle<Texture>`, alpha mode, `lit`, and `double_sided`. It has no GPU type, shader, bind group, pipeline, entity, or world. `engine-assets` depends on `engine-core` for `Color`. That edge does not cycle. The inline mesh `Material` keeps its name and stays the component field.
 
@@ -1097,6 +1099,26 @@ In the working tree. Not committed. M5-4B is commit `1666695`. M5 stays in progr
 
 **Screenshots.** Renderer, shaders, extraction, and the four historical scenes are unchanged, so M5-5A does not render them again. The M5-4B `cmp -s` against `6dbabb8` remains the baseline.
 
+## M5-5B results (2026-10-20)
+
+In the working tree. Not committed. M5-5A is commit `e0c29ef`. M5 stays in progress. M5-5C and M5-5D have not started.
+
+**Handles.** `Sprite.material` is `Option<AssetHandle<MaterialAsset>>`, default `None`, set with `with_material`. `Mesh.material` remains the inline `Material`. `Mesh.material_asset` is the optional handle, default `None`, set with `with_material_asset`. `TileMap` has no material handle. Existing constructors still build an unassigned renderable.
+
+**Resolution.** Extraction resolves the handle on the calling thread and copies colour, class, cutoff, lit, culling, texture id, material id, and material revision into `RenderScene`. The snapshot holds no world or asset-manager borrow. A missing or failed material skips that renderable and logs once, with `name_of` when the entry exists and the id otherwise. A load that is still pending does not log. A present material with a missing albedo keeps the existing placeholder: magenta for a sprite, white for a mesh. A mesh whose material is `AlphaMode::Blend` is not submitted. That logs once per material id and does not increment `missing_assets`.
+
+**Appearance.** An unassigned sprite keeps tint, `SpriteBlend`, `lit`, and the sprite texture. An unassigned mesh keeps the inline material and back-face culling. An assigned sprite's colour is the sample times `base_color` times `tint`, including alpha, in linear `Color`, without a CPU clamp. An assigned mesh is the sample times `base_color`. White is the sample when the mesh is untextured. Albedo `Some` selects that texture. Albedo `None` uses `SpriteAsset.texture` for a sprite and leaves a mesh untextured. Sprite UVs, size, pivot, and pixels per unit stay on the sprite asset. An overriding albedo is not remapped onto a different atlas. `AlphaMode` replaces `SpriteBlend` for that sprite. Opaque writes depth, does not blend, and does not discard. Mask writes depth and discards when the combined alpha is below the material cutoff. Blend sprites join the existing blended list: depth test, no depth write, the same `RenderOrder` then depth then order sort. `lit` and `double_sided` come from the material. `double_sided: false` culls back faces for both sprites and meshes. Unassigned sprites stay uncullled. `MaterialAsset::default` on a sprite is therefore opaque and single-sided.
+
+**Drawing.** Material opaque sprites, then material mask sprites, are drawn after meshes and before legacy cutout and tiles. Material blend sprites are in the blended list with legacy blends. New fragment entry points are `fs_opaque` and `fs_mask`. Legacy `fs_cutout` still discards below 0.5, and the legacy mesh fragment still writes alpha 1. The mask cutoff is packed in an existing instance flag. Pipelines differ by class and cull mode. They are not compiled per material. Texture and sampler caches are the existing ones.
+
+**Batching baseline, not the M5 criterion.** Thirty-two opaque sprites that share one material, one texture, and one cull mode are one instanced draw (`compatible_material_sprites_share_a_draw_and_blends_are_not_reordered_to_batch`). Opaque and mask sprites are grouped by texture and pipeline. Blended sprites are not reordered to enlarge a batch. Meshes merge on mesh, texture, and draw class. Material id and revision are carried for M5-5D and are not yet part of that key. This is not the 1,000-sprite acceptance test.
+
+**Not in this checkpoint.** Blended mesh drawing, a unified sprite/mesh transparent list, material-aware batching of 1,000 sprites, normal-map shading, a material graph, custom shaders, sprite sheets, atlas repacking, localized mips, and asset reference counts.
+
+**Repository check.** `scripts/check.sh` on 2026-10-20, macOS 27.0 arm64, `rustc 1.99.0`, exit 0, with M5-5B in the working tree. All 4 steps passed: `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` with `DIMORA_REQUIRE_GPU=1` (**514 passed, 0 failed, 0 ignored**, 44 suites), `cargo doc --workspace --no-deps` with `-D warnings`. A direct GPU run of `material.rs` printed `GPU test adapter: Apple M5 (Metal, IntegratedGpu); DownlevelFlags::ANISOTROPIC_FILTERING=true`. The check log captures test output, so that line is not in the check transcript. The GPU tests ran because `DIMORA_REQUIRE_GPU=1` was set. This paragraph was written after that check.
+
+**Screenshots.** Release 1280×720 images rendered on 2026-10-20 from this working tree, compared with `cmp -s` to the `6dbabb8` images recorded under M5-4B. All four matched. Baselines were not replaced. `basic_2_5d` 746071 bytes, SHA-256 `c3c5874adeea119c98255c6c1d08208c0244224d930d86e8736c280ef88b38fe`. `basic_2_5d --ortho` 462130 bytes, `f2aedc0c4a65e13a33187f391d2a778d073b3befbf1ce207bc6484d961ac980f`. `spatial_scene --camera perspective` 136991 bytes, `ec5f6252a88f642b454ae768f9eec8cdd5fba88a5aeb7a424fcefe5fda12275e`. `spatial_scene --camera orthographic` 34046 bytes, `3551d84fe2ec1c14fc0729c7a86e2031c068285a6551597ee32d100f76805cde`.
+
 ## Planned systems and their state
 
 None of these exists. They are in the roadmap so that earlier work does not block them; they are not
@@ -1114,7 +1136,7 @@ in the current scope.
 
 ## Not in scope now
 
-M5-2A, CPU texture descriptors, is committed locally as `c687d5b` and is not pushed. M5-2B is commit `11b914f` and is not pushed. M5-2C is commit `622ef80` and is not pushed. M5-3A, bounded region transitions, is commit `b51f1fb` and is not pushed. M5-3B, GPU rectangle uploads, is commit `84d5ab1` and is not pushed. M5-4A, the CPU shelf packer, is commit `bf4d9bb` and is not pushed. M5-4B, GPU atlas sampling, is commit `1666695` and is not pushed. M5-5A, the CPU `MaterialAsset`, is in the working tree and is not committed. M5 is not complete. Localized mip regeneration has not started. Material rendering, blended meshes, and the 1,000-sprite batch have not started. M6's remaining tasks, and everything after M5, are not in progress. In particular: no scene format, no prefab assets, no new rendering features in this change, no collision, no
+M5-2A, CPU texture descriptors, is committed locally as `c687d5b` and is not pushed. M5-2B is commit `11b914f` and is not pushed. M5-2C is commit `622ef80` and is not pushed. M5-3A, bounded region transitions, is commit `b51f1fb` and is not pushed. M5-3B, GPU rectangle uploads, is commit `84d5ab1` and is not pushed. M5-4A, the CPU shelf packer, is commit `bf4d9bb` and is not pushed. M5-4B, GPU atlas sampling, is commit `1666695` and is not pushed. M5-5A, the CPU `MaterialAsset`, is commit `e0c29ef` and is not pushed. M5-5B, material-driven rendering, is in the working tree and is not committed. M5 is not complete. Localized mip regeneration has not started. Blended meshes and the 1,000-sprite batch have not started. M6's remaining tasks, and everything after M5, are not in progress. In particular: no scene format, no prefab assets, no new rendering features in this change, no collision, no
 editor work, and no work on UI, scripting or any of the three character representations. M4 Phase 1 is commit `cdb5ec3`. Phase 2 is commit `2c76f71`. Phase 3 is commit `f9a4aab`. M4-4A is commit `302622b`. M4-4B is commit `128c70e`. M4-4C is commit `e12fb5b`. M4-4D is commit `8398e49`. M4-4E is commit `d58c66b`. M4-5 is commit `2b79806`. None of M4 is pushed. M4 is complete locally. M3b is complete locally and is not pushed. These systems are deliberately
 not being started together: each has its own milestone, prerequisites and decisions. Decisions that data
 formats or public APIs will bake in are made before their first consumer (see

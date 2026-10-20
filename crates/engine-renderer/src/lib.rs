@@ -31,5 +31,6 @@ pub use missing::{MissingAssetWarnings, MISSING_ASSET_WARNING_CAPACITY};
 pub use projection::{CameraProjection, Orthographic, Perspective, Projection, ScreenPosition};
 pub use registry::register_render_components;
 pub use scene::{
-    ExtractStats, LightData, MeshInstance, RenderScene, SpriteBatch, SpriteInstance, SpriteLayer, MAX_LIGHTS,
+    ExtractStats, LightData, MeshDraw, MeshInstance, RenderScene, SpriteBatch, SpriteInstance, SpriteLayer,
+    SpritePipelineKind, SpriteShading, MAX_LIGHTS,
 };

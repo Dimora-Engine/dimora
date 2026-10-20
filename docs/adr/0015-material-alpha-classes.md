@@ -1,10 +1,10 @@
 # ADR-0015: Material alpha classes and one blended sort
 
-* **Status:** Settled. The three alpha classes, the shared blended sort key, the sprite depth point, and the blended-mesh representative depth are accepted. M5-5A (working tree, not committed, 2026-10-19) adds the CPU `MaterialAsset` and `AlphaMode`. Extraction, pipelines, blended meshes, and material batching are not implemented.
-* **Date:** 2026-10-16. CPU asset note 2026-10-19.
+* **Status:** Settled. The three alpha classes, the shared blended sort key, the sprite depth point, and the blended-mesh representative depth are accepted. M5-5A (`e0c29ef`) stores the CPU `MaterialAsset`. M5-5B (working tree, 2026-10-20) resolves handles on sprites and meshes and draws opaque, mask, and blended sprites plus opaque and mask meshes. Blended meshes and the 1,000-sprite material batch are not implemented.
+* **Date:** 2026-10-16. CPU asset 2026-10-19. Handle rendering 2026-10-20.
 * **Backlog id:** D-05
 * **Decided by:** project owner (M5-1 planning approval, confirmed in the M5-1 final review)
-* **Affects:** `MaterialAsset` (not yet implemented), extraction order, `RenderScene`, sprite and mesh pipelines, M5, M14, M15. Does not change today's renderer.
+* **Affects:** `MaterialAsset`, extraction order, `RenderScene`, sprite and mesh pipelines, M5, M14, M15. Unassigned renderables keep the previous path.
 
 ## Context and problem
 
@@ -12,7 +12,7 @@
 
 ADR-0004 keeps spatial depth, transparency sorting, render layers or queues, and explicit order distinct. It does not choose a coplanar mechanism (D-48). Three coplanar conflicts are pinned by tests in `examples/spatial_scene/tests/configurations.rs` and described in `docs/SPATIAL_RENDERING.md`. This decision does not remove those conflicts.
 
-M5-1 recorded the policy without changing the renderer. M5-5A adds the CPU asset only. Renderer and shader code are unchanged.
+M5-1 recorded the policy without changing the renderer. M5-5A adds the CPU asset. M5-5B reads a handle during extraction and selects a pipeline. Unassigned sprites, meshes, and tilemaps are unchanged.
 
 ## Requirements and constraints
 
@@ -72,7 +72,7 @@ A missing `RenderOrder` is `(0, 0)`, so depth decides. `layer` dominating depth 
 
 **Coplanar conflicts.** D-48 is unchanged. Equal-height cutout decals, a cutout decal coplanar with a mesh, and a blended decal at the same height as a cutout one stay known conflicts. This ADR does not extend `RenderOrder` to cutout or opaque content, and it does not add a depth bias.
 
-**MaterialAsset.** A CPU asset in `engine-assets`, no `wgpu` type. Fields: linear `Color` base colour, optional albedo `AssetHandle<Texture>`, optional normal-map `AssetHandle<Texture>` that M5 does not sample, `AlphaMode`, lit flag, double-sided flag. `AlphaMode::Mask` stores an `AlphaCutoff` that must be finite and in `0.0..=1.0`. The default cutoff is `0.5`. `MaterialAsset::default` is linear white, no textures, `Opaque`, `lit: true`, `double_sided: false`, matching the inline mesh `Material` plus the opaque class meshes already use. It does not reproduce `SpriteBlend::Alpha`. GPU pipelines and bind groups stay in `engine-renderer-wgpu`. Sprites and meshes do not hold a material handle yet.
+**MaterialAsset.** A CPU asset in `engine-assets`, no `wgpu` type. Fields: linear `Color` base colour, optional albedo `AssetHandle<Texture>`, optional normal-map `AssetHandle<Texture>` that M5 does not sample, `AlphaMode`, lit flag, double-sided flag. `AlphaMode::Mask` stores an `AlphaCutoff` that must be finite and in `0.0..=1.0`. The default cutoff is `0.5`. `MaterialAsset::default` is linear white, no textures, `Opaque`, `lit: true`, `double_sided: false`, matching the inline mesh `Material` plus the opaque class meshes already use. It does not reproduce `SpriteBlend::Alpha`. GPU pipelines and bind groups stay in `engine-renderer-wgpu`. `Sprite.material` and `Mesh.material_asset` are optional handles. `TileMap` has none.
 
 **Compatibility, so examples need not migrate in the texture phases.** A sprite or mesh with no material handle keeps today's fields: sprite tint, `SpriteBlend`, and `lit`; inline mesh `Material` as opaque colour, one texture, and `lit`. When a handle is set, the asset supplies alpha class, cutoff, lit, double-sided, base colour, and albedo. Sprite tint still multiplies. `SpriteBlend` is not consulted for that sprite, so the handle and the enum cannot disagree. Tilemaps stay on the cutout path, which is the Mask class with cutoff 0.5, until a later change gives them a handle. They do not get a second renderer.
 
@@ -89,30 +89,23 @@ Opaque and Mask runs may be grouped by that key. Blend runs may merge only where
 
 **Ownership.** Materials and textures may be shared by entities, scene instances, and application code. Unload does not remove them. No new reference count and no second `AssetManager`.
 
-## CPU asset and the next checkpoint
+## What M5-5B renders
 
-M5-5A registers `MaterialAsset` through the existing `AssetManager`. A replacement bumps that store's revision. Texture handles are not resolved and are not reference-counted. A handle may name an asset that is not loaded. `validate` rejects a non-finite base colour and allows finite components outside `0.0..=1.0`.
+M5-5A registers `MaterialAsset` through the existing `AssetManager`. A replacement bumps that store's revision. Texture handles are not reference-counted. `validate` rejects a non-finite base colour and allows finite components outside `0.0..=1.0`.
 
-**No handle, accepted and still the renderer.** A sprite keeps its tint, `SpriteBlend`, `lit` flag, and `SpriteAsset` texture. A mesh keeps the inline `Material` and stays opaque. A tilemap stays on the cutout path, Mask with cutoff 0.5, until a later change gives it a handle.
+**No handle.** A sprite keeps its tint, `SpriteBlend`, `lit` flag, and `SpriteAsset` texture, and it is not culled. A mesh keeps the inline `Material`, stays opaque, and keeps back-face culling. A tilemap stays on the cutout path, which discards below 0.5.
 
-**Handle set, accepted, not implemented.** The asset supplies alpha class, cutoff, lit, double-sided, base colour, and albedo. Sprite tint still multiplies. `SpriteBlend` is not consulted, so the handle and the enum cannot disagree. Inline mesh `Material` is not consulted for that mesh.
+**Handle set.** The asset supplies alpha class, cutoff, lit, double-sided, base colour, and albedo. Sprite tint still multiplies, including alpha. `SpriteBlend` and the inline mesh `Material` are not consulted for that renderable. The product is linear and is not clamped on the CPU. Albedo `Some` selects that texture. Albedo `None` uses `SpriteAsset.texture` for a sprite and leaves a mesh untextured. Sprite UVs, size, pivot, and pixels per unit stay on the sprite asset. An overriding albedo is sampled with those UVs and is not remapped onto another atlas. A missing material skips the renderable and logs once, using a known name or the id, and does not fall back to the legacy fields. A pending load does not log. A missing albedo uses the existing placeholder, magenta for a sprite and white for a mesh. `double_sided: false` culls back faces on both sprites and meshes. `true` disables that cull. Assigning `MaterialAsset::default` to a sprite therefore hides the back face and treats transparent texels as opaque. A sprite author who wants the back face sets `double_sided`. One who wants transparent texels uses Blend or Mask.
 
-**Clarifications that need approval before M5-5B implements them.**
+**Classes that draw.** Opaque and Mask sprites and meshes write depth and do not blend. Mask discards when the combined alpha is below the material cutoff. That comparison is `effective_alpha < cutoff`. It is not a hardcoded 0.5 for an assigned material. Legacy cutout still uses 0.5. Blend sprites use the existing blended list and sort. A mesh material in Blend is not drawn and logs once. It is not reported as a missing asset.
 
-* Albedo `None` on a sprite falls back to `SpriteAsset.texture`. Albedo `Some` replaces that texture binding. The sprite asset still supplies UVs, size, and pivot. A mesh with albedo `None` stays untextured, as `base_texture: None` does today.
-* A material handle whose asset is missing skips the renderable and logs once, using `name_of` or the id. It does not fall back to the legacy fields and it does not invent a name. A present material whose albedo is missing keeps the existing missing-texture path: the draw uses the placeholder, and the log names the texture only when the manager has that name.
-* The assigned sprite colour is the sample multiplied by `base_color` and then by `sprite.tint`, per channel, including alpha.
-* `double_sided: false` on an assigned sprite selects back-face culling. Unassigned sprites stay uncullled. The default is `false` because meshes cull back faces. Assigning the default material would hide a sprite's back face.
+**Revisions.** Material identity is the `AssetId`. The revision is the asset-store revision. Both are copied onto the instance for a later batch key. A base-colour, lit, cutoff, class, or culling change is instance data or a pipeline selection. It does not allocate a texture image. An albedo change rebinds through the existing texture cache. The normal handle is not bound. There is no material GPU cache.
 
-**M5-5B handles.** Add `material: Option<AssetHandle<MaterialAsset>>` to `Sprite` and `Mesh`, default `None` in the existing constructors. Do not add it to `TileMap` in that checkpoint. Do not remove the inline `Material`.
-
-**Revisions, not implemented.** Material identity is the `AssetId`. The revision is the asset-store revision. A base-colour, lit, or cutoff change updates instance or uniform data and does not allocate a pipeline, image, or sampler. A class or `double_sided` change selects a pipeline. An albedo id change rebinds through the existing texture cache. The normal handle is not bound. There is no material GPU cache in M5-5A, and M5-5B should not add a second texture cache.
-
-**Batching, not implemented.** Sharing a `MaterialAsset` is not a batch. The current renderer merges consecutive sprite instances with the same texture and does not reorder them. Cutout sprites are grouped by texture. Blended sprites keep the sort, so they batch only when neighbours already share a texture. Meshes merge on `(mesh, texture)`. M5-5D adds material id, revision, pipeline class, and sampler to that key. Opaque and mask runs may be grouped. Blend runs merge only when the sorted order is already contiguous. One thousand sprites are one instanced draw when they share one material revision, one texture, one sampler, the sprite quad, one instance layout, and one class, and no other key is interleaved.
+**Batching, still short of the 1,000-sprite criterion.** Consecutive sprite instances merge when the texture and the pipeline match. Opaque and mask sprites are grouped by that pair. Blended sprites keep sort order, so they merge only when neighbours already match. Meshes merge on `(mesh, texture, draw class)`. Material id and revision are not part of the key yet. A measured group of 32 compatible opaque material sprites is one draw. M5-5D adds the material key and the 1,000-sprite measurement. Extraction must not reorder blended objects to enlarge a batch.
 
 ## Consequences and follow-up
 
-* M5-5A stores `MaterialAsset`. M5-5B is the optional handle and the GPU binding, after the clarifications above. Blended meshes stay a later M5 slice. The 1,000-sprite measurement is M5-5D. M5-2 did not add the asset.
+* M5-5A (`e0c29ef`) stores `MaterialAsset`. M5-5B binds it for sprites and for opaque and mask meshes. Blended meshes stay M5-5C. The 1,000-sprite measurement stays M5-5D.
 * The blended-mesh depth point is settled as the camera-space Z of the world-space bounding-sphere centre. Implementing it requires GPU tests of the approximation limits above.
 * M14 samples the normal slot. M15 particles pick one of the three classes.
 * Screenshot baselines against `6dbabb8` stay in force. This ADR does not move them.
@@ -120,6 +113,6 @@ M5-5A registers `MaterialAsset` through the existing `AssetManager`. A replaceme
 
 ## Evidence and revisit conditions
 
-Today's sprite key and quad-centre depth are in `extract.rs` and the `RenderOrder` tests. Mesh culling already transforms the bounding-sphere centre. The three coplanar tests still describe current pixels. The 2026-10-16 review accepted the mesh depth point and left the three coplanar conflicts with M6 and D-48. M5-5A adds CPU tests of `MaterialAsset` only. It does not change extraction or the renderer.
+Today's sprite key and quad-centre depth are in `extract.rs` and the `RenderOrder` tests. Mesh culling already transforms the bounding-sphere centre. The three coplanar tests still describe current pixels. The 2026-10-16 review accepted the mesh depth point and left the three coplanar conflicts with M6 and D-48. M5-5A (`e0c29ef`) adds the CPU asset. M5-5B reads handles in extraction and adds GPU readback for assigned sprites and meshes. It does not draw blended meshes and does not change the coplanar tests.
 
 Reopen the settled class, sort key, or mesh depth point only under the rule at the bottom of DECISIONS.md. The phase that implements blended meshes adds the GPU tests named above before the approximation is treated as verified behaviour.

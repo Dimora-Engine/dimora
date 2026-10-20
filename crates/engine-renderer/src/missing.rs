@@ -2,7 +2,7 @@
 
 use std::cell::{Cell, RefCell};
 
-use engine_assets::{Asset, AssetHandle, AssetId, AssetManager, LoadState, Texture};
+use engine_assets::{Asset, AssetHandle, AssetId, AssetManager, LoadState, MaterialAsset, Texture};
 use engine_world::World;
 
 use crate::scene::ExtractStats;
@@ -29,6 +29,11 @@ pub const MISSING_ASSET_WARNING_CAPACITY: usize = 64;
 pub struct MissingAssetWarnings {
     recent: RefCell<Vec<AssetId>>,
     overflow_reported: Cell<bool>,
+    /// Materials that resolved and then were refused, such as a mesh in `AlphaMode::Blend`.
+    ///
+    /// These stay remembered while the asset is loaded. [`resolve`] forgets ids in `recent` when a
+    /// load succeeds, which would make a loaded-but-undrawn material warn on every frame.
+    unrendered: RefCell<Vec<AssetId>>,
 }
 
 enum WarningSlot {
@@ -171,6 +176,39 @@ pub(crate) fn report_absent_texture(
             None => log::warn!("missing {kind}: asset {:016x} {reason}", id.0),
         },
     }
+}
+
+/// A mesh material asked for [`engine_assets::AlphaMode::Blend`]. The mesh is not drawn.
+///
+/// The warning is once per material id. A known name is included. An unknown id is not given a
+/// made-up name. This is not a missing-asset count.
+pub(crate) fn report_unrendered_mesh_blend(
+    world: &World,
+    assets: &AssetManager,
+    handle: AssetHandle<MaterialAsset>,
+    _watch: &mut bool,
+) {
+    if !remember_unrendered(world, handle.id()) {
+        return;
+    }
+    match assets.name_of(handle) {
+        Some(name) => log::warn!("skipping mesh material '{name}': Blend is not drawn until blended meshes exist"),
+        None => {
+            log::warn!("skipping mesh material {:016x}: Blend is not drawn until blended meshes exist", handle.id().0)
+        }
+    }
+}
+
+fn remember_unrendered(world: &World, id: AssetId) -> bool {
+    let Some(warnings) = world.try_resource::<MissingAssetWarnings>() else {
+        return true;
+    };
+    let mut ids = warnings.unrendered.borrow_mut();
+    if ids.contains(&id) || ids.len() == MISSING_ASSET_WARNING_CAPACITY {
+        return false;
+    }
+    ids.push(id);
+    true
 }
 
 fn note<T: Asset>(

@@ -338,8 +338,10 @@ Missing from the original category list and now tracked: **save games** (34), **
 
 ### 9. Spatial sprites
 * **Now.** `Sprite` + `Transform`: world-space quad, `Billboard`/`Upright`/`Fixed`, region, size,
-  anchor, flips, tint, cutout or alpha blend, lit flag; extracted, culled by bounding sphere, sorted and
-  batched by texture (5,000 sprites one draw in a test).
+  anchor, flips, tint, cutout or alpha blend, lit flag, and an optional `MaterialAsset` handle.
+  Unassigned sprites keep the fields above. An assigned material replaces blend, lit, and the texture
+  binding, and the sprite tint still multiplies. Extracted, culled by bounding sphere, and batched by
+  texture and pipeline (5,000 unassigned sprites one draw in a test; 32 assigned opaque sprites one draw).
 * **Required.** Atlases, sheets, trim/pivot handling, pixel-art policy, consistent size units.
 * **Planned.** Atlas builder and sub-region update (M5), sheets (M8). **Depends on.** D-27, D-06.
 * **Integration.** Sprites are bones' children, tiles' sibling path, particles' target path.
@@ -354,15 +356,16 @@ Missing from the original category list and now tracked: **save games** (34), **
 
 ### 10. Depth, transparency, occlusion, render ordering
 * **Now.** One `Depth32Float` buffer, standard Z (`Less`). Order inside the single pass: opaque meshes,
-  cutout sprites and tiles (depth write), then alpha sprites back to front (depth test, no write).
+  material opaque sprites, material mask sprites, legacy cutout sprites and tiles (depth write), then
+  alpha sprites back to front (depth test, no write). Material blend sprites share that last list.
   `RenderOrder { layer, order }` overrides blended sprite order only. By decision (ADR-0004, amended 2026-10-13) spatial depth, transparency sorting, render layers or queues and explicit order are distinct concepts. A deliberate-ordering mechanism for coplanar opaque and cutout content is **not implemented and not chosen**. The M6 scene verified three limits, each pinned by a test in `configurations.rs` (D-48): equal-height cutout decals follow spawn order (`equal_height_cutout_decals_are_decided_by_draw_order_not_by_space`); a cutout decal coplanar with a slab is shown or hidden depending on the camera (`known_conflict_a_decal_coplanar_with_a_mesh_is_hidden_or_shown_by_rounding`); a blended decal at the same height as a cutout one is likewise camera-dependent (`known_conflict_a_blended_decal_at_the_same_height_as_a_cutout_one_depends_on_the_camera`). GPU tests: nearer mesh occludes a
   sprite, farther does not, under all six example configurations; blended sprite interleaves with meshes by depth in the single-camera test (not re-run per configuration). Limits: blended sprites sort
-  by quad centre (KI-14); **meshes cannot be blended**; `RenderScene` is partitioned by primitive type
-  (meshes, cutout, blended sprites), not by transparency class, so a blended mesh has no place to sort
-  against blended sprites (R-1).
+  by quad centre (KI-14); **an assigned mesh in Blend is skipped, not drawn**; `RenderScene` still has no
+  blended-mesh entry, so a blended mesh has no place to sort against blended sprites (R-1). Unassigned
+  meshes stay opaque.
 * **Required.** One documented rule for opaque, cutout and blended content from sprites, meshes, tiles,
   particles and skinned characters; defined behaviour when blended objects intersect.
-* **Planned.** Alpha classes from ADR-0015. The CPU enum exists in the working tree (M5-5A, not committed) and does not change extraction. A blended mesh sorts by the camera-space Z of its world-space bounding-sphere centre, an object-level approximation that needs GPU tests when that phase exists. Reverse-Z only if an artefact is shown (D-07). **Depends on.** The rest of the M5 material phase. The three coplanar conflicts stay M6/D-48.
+* **Planned.** Blended meshes from ADR-0015, using the camera-space Z of the world-space bounding-sphere centre. That approximation needs GPU tests in M5-5C. Material-aware batching of 1,000 sprites is M5-5D. Reverse-Z only if an artefact is shown (D-07). **Depends on.** M5-5B, which draws assigned opaque, mask, and blended sprites and assigned opaque and mask meshes. The three coplanar conflicts stay M6/D-48.
 * **Integration.** Shadows, particles and skinned meshes all pick a class; UI is outside this model.
 * **Tests/examples.** A blended mesh in front of and behind a blended sprite (GPU test).
 * **Not initially.** Order-independent transparency, per-pixel sorting.
@@ -370,12 +373,12 @@ Missing from the original category list and now tracked: **save games** (34), **
 ### 11. Meshes and materials
 * **Now.** `MeshData` (position, normal, uv, `u32` indices), `Mesh` + inline `Material` (colour, one
   albedo texture, `lit`), `cuboid` and `cone` generators, back-face culled, instanced. Code-built only;
-  no loader. Extraction still reads that inline field. CPU `MaterialAsset` (M5-5A, working tree, not
-  committed) stores a linear base colour, optional albedo and normal handles, `AlphaMode`, `lit`, and
-  `double_sided`. It is not rendered. The normal handle is not shaded.
-* **Required.** Material-driven rendering from ADR-0015, more generators, tangents, a loader, skin data
-  later. **Planned.** The rest of M5, then M12. **Depends on.** ADR-0015, D-36, D-17. The inline `Material`
-  remains the rendered type until a handle is assigned.
+  no loader. `Mesh.material_asset` optionally selects a `MaterialAsset` (`e0c29ef`). When it resolves,
+  extraction uses that asset for colour, albedo, alpha class, lit, and culling. Opaque and Mask draw.
+  Blend does not. The inline field remains the unassigned path. The normal handle is not shaded.
+* **Required.** Blended meshes, more generators, tangents, a loader, skin data later. **Planned.** M5-5C,
+  M5-5D, then M12. **Depends on.** ADR-0015, D-36, D-17. The inline `Material` remains the rendered type
+  until a handle is assigned.
 * **Integration.** Sprites and meshes should share a material concept where sensible but need not share
   a pipeline (D-05, D-13).
 * **Tests/examples.** Pixel tests per alpha mode; glTF fixtures (M12).

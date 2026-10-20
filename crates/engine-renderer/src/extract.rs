@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
-use engine_assets::{AssetManager, Texture};
+use engine_assets::{AlphaMode, AssetHandle, AssetId, AssetManager, MaterialAsset, SpriteAsset, Texture};
+use engine_core::Color;
 use engine_math::{Mat3, Mat4, Quat, Rect, Vec2, Vec3};
 use engine_world::{Entity, GlobalTransform, Parent, Visibility, World};
 
@@ -10,7 +11,7 @@ use crate::components::{
 };
 use crate::frustum::Frustum;
 use crate::interpolate::{render_poses, RenderPoses};
-use crate::missing::{report_absent_texture, resolve, MissingAssetWarnings};
+use crate::missing::{report_absent_texture, report_unrendered_mesh_blend, resolve, MissingAssetWarnings};
 use crate::scene::*;
 
 /// Snapshots the world into a [`RenderScene`] for the active camera. `target_size` is the render
@@ -44,6 +45,8 @@ pub fn extract_scene(world: &World, assets: &AssetManager, target_size: Vec2) ->
     stats.lights = lights.len() as u32;
 
     let mut cutout: Vec<SpriteInstance> = Vec::new();
+    let mut opaque: Vec<SpriteInstance> = Vec::new();
+    let mut mask: Vec<SpriteInstance> = Vec::new();
     let mut blended: Vec<(SortKey, SpriteInstance)> = Vec::new();
     let mut watch = world.try_resource::<MissingAssetWarnings>().is_some_and(|warnings| !warnings.is_empty());
 
@@ -54,15 +57,9 @@ pub fn extract_scene(world: &World, assets: &AssetManager, target_size: Vec2) ->
         let Some(asset) = resolve(world, assets, sprite.asset, "sprite", &mut watch, &mut stats) else {
             continue;
         };
-        report_absent_texture(
-            world,
-            assets,
-            asset.texture,
-            "sprite texture",
-            assets.name_of(sprite.asset).map(|name| ("sprite", name)),
-            &mut watch,
-            &mut stats,
-        );
+        let Some(appearance) = sprite_appearance(world, assets, sprite, asset, &mut watch, &mut stats) else {
+            continue;
+        };
         let size = sprite.size.unwrap_or_else(|| asset.world_size());
         let anchor = sprite.anchor.unwrap_or(asset.pivot);
         let placement = sprite_placement(&poses.matrix(entity, global), sprite.orientation, &view);
@@ -75,13 +72,18 @@ pub fn extract_scene(world: &World, assets: &AssetManager, target_size: Vec2) ->
         let instance = SpriteInstance {
             model,
             uv: flipped_uv(sub_region(asset.uv, sprite.region), sprite.flip_x, sprite.flip_y),
-            tint: sprite.tint.to_array(),
-            lit: sprite.lit,
-            texture: asset.texture,
+            tint: appearance.tint,
+            lit: appearance.lit,
+            texture: appearance.texture,
+            shading: appearance.shading,
+            material_id: appearance.material_id,
+            material_revision: appearance.material_revision,
         };
-        match sprite.blend {
-            SpriteBlend::Cutout => cutout.push(instance),
-            SpriteBlend::Alpha => {
+        match appearance.shading {
+            SpriteShading::LegacyCutout => cutout.push(instance),
+            SpriteShading::Opaque { .. } => opaque.push(instance),
+            SpriteShading::Mask { .. } => mask.push(instance),
+            SpriteShading::LegacyBlend | SpriteShading::Blend { .. } => {
                 let depth = view.view.transform_point3(quad_center(&model)).z;
                 let RenderOrder { layer, order } = order.copied().unwrap_or_default();
                 blended.push((SortKey { layer, depth, order }, instance));
@@ -107,17 +109,9 @@ pub fn extract_scene(world: &World, assets: &AssetManager, target_size: Vec2) ->
         let Some(data) = resolve(world, assets, mesh.asset, "mesh", &mut watch, &mut stats) else {
             continue;
         };
-        if let Some(texture) = mesh.material.base_texture {
-            report_absent_texture(
-                world,
-                assets,
-                texture,
-                "mesh texture",
-                assets.name_of(mesh.asset).map(|name| ("mesh", name)),
-                &mut watch,
-                &mut stats,
-            );
-        }
+        let Some(surface) = mesh_surface(world, assets, mesh, &mut watch, &mut stats) else {
+            continue;
+        };
         let (center, radius) = data.bounding_sphere();
         let m = poses.matrix(entity, global);
         let max_scale = m.cols[0].xyz().length().max(m.cols[1].xyz().length()).max(m.cols[2].xyz().length());
@@ -129,19 +123,27 @@ pub fn extract_scene(world: &World, assets: &AssetManager, target_size: Vec2) ->
         meshes.push(MeshInstance {
             model: m,
             mesh: mesh.asset,
-            color: mesh.material.base_color.to_array(),
-            texture: mesh.material.base_texture,
-            lit: mesh.material.lit,
+            color: surface.color,
+            texture: surface.texture,
+            lit: surface.lit,
+            draw: surface.draw,
+            cutoff: surface.cutoff,
+            material_id: surface.material_id,
+            material_revision: surface.material_revision,
         });
     }
-    // Group identical (mesh, texture) pairs so the backend can merge them into instanced draws.
-    meshes.sort_by_key(|m| (m.mesh.id(), m.texture.map(|t| t.id())));
+    // Group identical (mesh, texture, draw) triples so the backend can merge them into instanced draws.
+    meshes.sort_by_key(|m| (m.mesh.id(), m.texture.map(|t| t.id()), m.draw));
 
     // Far to near: larger view depth first. Stable, so equal keys keep ECS iteration order, which
     // is deterministic for a given sequence of spawns.
     blended
         .sort_by(|(a, _), (b, _)| a.layer.cmp(&b.layer).then(b.depth.total_cmp(&a.depth)).then(a.order.cmp(&b.order)));
-    // Opaque sprites do not need ordering for correctness; group by texture to minimise batches.
+    // Opaque and mask sprites do not need ordering for correctness. Group by texture, then by cull
+    // mode, so a run shares one pipeline. Blended sprites stay in sort order.
+    let group = |i: &SpriteInstance| (i.texture.id(), i.shading.pipeline());
+    opaque.sort_by_key(group);
+    mask.sort_by_key(group);
     cutout.sort_by_key(|i| i.texture.id());
 
     Some(RenderScene {
@@ -152,10 +154,157 @@ pub fn extract_scene(world: &World, assets: &AssetManager, target_size: Vec2) ->
         fog: [fog.color.r, fog.color.g, fog.color.b, fog.density],
         lights,
         meshes,
+        opaque_sprites: SpriteLayer::from_ordered(opaque),
+        mask_sprites: SpriteLayer::from_ordered(mask),
         cutout_sprites: SpriteLayer::from_ordered(cutout),
         blended_sprites: SpriteLayer::from_ordered(blended.into_iter().map(|(_, i)| i).collect()),
         stats,
     })
+}
+
+struct SpriteAppearance {
+    texture: AssetHandle<Texture>,
+    tint: [f32; 4],
+    lit: bool,
+    shading: SpriteShading,
+    material_id: Option<AssetId>,
+    material_revision: u32,
+}
+
+fn sprite_appearance(
+    world: &World,
+    assets: &AssetManager,
+    sprite: &Sprite,
+    asset: &SpriteAsset,
+    watch: &mut bool,
+    stats: &mut ExtractStats,
+) -> Option<SpriteAppearance> {
+    let Some(handle) = sprite.material else {
+        report_absent_texture(
+            world,
+            assets,
+            asset.texture,
+            "sprite texture",
+            assets.name_of(sprite.asset).map(|name| ("sprite", name)),
+            watch,
+            stats,
+        );
+        let shading = match sprite.blend {
+            SpriteBlend::Cutout => SpriteShading::LegacyCutout,
+            SpriteBlend::Alpha => SpriteShading::LegacyBlend,
+        };
+        return Some(SpriteAppearance {
+            texture: asset.texture,
+            tint: sprite.tint.to_array(),
+            lit: sprite.lit,
+            shading,
+            material_id: None,
+            material_revision: 0,
+        });
+    };
+    let owner = assets.name_of(sprite.asset).map(|name| ("sprite", name));
+    let material = resolve(world, assets, handle, "material", watch, stats)?;
+    let texture = match material.albedo {
+        Some(texture) => {
+            report_absent_texture(world, assets, texture, "material texture", owner, watch, stats);
+            texture
+        }
+        None => {
+            report_absent_texture(world, assets, asset.texture, "sprite texture", owner, watch, stats);
+            asset.texture
+        }
+    };
+    Some(SpriteAppearance {
+        texture,
+        tint: color_product(material.base_color, sprite.tint),
+        lit: material.lit,
+        shading: sprite_shading(material),
+        material_id: Some(handle.id()),
+        material_revision: assets.revision(handle),
+    })
+}
+
+fn sprite_shading(material: &MaterialAsset) -> SpriteShading {
+    match material.alpha_mode {
+        AlphaMode::Opaque => SpriteShading::Opaque { double_sided: material.double_sided },
+        AlphaMode::Mask { cutoff } => SpriteShading::Mask { cutoff: cutoff.get(), double_sided: material.double_sided },
+        AlphaMode::Blend => SpriteShading::Blend { double_sided: material.double_sided },
+    }
+}
+
+struct MeshSurface {
+    color: [f32; 4],
+    texture: Option<AssetHandle<Texture>>,
+    lit: bool,
+    draw: MeshDraw,
+    cutoff: f32,
+    material_id: Option<AssetId>,
+    material_revision: u32,
+}
+
+fn mesh_surface(
+    world: &World,
+    assets: &AssetManager,
+    mesh: &Mesh,
+    watch: &mut bool,
+    stats: &mut ExtractStats,
+) -> Option<MeshSurface> {
+    let Some(handle) = mesh.material_asset else {
+        if let Some(texture) = mesh.material.base_texture {
+            report_absent_texture(
+                world,
+                assets,
+                texture,
+                "mesh texture",
+                assets.name_of(mesh.asset).map(|name| ("mesh", name)),
+                watch,
+                stats,
+            );
+        }
+        return Some(MeshSurface {
+            color: mesh.material.base_color.to_array(),
+            texture: mesh.material.base_texture,
+            lit: mesh.material.lit,
+            draw: MeshDraw::Solid { double_sided: false },
+            cutoff: 0.0,
+            material_id: None,
+            material_revision: 0,
+        });
+    };
+    let material = resolve(world, assets, handle, "material", watch, stats)?;
+    if matches!(material.alpha_mode, AlphaMode::Blend) {
+        report_unrendered_mesh_blend(world, assets, handle, watch);
+        return None;
+    }
+    if let Some(texture) = material.albedo {
+        report_absent_texture(
+            world,
+            assets,
+            texture,
+            "material texture",
+            assets.name_of(mesh.asset).map(|name| ("mesh", name)),
+            watch,
+            stats,
+        );
+    }
+    let (draw, cutoff) = match material.alpha_mode {
+        AlphaMode::Opaque => (MeshDraw::Solid { double_sided: material.double_sided }, 0.0),
+        AlphaMode::Mask { cutoff } => (MeshDraw::Mask { double_sided: material.double_sided }, cutoff.get()),
+        AlphaMode::Blend => unreachable!("blend was returned above"),
+    };
+    Some(MeshSurface {
+        color: material.base_color.to_array(),
+        texture: material.albedo,
+        lit: material.lit,
+        draw,
+        cutoff,
+        material_id: Some(handle.id()),
+        material_revision: assets.revision(handle),
+    })
+}
+
+fn color_product(base: Color, tint: Color) -> [f32; 4] {
+    [base.r * tint.r, base.g * tint.g, base.b * tint.b, base.a * tint.a]
 }
 
 struct SortKey {
@@ -376,6 +525,9 @@ fn extract_tilemap(
                 tint: [1.0; 4],
                 lit: map.lit,
                 texture: map.texture,
+                shading: SpriteShading::LegacyCutout,
+                material_id: None,
+                material_revision: 0,
             });
         }
     }

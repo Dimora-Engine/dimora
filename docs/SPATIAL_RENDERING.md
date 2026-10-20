@@ -105,12 +105,12 @@ only a `RenderScene`.
 |---|---|---|
 | Texture | `Texture` asset (pixels), `AssetHandle<Texture>` | `wgpu::Texture` + bind group, cached by id + revision |
 | Mesh | `MeshData` asset (vertices, indices), `Mesh` component | Vertex/index buffers, cached by id + revision |
-| Material | Inline `Material` (color, optional texture, `lit`). CPU `MaterialAsset` is not read yet | Resolved into per-instance color + texture bind group |
+| Material | Inline `Material`, or an optional `MaterialAsset` handle on `Sprite` and `Mesh` | Resolved into per-instance color, cutoff, and a pipeline chosen by class and cull mode |
 | Sprite | `Sprite` (+ `SpriteAsset`: texture, UV rect, pivot) | One unit quad shared by all sprites; per-instance data |
-| Pipeline | none | Sprite cutout / blend, mesh; created once |
+| Pipeline | none | Legacy sprite cutout and blend, plus opaque, mask, and culled blend variants; mesh solid and mask, culled or double-sided. Created once, not per material |
 | Buffer | none | Growable instance buffers, uploaded per frame |
 
-The inline `Material` is what a mesh draw uses. `MaterialAsset` is the CPU asset that a later checkpoint can assign. Unassigned sprites and meshes keep today's fields.
+An unassigned mesh still uses the inline `Material`. An assigned handle resolves to `MaterialAsset` during extraction. Unassigned sprites keep tint, `SpriteBlend`, and their own lit flag.
 
 ## Spatial renderables
 
@@ -195,15 +195,16 @@ These four ideas (spatial depth, transparency sorting, render layers or queues, 
 distinct on purpose ([ADR-0004](adr/0004-one-spatial-world-many-camera-configurations.md), decision 4). Today
 `RenderOrder` reaches blended sprites only. The depth point used for sorting is the quad centre.
 
-**Decided for a later milestone, not implemented (ADR-0015, 2026-10-16).** Opaque, Mask, and Blend are
-material classes. Blended meshes join this same sort, using the same key as blended sprites. The sprite
-key and the quad-centre depth stay. `RenderOrder` stays inside the blended class. Opaque and masked
-objects keep spatial depth. The three coplanar conflicts below are unchanged and remain M6 (D-48). The
-depth used for a blended mesh is the camera-space Z of its world-space bounding-sphere centre. That is
+**Assigned materials (ADR-0015, M5-5B).** Opaque, Mask, and Blend are material classes. An assigned
+sprite uses the class instead of `SpriteBlend`. Opaque and Mask write depth and do not blend. Mask
+discards below the material cutoff. Blend sprites use the sort above, with depth test and no depth
+write, together with legacy blended sprites. `RenderOrder` still applies only inside that blended list.
+An assigned mesh draws Opaque and Mask. Blend on a mesh is skipped until M5-5C. The depth that
+checkpoint will use is the camera-space Z of the mesh's world-space bounding-sphere centre. That is
 an object-level approximation: intersecting transparent meshes, cyclic overlaps, an overlap whose centre
 misses the overlapping region, and a mesh that spans several depth ranges are outside what that point
-decides. GPU tests are required when blended meshes are implemented. No shader or extraction code
-changed with the decision.
+decides. GPU tests are required when blended meshes are implemented. The three coplanar conflicts below
+are unchanged and remain M6 (D-48).
 Configurable sort or occlusion policies for isometric styles are left room for and not built. No mechanism
 was chosen from the cases below (D-48).
 
@@ -303,10 +304,12 @@ fixed quads are shaded consistently.
 
 ## Meshes
 
-`Mesh { asset, material }` plus the entity's `Transform` is all a mesh needs. `Material` is a
-colour, an optional texture and a `lit` flag; `Material::unlit` gives a flat colour. Meshes use the
-same `GlobalTransform`, the same `CameraView` and the same depth buffer as sprites. The `Mesh` path
-batches instances of the same mesh and texture into one draw call.
+`Mesh { asset, material, material_asset }` plus the entity's `Transform` is all a mesh needs. With
+`material_asset` unset, `Material` is a colour, an optional texture and a `lit` flag, and the mesh is
+opaque and back-face culled. With a handle, `MaterialAsset` supplies the colour, albedo, alpha class,
+lit flag, and `double_sided`. Albedo `None` is untextured. Blend is not drawn. Meshes use the same
+`GlobalTransform`, the same `CameraView` and the same depth buffer as sprites. Instances that share a
+mesh, a texture, and a draw class become one draw call.
 
 ## Batching
 
@@ -321,10 +324,13 @@ batches instances of the same mesh and texture into one draw call.
   `basic_2_5d`, 3000 grass tufts plus tiles are a single sprite draw call.
 * Culling (a bounding sphere against the camera frustum) runs before instances are created.
 * Sprites that share one atlas texture batch as one texture. `AtlasBuilder` fills those UV rects
-  (M5-4A, `bf4d9bb`); GPU samples of that path are M5-4B (`1666695`). A shared `MaterialAsset` does
-  not by itself merge draws. The current key is consecutive texture identity for sprites and
-  `(mesh, texture)` for meshes. Material identity, revision, pipeline class, and sampler join that
-  key in M5-5D. GPU-driven instancing and culling beyond the frustum test are still open.
+  (M5-4A, `bf4d9bb`); GPU samples of that path are M5-4B (`1666695`). A material albedo uses those
+  UVs as stored and does not repack the atlas. Consecutive sprites merge when the texture and the
+  pipeline match. Opaque and mask sprites are grouped by that pair. Blended sprites keep sort order.
+  Meshes merge on `(mesh, texture, draw class)`. Material id and revision are stored on the instance
+  and join the key in M5-5D. A measured group of 32 compatible opaque material sprites is one draw.
+  That is a baseline, not the 1,000-sprite criterion. GPU-driven instancing and culling beyond the
+  frustum test are still open.
 
 ## Camera configurations
 

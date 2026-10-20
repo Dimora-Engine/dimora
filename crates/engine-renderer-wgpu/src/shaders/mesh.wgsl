@@ -17,6 +17,7 @@ struct VsOut {
     @location(2) normal: vec3<f32>,
     @location(3) color: vec4<f32>,
     @location(4) @interpolate(flat) lit: u32,
+    @location(5) @interpolate(flat) cutoff_bits: u32,
 }
 
 @vertex
@@ -34,12 +35,26 @@ fn vs_main(in: VsIn) -> VsOut {
     out.uv = in.uv;
     out.color = in.color;
     out.lit = in.flags.x;
+    out.cutoff_bits = in.flags.y;
     return out;
 }
 
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let texel = textureSample(albedo_tex, albedo_sampler, in.uv) * in.color;
+    var rgb = texel.rgb;
+    if in.lit != 0u {
+        rgb = shade(rgb, in.world_pos, in.normal, 0.0);
+    }
+    return vec4<f32>(apply_fog(rgb, in.world_pos), 1.0);
+}
+
+@fragment
+fn fs_mask(in: VsOut) -> @location(0) vec4<f32> {
+    let texel = textureSample(albedo_tex, albedo_sampler, in.uv) * in.color;
+    if texel.a < bitcast<f32>(in.cutoff_bits) {
+        discard;
+    }
     var rgb = texel.rgb;
     if in.lit != 0u {
         rgb = shade(rgb, in.world_pos, in.normal, 0.0);

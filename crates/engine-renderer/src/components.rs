@@ -1,7 +1,7 @@
 //! Renderable ECS components. They describe *what* something is; *where* it is comes from the
 //! entity's `Transform`, the same as for every other spatial object.
 
-use engine_assets::{AssetHandle, MeshData, SpriteAsset, Texture};
+use engine_assets::{AssetHandle, MaterialAsset, MeshData, SpriteAsset, Texture};
 use engine_core::Color;
 use engine_math::{Rect, Vec2};
 
@@ -65,7 +65,13 @@ pub struct Sprite {
     pub orientation: SpriteOrientation,
     pub blend: SpriteBlend,
     /// Whether scene lights shade this sprite. Unlit sprites show their texture as-is.
+    /// Ignored when [`Self::material`] resolves.
     pub lit: bool,
+    /// `None` keeps tint, [`SpriteBlend`], this lit flag, and the [`SpriteAsset`] texture.
+    /// `Some` uses that [`MaterialAsset`] instead. UVs, size, pivot, and pixels per unit stay on
+    /// the sprite asset. An albedo `Some` is sampled with those UVs and is not remapped, so the
+    /// texture has to share that layout. [`MaterialAsset::default`] is opaque and single-sided.
+    pub material: Option<AssetHandle<MaterialAsset>>,
 }
 
 impl Sprite {
@@ -84,6 +90,7 @@ impl Sprite {
             orientation: SpriteOrientation::default(),
             blend: SpriteBlend::Alpha,
             lit: true,
+            material: None,
         }
     }
     pub fn with_region(mut self, region: Rect) -> Self {
@@ -129,6 +136,10 @@ impl Sprite {
     }
     pub fn unlit(mut self) -> Self {
         self.lit = false;
+        self
+    }
+    pub fn with_material(mut self, material: AssetHandle<MaterialAsset>) -> Self {
+        self.material = Some(material);
         self
     }
 }
@@ -191,15 +202,23 @@ impl Material {
 #[derive(Clone, Copy, Debug)]
 pub struct Mesh {
     pub asset: AssetHandle<MeshData>,
+    /// Used when [`Self::material_asset`] is `None`. Meshes stay opaque on this path.
     pub material: Material,
+    /// `None` keeps [`Self::material`]. `Some` supplies colour, albedo, alpha class, lit, and
+    /// culling. [`AlphaMode::Blend`](engine_assets::AlphaMode::Blend) is not drawn yet.
+    pub material_asset: Option<AssetHandle<MaterialAsset>>,
 }
 
 impl Mesh {
     pub fn new(name: &str) -> Self {
-        Self { asset: AssetHandle::from_name(name), material: Material::default() }
+        Self { asset: AssetHandle::from_name(name), material: Material::default(), material_asset: None }
     }
     pub fn with_material(mut self, material: Material) -> Self {
         self.material = material;
+        self
+    }
+    pub fn with_material_asset(mut self, material: AssetHandle<MaterialAsset>) -> Self {
+        self.material_asset = Some(material);
         self
     }
 }
@@ -334,6 +353,8 @@ mod tests {
         assert!(mesh.material.base_texture.is_none());
         assert!(!mesh.material.lit);
         assert_eq!(Mesh::new("crate").material.base_color, Color::WHITE);
+        assert!(Sprite::new("hero").material.is_none());
+        assert!(Mesh::new("crate").material_asset.is_none());
 
         let map = TileMap::new("tiles", 4, 4, Vec2::splat(1.0), 2, 2);
         assert!(map.lit);
