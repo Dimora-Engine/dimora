@@ -316,3 +316,28 @@ impl Default for AmbientLight {
         Self { color: Color::WHITE, intensity: 0.25 }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn legacy_appearance_constructors_stay_available() {
+        let sprite = Sprite::new("hero").with_tint(Color::rgb(0.2, 0.3, 0.4));
+        assert_eq!(sprite.tint, Color::rgb(0.2, 0.3, 0.4));
+        assert_eq!(sprite.blend, SpriteBlend::Alpha);
+        assert!(sprite.lit);
+        assert_eq!(sprite.cutout().blend, SpriteBlend::Cutout);
+
+        let mesh = Mesh::new("crate").with_material(Material::unlit(Color::BLACK));
+        assert_eq!(mesh.material.base_color, Color::BLACK);
+        assert!(mesh.material.base_texture.is_none());
+        assert!(!mesh.material.lit);
+        assert_eq!(Mesh::new("crate").material.base_color, Color::WHITE);
+
+        let map = TileMap::new("tiles", 4, 4, Vec2::splat(1.0), 2, 2);
+        assert!(map.lit);
+        assert_eq!(map.tiles.len(), 4);
+        assert_eq!(map.get(0, 0), TileMap::EMPTY);
+    }
+}

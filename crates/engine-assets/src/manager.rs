@@ -4,8 +4,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::{
-    Asset, AssetError, AssetHandle, AssetId, AssetSource, FileSystemSource, MemorySource, MeshData, SpriteAsset,
-    Texture,
+    Asset, AssetError, AssetHandle, AssetId, AssetSource, FileSystemSource, MaterialAsset, MemorySource, MeshData,
+    SpriteAsset, Texture,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -126,6 +126,9 @@ impl AssetManager {
         self.handle(name)
     }
     pub fn mesh(&self, name: &str) -> AssetHandle<MeshData> {
+        self.handle(name)
+    }
+    pub fn material(&self, name: &str) -> AssetHandle<MaterialAsset> {
         self.handle(name)
     }
 

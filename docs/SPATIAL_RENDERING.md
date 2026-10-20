@@ -105,12 +105,12 @@ only a `RenderScene`.
 |---|---|---|
 | Texture | `Texture` asset (pixels), `AssetHandle<Texture>` | `wgpu::Texture` + bind group, cached by id + revision |
 | Mesh | `MeshData` asset (vertices, indices), `Mesh` component | Vertex/index buffers, cached by id + revision |
-| Material | `Material` (color, optional texture, `lit`) | Resolved into per-instance color + texture bind group |
+| Material | Inline `Material` (color, optional texture, `lit`). CPU `MaterialAsset` is not read yet | Resolved into per-instance color + texture bind group |
 | Sprite | `Sprite` (+ `SpriteAsset`: texture, UV rect, pivot) | One unit quad shared by all sprites; per-instance data |
 | Pipeline | none | Sprite cutout / blend, mesh; created once |
 | Buffer | none | Growable instance buffers, uploaded per frame |
 
-`Material` is deliberately tiny. It is the seam where a real material system will attach.
+The inline `Material` is what a mesh draw uses. `MaterialAsset` is the CPU asset that a later checkpoint can assign. Unassigned sprites and meshes keep today's fields.
 
 ## Spatial renderables
 
@@ -321,8 +321,10 @@ batches instances of the same mesh and texture into one draw call.
   `basic_2_5d`, 3000 grass tufts plus tiles are a single sprite draw call.
 * Culling (a bounding sphere against the camera frustum) runs before instances are created.
 * Sprites that share one atlas texture batch as one texture. `AtlasBuilder` fills those UV rects
-  (M5-4A, `bf4d9bb`); GPU samples of that path are in the working tree (M5-4B). Material batching,
-  GPU-driven instancing, and culling beyond the frustum test are still open.
+  (M5-4A, `bf4d9bb`); GPU samples of that path are M5-4B (`1666695`). A shared `MaterialAsset` does
+  not by itself merge draws. The current key is consecutive texture identity for sprites and
+  `(mesh, texture)` for meshes. Material identity, revision, pipeline class, and sampler join that
+  key in M5-5D. GPU-driven instancing and culling beyond the frustum test are still open.
 
 ## Camera configurations
 

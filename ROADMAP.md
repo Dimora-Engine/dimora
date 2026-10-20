@@ -45,8 +45,9 @@ pulled into M5.
 **Next implementation.** M5, materials and textures, is in progress. M5-1 records the decisions
 (ADR-0015, ADR-0016, ADR-0017). M5-2A through M5-3B are committed locally and are not pushed
 (`c687d5b`, `11b914f`, `622ef80`, `b51f1fb`, `84d5ab1`). M5-4A, the CPU shelf packer, is commit
-`bf4d9bb` and is not pushed. M5-4B, GPU atlas sampling, is in the working tree and is not committed.
-`MaterialAsset` and localized mip regeneration have not started.
+`bf4d9bb` and is not pushed. M5-4B, GPU atlas sampling, is commit `1666695` and is not pushed.
+M5-5A, the CPU `MaterialAsset`, is in the working tree and is not committed. Localized mip
+regeneration, material rendering, and material batching have not started.
 
 **Implemented and tested, beyond the 2026-10-13 audit.** Named stages, commands and events, the `log`
 crate and `Diagnostics`, actions and window controls, scene load/unload/replace on the command flush,
@@ -57,8 +58,9 @@ not add a new test run.
 **Still partial.** Tilemaps have no chunking. Skeletal animation is a data model and one player. Assets
 are PNG and synchronous. Materials are an inline colour, one albedo, and a lit flag. Textures are RGBA8
 with per-texture colour space, samplers, optional mip generation, and proved rectangle uploads. A CPU
-shelf packer is commit `bf4d9bb`. GPU atlas samples are in the working tree. Localized mip regeneration
-and `MaterialAsset` are not done.
+shelf packer is commit `bf4d9bb`. GPU atlas samples are commit `1666695`. A CPU `MaterialAsset`
+is in the working tree and is not committed. The renderer still uses the inline mesh material.
+Localized mip regeneration, material rendering, and material batching are not done.
 
 **Still absent.** Collision, sprite-sheet animation, 3D characters, UI, audio, particles, shadows,
 scripting, serialization, a general importer, bundles, an editor, and packaging. CI exists as a workflow
@@ -90,7 +92,8 @@ first" tiers in [docs/DECISIONS.md](docs/DECISIONS.md#what-to-resolve-first).
   commit `622ef80` and is not pushed. M5-3A, bounded CPU region transitions, is commit `b51f1fb` and
   is not pushed. M5-3B, GPU rectangle uploads and whole-chain mip rebuilds, is commit `84d5ab1` and
   is not pushed. M5-4A, the CPU shelf packer, is commit `bf4d9bb` and is not pushed. M5-4B, GPU atlas
-  sampling, is in the working tree and is not committed. Localized mip regeneration has not started.
+  sampling, is commit `1666695` and is not pushed. M5-5A, the CPU `MaterialAsset`, is in the working
+  tree and is not committed. Localized mip regeneration has not started.
   The milestone is in progress and is not complete.
 * **M6 stays after M5.** The camera-configuration prototype is verified. The rest of M6 is not started.
   M7 and M8 can proceed in parallel after M3a, M4, M5, and M6 as stated below. M9 freezes the foundational
@@ -493,8 +496,9 @@ layouts. M5-2A stores the CPU descriptors (`c687d5b`). M5-2B (`11b914f`) connect
 descriptors to the wgpu renderer. M5-2C (`622ef80`) generates mip chains for `Mipmaps::Generate`.
 M5-3A (`b51f1fb`) records CPU region updates, validation, and a bounded transition journal. M5-3B
 (`84d5ab1`) uploads a proved rectangle and regenerates the whole allocated mip chain. It does not
-regenerate only the affected mip texels. M5-4A (`bf4d9bb`) packs images on the CPU. M5-4B, in the
-working tree and not committed, samples those atlases on the GPU.
+regenerate only the affected mip texels. M5-4A (`bf4d9bb`) packs images on the CPU. M5-4B (`1666695`) samples those atlases on the GPU.
+M5-5A, in the working tree and not committed, adds the CPU `MaterialAsset` and `AlphaMode`. It does
+not bind them, blend meshes, or change batching.
 
 **Acceptance criteria.**
 - GPU test: a minified high-frequency texture approaches its mean colour with mipmaps, and aliases

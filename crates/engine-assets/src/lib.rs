@@ -16,6 +16,7 @@ mod atlas;
 mod error;
 mod handle;
 mod manager;
+mod material;
 pub mod mesh;
 mod source;
 mod sprite;
@@ -25,6 +26,7 @@ pub use atlas::{Atlas, AtlasBuilder, AtlasConfig, AtlasError, AtlasRegion, Atlas
 pub use error::AssetError;
 pub use handle::{Asset, AssetHandle, AssetId, AssetKind};
 pub use manager::{AssetManager, LoadState};
+pub use material::{AlphaCutoff, AlphaMode, MaterialAsset, MaterialError};
 pub use mesh::{MeshData, Vertex};
 pub use source::{AssetSource, FileSystemSource, MemorySource};
 pub use sprite::SpriteAsset;

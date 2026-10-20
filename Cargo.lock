@@ -430,6 +430,7 @@ name = "engine-assets"
 version = "0.1.0"
 dependencies = [
  "bytemuck",
+ "engine-core",
  "engine-math",
  "image",
  "log",

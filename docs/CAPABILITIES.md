@@ -362,18 +362,20 @@ Missing from the original category list and now tracked: **save games** (34), **
   against blended sprites (R-1).
 * **Required.** One documented rule for opaque, cutout and blended content from sprites, meshes, tiles,
   particles and skinned characters; defined behaviour when blended objects intersect.
-* **Planned.** Alpha classes from ADR-0015 (M5, not implemented). A blended mesh sorts by the camera-space Z of its world-space bounding-sphere centre, an object-level approximation that needs GPU tests when that phase exists. Reverse-Z only if an artefact is shown (D-07). **Depends on.** The M5 material phase. The three coplanar conflicts stay M6/D-48.
+* **Planned.** Alpha classes from ADR-0015. The CPU enum exists in the working tree (M5-5A, not committed) and does not change extraction. A blended mesh sorts by the camera-space Z of its world-space bounding-sphere centre, an object-level approximation that needs GPU tests when that phase exists. Reverse-Z only if an artefact is shown (D-07). **Depends on.** The rest of the M5 material phase. The three coplanar conflicts stay M6/D-48.
 * **Integration.** Shadows, particles and skinned meshes all pick a class; UI is outside this model.
 * **Tests/examples.** A blended mesh in front of and behind a blended sprite (GPU test).
 * **Not initially.** Order-independent transparency, per-pixel sorting.
 
 ### 11. Meshes and materials
-* **Now.** `MeshData` (position, normal, uv, `u32` indices), `Mesh` + `Material` component (colour, one
+* **Now.** `MeshData` (position, normal, uv, `u32` indices), `Mesh` + inline `Material` (colour, one
   albedo texture, `lit`), `cuboid` and `cone` generators, back-face culled, instanced. Code-built only;
-  no loader. `Material` is a component field, not an asset.
-* **Required.** `MaterialAsset` as specified in ADR-0015, more generators, tangents, a loader, skin data
-  later. **Planned.** M5 (not started), M12. **Depends on.** ADR-0015, D-36, D-17. The inline `Material`
-  remains the implemented type.
+  no loader. Extraction still reads that inline field. CPU `MaterialAsset` (M5-5A, working tree, not
+  committed) stores a linear base colour, optional albedo and normal handles, `AlphaMode`, `lit`, and
+  `double_sided`. It is not rendered. The normal handle is not shaded.
+* **Required.** Material-driven rendering from ADR-0015, more generators, tangents, a loader, skin data
+  later. **Planned.** The rest of M5, then M12. **Depends on.** ADR-0015, D-36, D-17. The inline `Material`
+  remains the rendered type until a handle is assigned.
 * **Integration.** Sprites and meshes should share a material concept where sensible but need not share
   a pipeline (D-05, D-13).
 * **Tests/examples.** Pixel tests per alpha mode; glTF fixtures (M12).
@@ -394,7 +396,7 @@ Missing from the original category list and now tracked: **save games** (34), **
   the whole base level. Sampler-only changes still do not upload pixels (KI-6). `AtlasBuilder` packs
   named RGBA8 images on the CPU in insertion order, with padding and edge extrusion, and returns a
   `Texture` plus visible `AtlasRegion` values (M5-4A, `bf4d9bb`). The default atlas mip request is
-  `Mipmaps::None`. GPU tests in the working tree (M5-4B, not committed) sample those regions through
+  `Mipmaps::None`. GPU tests (M5-4B, `1666695`) sample those regions through
   the existing renderer. `Atlas::replace_source` refreshes a same-size image and its extruded gutter
   through one `Texture::update_region`. Measured mip isolation is layout-specific and is not
   `floor(log2(padding))`. Linear filtering of a tightly packed atlas is not universally safe.
@@ -403,7 +405,7 @@ Missing from the original category list and now tracked: **save games** (34), **
   filters, anisotropy normalization, per-texture colour space, the split GPU image and sampler caches,
   and mip generation are implemented (M5-2B is `11b914f`; M5-2C is `622ef80`). The CPU region journal
   is M5-3A (`b51f1fb`). Proved rectangle uploads and whole-chain mip rebuilds are M5-3B (`84d5ab1`).
-  The CPU shelf packer is M5-4A (`bf4d9bb`). GPU atlas acceptance is M5-4B and is not committed.
+  The CPU shelf packer is M5-4A (`bf4d9bb`). GPU atlas acceptance is M5-4B (`1666695`).
   Localized mip updates are not implemented.
   **Depends on.** ADR-0016.
   D-06 (snapping) stays M6.
@@ -529,7 +531,7 @@ Missing from the original category list and now tracked: **save games** (34), **
 * **Now.** Absent. No font loading, text, layout, widgets, focus or overlay pass; `RenderScene` is
   world-only. The device scale and logical pointer conversion exist (M3b Phase 3, `9c99edf`). A proved
   rectangle can upload without a whole-texture rewrite (M5-3B, `84d5ab1`). A CPU shelf packer is
-  commit `bf4d9bb` (M5-4A). GPU atlas samples are in the working tree (M5-4B, not committed). The glyph atlas consumer is still not implemented
+  commit `bf4d9bb` (M5-4A). GPU atlas samples are commit `1666695` (M5-4B). The glyph atlas consumer is still not implemented
   (M10). Reference-resolution UI scaling is not built (D-39).
 * **Planned.** M10: a retained node tree with pure-function layout, a plain-data draw list, an overlay
   pass (no depth, painter's order, scissor), shared device/texture cache/atlases, world-anchored UI by

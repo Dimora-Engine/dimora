@@ -8,6 +8,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+engine-core.workspace = true
 engine-math.workspace = true
 log.workspace = true
 bytemuck = { version = "1", features = ["derive"] }

@@ -30,6 +30,7 @@ pub enum AssetKind {
     Texture,
     Sprite,
     Mesh,
+    Material,
     Skeleton,
     Animation,
     Map,
