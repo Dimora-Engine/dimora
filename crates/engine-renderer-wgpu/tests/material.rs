@@ -433,7 +433,7 @@ fn a_blended_mesh_draws_and_an_unassigned_mesh_stays_opaque() {
     let mut renderer = renderer(&gpu);
     let mut assets = AssetManager::in_memory();
     assets.insert("card", card()).unwrap();
-    assets.insert("cube", MeshData::cuboid(Vec3::splat(1.0))).unwrap();
+    assets.insert("cube", MeshData::cuboid(Vec3::splat(1.0)).unwrap()).unwrap();
     let blend = assets
         .insert("glass", MaterialAsset::unlit(Color::rgb(1.0, 0.0, 0.0)).with_alpha_mode(AlphaMode::Blend))
         .unwrap();

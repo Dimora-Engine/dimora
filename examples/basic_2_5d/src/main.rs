@@ -142,9 +142,14 @@ fn build_world(world: &mut World, perspective: bool) -> Demo {
     // Real 3D geometry in the same world.
     {
         let mut assets = world.resource_mut::<AssetManager>();
-        assets.insert("cube", MeshData::cuboid(Vec3::ONE)).expect("example asset names are distinct");
         assets
-            .insert("building", MeshData::cuboid(Vec3::new(4.0, 4.0, 4.0)))
+            .insert("cube", MeshData::cuboid(Vec3::ONE).expect("cuboid dimensions are finite and positive"))
+            .expect("example asset names are distinct");
+        assets
+            .insert(
+                "building",
+                MeshData::cuboid(Vec3::new(4.0, 4.0, 4.0)).expect("cuboid dimensions are finite and positive"),
+            )
             .expect("example asset names are distinct");
         assets.insert("roof", MeshData::cone(3.1, 2.2, 4)).expect("example asset names are distinct");
         assets.insert("mountain", MeshData::cone(1.0, 1.0, 28)).expect("example asset names are distinct");

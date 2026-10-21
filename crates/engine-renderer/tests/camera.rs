@@ -271,7 +271,7 @@ fn assets() -> AssetManager {
     let mut a = AssetManager::in_memory();
     let t = a.insert("tex", Texture::solid(16, 16, [255; 4])).unwrap();
     a.insert("tex_sprite", SpriteAsset::whole_texture(t, 16, 16)).unwrap();
-    a.insert("cube", MeshData::cuboid(Vec3::ONE)).unwrap();
+    a.insert("cube", MeshData::cuboid(Vec3::ONE).unwrap()).unwrap();
     a
 }
 

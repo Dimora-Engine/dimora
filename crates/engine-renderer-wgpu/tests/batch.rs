@@ -456,7 +456,7 @@ fn legacy_sprites_and_meshes_keep_their_batches() {
     let mut renderer = renderer(&gpu);
     let mut assets = AssetManager::in_memory();
     insert_sprite(&mut assets, "white", linear([255, 255, 255, 255]));
-    assets.insert("box", MeshData::cuboid(Vec3::splat(0.15))).unwrap();
+    assets.insert("box", MeshData::cuboid(Vec3::splat(0.15)).unwrap()).unwrap();
     assets.insert("card", card()).unwrap();
     let mut world = ortho(2.0);
     for x in [-0.5_f32, 0.0, 0.5] {

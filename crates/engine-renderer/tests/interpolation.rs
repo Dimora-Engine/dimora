@@ -15,7 +15,7 @@ fn assets() -> AssetManager {
     let texture = assets.insert("white", Texture::solid(4, 4, [255, 255, 255, 255])).unwrap();
     assets.insert("sprite", SpriteAsset::whole_texture(texture, 4, 4)).unwrap();
     assets.insert("tiles", Texture::solid(4, 4, [255, 255, 255, 255])).unwrap();
-    assets.insert("cube", MeshData::cuboid(Vec3::ONE)).unwrap();
+    assets.insert("cube", MeshData::cuboid(Vec3::ONE).unwrap()).unwrap();
     assets
 }
 

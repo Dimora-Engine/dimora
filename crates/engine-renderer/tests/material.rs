@@ -57,7 +57,7 @@ fn handles_default_to_none_and_existing_constructors_stay_compatible() {
     assert!(!mesh.material.lit);
 
     let mut assets = AssetManager::in_memory();
-    assets.insert("crate", MeshData::cuboid(Vec3::splat(1.0))).unwrap();
+    assets.insert("crate", MeshData::cuboid(Vec3::splat(1.0)).unwrap()).unwrap();
     let mut world = world();
     world.spawn((Transform::IDENTITY, mesh));
     let scene = extract(&mut world, &assets);
@@ -160,7 +160,7 @@ fn albedo_none_uses_the_sprite_texture_and_leaves_a_mesh_untextured() {
     let sprite = sprite_asset(&mut assets, "hero", [255, 0, 0, 255]);
     let sprite_texture = assets.get(sprite).unwrap().texture;
     let material = assets.insert("flat", MaterialAsset::color(Color::rgb(0.2, 0.3, 0.4))).unwrap();
-    assets.insert("crate", MeshData::cuboid(Vec3::splat(1.0))).unwrap();
+    assets.insert("crate", MeshData::cuboid(Vec3::splat(1.0)).unwrap()).unwrap();
     let mut world = world();
     world.spawn((Transform::IDENTITY, Sprite::from_asset(sprite).with_material(material).cutout()));
     world.spawn((Transform::from_xyz(2.0, 0.0, 0.0), Mesh::new("crate").with_material_asset(material)));
@@ -270,7 +270,7 @@ fn blended_sprites_and_a_blended_mesh_share_one_sort() {
     sprite_asset(&mut assets, "red", [255, 0, 0, 255]);
     sprite_asset(&mut assets, "blue", [0, 0, 255, 255]);
     let blend = assets.insert("glass", MaterialAsset::default().with_alpha_mode(AlphaMode::Blend)).unwrap();
-    assets.insert("crate", MeshData::cuboid(Vec3::splat(1.0))).unwrap();
+    assets.insert("crate", MeshData::cuboid(Vec3::splat(1.0)).unwrap()).unwrap();
     let mut world = world();
     world.spawn((Transform::from_xyz(0.0, 0.0, 0.0), Sprite::new("red").with_material(blend), RenderOrder::new(0, 0)));
     world.spawn((
@@ -333,7 +333,7 @@ fn render_order_keeps_layer_then_depth_then_order() {
 #[test]
 fn a_mesh_mask_uses_the_material_cutoff_and_not_the_inline_lit_flag() {
     let mut assets = AssetManager::in_memory();
-    assets.insert("crate", MeshData::cuboid(Vec3::splat(1.0))).unwrap();
+    assets.insert("crate", MeshData::cuboid(Vec3::splat(1.0)).unwrap()).unwrap();
     let albedo = assets.insert("decal", Texture::solid(1, 1, [0, 255, 0, 128])).unwrap();
     let mut material =
         MaterialAsset::unlit(Color::rgba(1.0, 1.0, 1.0, 0.5)).with_alpha_mode(AlphaMode::mask(0.4).unwrap());

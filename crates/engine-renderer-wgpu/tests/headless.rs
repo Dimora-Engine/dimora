@@ -144,7 +144,7 @@ fn assets() -> AssetManager {
     let mut a = AssetManager::in_memory();
     let white = a.insert("white", Texture::solid(4, 4, [255; 4])).unwrap();
     a.insert("quad", SpriteAsset::whole_texture(white, 4, 4).with_pixels_per_unit(1.0)).unwrap();
-    a.insert("cube", MeshData::cuboid(Vec3::splat(2.0))).unwrap();
+    a.insert("cube", MeshData::cuboid(Vec3::splat(2.0)).unwrap()).unwrap();
     a
 }
 
@@ -310,7 +310,7 @@ fn thousands_of_sprites_cost_one_draw_call() {
 fn meshes_cull_back_faces_so_their_interior_is_hidden() {
     let Some((gpu, mut r)) = setup() else { return };
     let mut a = assets();
-    a.insert("big_cube", MeshData::cuboid(Vec3::splat(4.0))).unwrap();
+    a.insert("big_cube", MeshData::cuboid(Vec3::splat(4.0)).unwrap()).unwrap();
     let mut w = world_with_camera();
     // A red sprite *inside* the cube (between its front face at z=8 and back face at z=12). With
     // correct culling the cube's front face hides it; with inverted culling only the back faces
@@ -390,7 +390,7 @@ fn insert_cache_test_assets(a: &mut AssetManager) {
     let white = a.insert("white", Texture::solid(4, 4, [255; 4])).unwrap();
     a.insert("quad", SpriteAsset::whole_texture(white, 4, 4).with_pixels_per_unit(1.0)).unwrap();
     a.insert("blue", Texture::solid(4, 4, [0, 0, 255, 255])).unwrap();
-    a.insert("cube", MeshData::cuboid(Vec3::splat(2.0))).unwrap();
+    a.insert("cube", MeshData::cuboid(Vec3::splat(2.0)).unwrap()).unwrap();
 }
 
 fn remove_cache_test_assets(a: &mut AssetManager) {
@@ -1813,7 +1813,7 @@ fn a_missing_mesh_texture_stays_white_and_warns_once() {
     let Some((gpu, mut renderer)) = setup() else { return };
     capture::begin();
     let mut assets = AssetManager::in_memory();
-    assets.insert("cube", MeshData::cuboid(Vec3::splat(2.0))).unwrap();
+    assets.insert("cube", MeshData::cuboid(Vec3::splat(2.0)).unwrap()).unwrap();
     let missing = AssetHandle::<Texture>::from_name("no-mesh-texture");
     let mut world = world_with_camera();
     world.insert_resource(MissingAssetWarnings::default());

@@ -48,8 +48,8 @@ pulled into M5.
 `bf4d9bb` and is not pushed. M5-4B, GPU atlas sampling, is commit `1666695` and is not pushed.
 M5-5A, the CPU `MaterialAsset`, is commit `e0c29ef` and is not pushed. M5-5B, material-driven
 rendering, is commit `3b3cd4a` and is not pushed. M5-5C, unified blended rendering, is commit `ab1b6f7` and is not pushed. M5-5D, material-aware
-batching, is in the working tree and is not committed. Localized mip regeneration and the mesh
-generators have not started.
+batching, is commit `a7efd6c` and is not pushed. M5-6, procedural mesh generators, is in the
+working tree and is not committed. Localized mip regeneration has not started.
 
 **Implemented and tested, beyond the 2026-10-13 audit.** Named stages, commands and events, the `log`
 crate and `Diagnostics`, actions and window controls, scene load/unload/replace on the command flush,
@@ -63,10 +63,11 @@ with per-texture colour space, samplers, optional mip generation, and proved rec
 shelf packer is commit `bf4d9bb`. GPU atlas samples are commit `1666695`. A CPU `MaterialAsset`
 is commit `e0c29ef`. M5-5B (`3b3cd4a`) draws an assigned material on sprites and on opaque
 or mask meshes. M5-5C (`ab1b6f7`) draws blended meshes in the same sequence as blended
-sprites. Unassigned meshes still use the inline material. M5-5D, in the working tree, batches
+sprites. Unassigned meshes still use the inline material. M5-5D (`a7efd6c`) batches
 compatible sprites and meshes by pipeline, material identity and revision, and texture. One
-thousand compatible opaque sprites are one instanced draw. Localized mip regeneration and the
-mesh generators are not done.
+thousand compatible opaque sprites are one instanced draw. M5-6, in the working tree, adds
+plane, cube, cuboid, sphere, and cylinder meshes as ordinary `MeshData`. Localized mip
+regeneration is not done.
 
 **Still absent.** Collision, sprite-sheet animation, 3D characters, UI, audio, particles, shadows,
 scripting, serialization, a general importer, bundles, an editor, and packaging. CI exists as a workflow
@@ -101,8 +102,8 @@ first" tiers in [docs/DECISIONS.md](docs/DECISIONS.md#what-to-resolve-first).
   sampling, is commit `1666695` and is not pushed. M5-5A, the CPU `MaterialAsset`, is commit `e0c29ef`
   and is not pushed. M5-5B, material handles and material-driven rendering, is commit `3b3cd4a` and
   is not pushed. M5-5C, unified blended rendering, is commit `ab1b6f7` and is not pushed.
-  M5-5D, material-aware batching, is in the working tree and is not committed. Localized mip
-  regeneration has not started. Mesh generators have not started.
+  M5-5D, material-aware batching, is commit `a7efd6c` and is not pushed. M5-6, procedural mesh
+  generators, is in the working tree and is not committed. Localized mip regeneration has not started.
   The milestone is in progress and is not complete.
 * **M6 stays after M5.** The camera-configuration prototype is verified. The rest of M6 is not started.
   M7 and M8 can proceed in parallel after M3a, M4, M5, and M6 as stated below. M9 freezes the foundational
@@ -489,7 +490,7 @@ filtering are equal first-class choices, and nothing here is specific to pixel a
   it all, KI-25). The first consumer is the UI glyph atlas (M10).
 - `MaterialAsset` (base colour, albedo, reserved normal-map slot, alpha mode opaque/mask/blend, lit,
   double-sided) referenced by handle from sprites and meshes; batching keyed by pipeline and material.
-- Mesh generators: plane, sphere, cylinder.
+- Mesh generators: plane, cube, cuboid, sphere, cylinder. Cube is an equal-sided cuboid. ADR-0018.
 - Policy for blended meshes (D-05), expressed as a transparency class that does not depend on the
   projection (R-1).
 - Asset validation, first slice: texture and atlas loads report size beyond device limits, a missing
@@ -509,9 +510,10 @@ M5-3A (`b51f1fb`) records CPU region updates, validation, and a bounded transiti
 regenerate only the affected mip texels. M5-4A (`bf4d9bb`) packs images on the CPU. M5-4B (`1666695`) samples those atlases on the GPU.
 M5-5A (`e0c29ef`) adds the CPU `MaterialAsset` and `AlphaMode`. M5-5B (`3b3cd4a`) binds a
 handle on sprites and meshes and draws opaque, mask, and blended sprites plus opaque and mask meshes.
-M5-5C (`ab1b6f7`) draws blended meshes in that same sequence. M5-5D, in the working tree, is the
+M5-5C (`ab1b6f7`) draws blended meshes in that same sequence. M5-5D (`a7efd6c`) is the
 1,000-sprite batch: one material revision, one texture and sampler, the shared quad, and one
 pipeline are one instanced draw. Blended objects are still not reordered to form a batch.
+M5-6, in the working tree, is plane, cube, cuboid, sphere, and cylinder on `MeshData` (ADR-0018).
 
 **Acceptance criteria.**
 - GPU test: a minified high-frequency texture approaches its mean colour with mipmaps, and aliases

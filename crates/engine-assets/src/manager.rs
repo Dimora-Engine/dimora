@@ -472,7 +472,7 @@ mod tests {
     fn remove_keeps_links_while_another_type_still_has_that_id() {
         let mut m = AssetManager::in_memory();
         let tex = m.insert("shared", Texture::solid(1, 1, [0; 4])).unwrap();
-        let mesh = m.insert("shared", MeshData::cuboid(engine_math::Vec3::ONE)).unwrap();
+        let mesh = m.insert("shared", MeshData::cuboid(engine_math::Vec3::ONE).unwrap()).unwrap();
         let spr = m.insert("spr", SpriteAsset::whole_texture(tex, 1, 1)).unwrap();
         m.add_dependency(spr, tex);
         m.remove(tex);
@@ -486,7 +486,7 @@ mod tests {
     fn remove_only_affects_its_own_type() {
         let mut m = AssetManager::in_memory();
         let tex = m.insert("same name", Texture::solid(1, 1, [0; 4])).unwrap();
-        let mesh = m.insert("same name", MeshData::cuboid(engine_math::Vec3::ONE)).unwrap();
+        let mesh = m.insert("same name", MeshData::cuboid(engine_math::Vec3::ONE).unwrap()).unwrap();
         assert!(m.remove(tex));
         assert!(m.get(tex).is_none());
         assert!(m.get(mesh).is_some());
@@ -570,7 +570,7 @@ mod tests {
     fn the_same_id_under_a_different_type_is_not_a_collision() {
         let mut m = AssetManager::in_memory();
         let tex = m.insert_with_id(CHOSEN, "one", texture_with([1, 1, 1, 1])).unwrap();
-        let mesh = m.insert_with_id(CHOSEN, "two", MeshData::cuboid(engine_math::Vec3::ONE)).unwrap();
+        let mesh = m.insert_with_id(CHOSEN, "two", MeshData::cuboid(engine_math::Vec3::ONE).unwrap()).unwrap();
         assert!(m.get(tex).is_some() && m.get(mesh).is_some());
     }
 

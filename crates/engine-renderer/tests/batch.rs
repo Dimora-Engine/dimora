@@ -238,7 +238,7 @@ fn texture_identity_splits_a_batch_and_carries_the_sampler() {
 fn mesh_geometry_and_legacy_meshes_follow_the_same_run_rule() {
     let mut assets = AssetManager::in_memory();
     assets.insert("card", card()).unwrap();
-    assets.insert("box", MeshData::cuboid(Vec3::splat(0.2))).unwrap();
+    assets.insert("box", MeshData::cuboid(Vec3::splat(0.2)).unwrap()).unwrap();
     let material = assets.insert("flat", MaterialAsset::unlit(Color::WHITE)).unwrap();
     let mut world = world();
     world.spawn((Transform::from_xyz(-0.5, 0.0, 0.0), Mesh::new("box")));

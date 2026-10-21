@@ -105,7 +105,7 @@ M5-5A registers `MaterialAsset` through the existing `AssetManager`. A replaceme
 
 ## Consequences and follow-up
 
-* M5-5A (`e0c29ef`) stores `MaterialAsset`. M5-5B (`3b3cd4a`) binds it for sprites and for opaque and mask meshes. M5-5C (`ab1b6f7`) draws blended meshes in the shared sequence. M5-5D, in the working tree, is the material batch key and the 1,000-sprite draw. Mesh generators remain.
+* M5-5A (`e0c29ef`) stores `MaterialAsset`. M5-5B (`3b3cd4a`) binds it for sprites and for opaque and mask meshes. M5-5C (`ab1b6f7`) draws blended meshes in the shared sequence. M5-5D (`a7efd6c`) is the material batch key and the 1,000-sprite draw. M5-6, in the working tree, adds procedural `MeshData` ([ADR-0018](0018-procedural-mesh-generators.md)). A large blended box still sorts by its bounding-sphere centre.
 * The blended-mesh depth point is the camera-space Z of the world-space bounding-sphere centre. GPU readback covers ordinary non-intersecting order. The approximation limits above stay limits.
 * M14 samples the normal slot. M15 particles pick one of the three classes.
 * Screenshot baselines against `6dbabb8` stay in force. This ADR does not move them.

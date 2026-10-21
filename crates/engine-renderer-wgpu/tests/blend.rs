@@ -301,7 +301,7 @@ fn blended_mesh_materials_honour_colour_alpha_lighting_and_culling() {
     let image = render(&gpu, &mut renderer, &mut gone, &assets);
     expect_px(&image, [255, 0, 0, 255], 2, "a missing mesh albedo samples the white placeholder, not magenta");
 
-    assets.insert("cube", MeshData::cuboid(Vec3::splat(1.0))).unwrap();
+    assets.insert("cube", MeshData::cuboid(Vec3::splat(1.0)).unwrap()).unwrap();
     let mut cube = world(Camera::perspective(50.0), Transform::from_xyz(0.0, 0.0, -4.0));
     cube.spawn((Transform::IDENTITY, Mesh::new("cube").with_material(Material::unlit(Color::rgb(0.0, 0.0, 1.0)))));
     let image = render(&gpu, &mut renderer, &mut cube, &assets);

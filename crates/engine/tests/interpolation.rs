@@ -12,7 +12,7 @@ fn prepared() -> Game {
     let mut game = Game::new(GameConfig::default());
     {
         let mut assets = game.assets();
-        assets.insert("cube", MeshData::cuboid(Vec3::ONE)).unwrap();
+        assets.insert("cube", MeshData::cuboid(Vec3::ONE).unwrap()).unwrap();
         let texture = assets.insert("white", Texture::solid(1, 1, [255, 0, 0, 255])).unwrap();
         assets.insert("sprite", SpriteAsset::whole_texture(texture, 1, 1)).unwrap();
     }
@@ -262,7 +262,7 @@ fn interpolated_sprites_and_meshes_move_on_the_gpu_between_fixed_steps() {
         let mut assets = game.assets();
         let texture = assets.insert("white", Texture::solid(1, 1, [255, 0, 0, 255])).unwrap();
         assets.insert("sprite", SpriteAsset::whole_texture(texture, 1, 1)).unwrap();
-        assets.insert("cube", MeshData::cuboid(Vec3::splat(0.35))).unwrap();
+        assets.insert("cube", MeshData::cuboid(Vec3::splat(0.35)).unwrap()).unwrap();
     }
     let camera = game.world.spawn((Transform::from_xyz(0.0, 0.0, -5.0), Camera::orthographic(4.0)));
     let marked = game.world.spawn((

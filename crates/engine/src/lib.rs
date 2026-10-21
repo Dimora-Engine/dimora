@@ -63,8 +63,8 @@ pub mod prelude {
     pub use engine_assets::{
         AddressMode, AlphaCutoff, AlphaMode, AssetHandle, AssetManager, AssetSource, Atlas, AtlasBuilder, AtlasConfig,
         AtlasError, AtlasRegion, AtlasReplaceError, BaseLevelUpload, ColorSpace, FileSystemSource, MaterialAsset,
-        MaterialError, MemorySource, MeshData, MipFilter, Mipmaps, SamplerConfigError, SamplerDesc, SpriteAsset,
-        TexelRect, Texture, TextureDimensionError, TextureDimensionLimits, TextureEdit, TextureFilter,
+        MaterialError, MemorySource, MeshData, MeshError, MipFilter, Mipmaps, SamplerConfigError, SamplerDesc,
+        SpriteAsset, TexelRect, Texture, TextureDimensionError, TextureDimensionLimits, TextureEdit, TextureFilter,
         TexturePixelEdits, TextureRegionError,
     };
     pub use engine_core::{Actions, ButtonSource, Color, FixedTimestep, Input, Key, MouseButton, Time};

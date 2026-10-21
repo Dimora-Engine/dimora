@@ -13,7 +13,7 @@ fn assets() -> AssetManager {
     let mut assets = AssetManager::in_memory();
     let texture = assets.insert("tex_a", Texture::solid(16, 16, [255; 4])).unwrap();
     assets.insert("tex_a_sprite", SpriteAsset::whole_texture(texture, 16, 16)).unwrap();
-    assets.insert("cube", MeshData::cuboid(Vec3::ONE)).unwrap();
+    assets.insert("cube", MeshData::cuboid(Vec3::ONE).unwrap()).unwrap();
     assets
 }
 

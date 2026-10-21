@@ -16,7 +16,7 @@ fn assets() -> AssetManager {
         let t = a.insert(name, Texture::solid(16, 16, [255; 4])).unwrap();
         a.insert(&format!("{name}_sprite"), SpriteAsset::whole_texture(t, 16, 16)).unwrap();
     }
-    a.insert("cube", MeshData::cuboid(Vec3::ONE)).unwrap();
+    a.insert("cube", MeshData::cuboid(Vec3::ONE).unwrap()).unwrap();
     a
 }
 

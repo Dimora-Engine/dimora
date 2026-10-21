@@ -27,7 +27,7 @@ pub use error::AssetError;
 pub use handle::{Asset, AssetHandle, AssetId, AssetKind};
 pub use manager::{AssetManager, LoadState};
 pub use material::{AlphaCutoff, AlphaMode, MaterialAsset, MaterialError};
-pub use mesh::{MeshData, Vertex};
+pub use mesh::{MeshData, MeshError, Vertex};
 pub use source::{AssetSource, FileSystemSource, MemorySource};
 pub use sprite::SpriteAsset;
 pub use texture::{

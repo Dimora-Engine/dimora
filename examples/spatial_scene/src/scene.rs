@@ -196,10 +196,13 @@ fn add_meshes(world: &mut World) {
     let mut add = |name: &str, mesh: MeshData| {
         assets.insert(name, mesh).expect("example asset names are distinct");
     };
-    add("floor_tile", MeshData::cuboid(Vec3::new(100.0, 8.0, 100.0)));
-    add("pad", MeshData::cuboid(Vec3::new(84.0, 2.0, 84.0)));
-    add("pillar", MeshData::cuboid(Vec3::new(50.0, 200.0, 50.0)));
-    add("cube", MeshData::cuboid(Vec3::splat(80.0)));
+    add(
+        "floor_tile",
+        MeshData::cuboid(Vec3::new(100.0, 8.0, 100.0)).expect("cuboid dimensions are finite and positive"),
+    );
+    add("pad", MeshData::cuboid(Vec3::new(84.0, 2.0, 84.0)).expect("cuboid dimensions are finite and positive"));
+    add("pillar", MeshData::cuboid(Vec3::new(50.0, 200.0, 50.0)).expect("cuboid dimensions are finite and positive"));
+    add("cube", MeshData::cuboid(Vec3::splat(80.0)).expect("cuboid dimensions are finite and positive"));
     add("pyramid", MeshData::cone(60.0, 130.0, 4));
 }
 

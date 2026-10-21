@@ -289,7 +289,7 @@ fn camera_projection_does_not_classify_and_a_turn_reverses_depth_order() {
 fn a_mesh_that_spans_a_sprite_still_sorts_by_its_centre() {
     let mut assets = AssetManager::in_memory();
     prepare(&mut assets);
-    assets.insert("wide", MeshData::cuboid(Vec3::new(1.0, 1.0, 4.0))).unwrap();
+    assets.insert("wide", MeshData::cuboid(Vec3::new(1.0, 1.0, 4.0)).unwrap()).unwrap();
     let centre = assets.get(assets.mesh("wide")).unwrap().bounding_sphere().0;
     assert_eq!(centre, Vec3::ZERO, "the cuboid covers about z = -2..2 around the origin");
     let blend = glass(&mut assets, "blend", 1.0);

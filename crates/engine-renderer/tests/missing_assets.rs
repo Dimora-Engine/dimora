@@ -129,7 +129,7 @@ fn a_failed_texture_load_is_named_and_a_pending_one_is_silent() {
 fn a_mesh_with_a_missing_texture_warns_once_without_inventing_a_name() {
     capture::begin();
     let mut assets = AssetManager::in_memory();
-    assets.insert("crate", engine_assets::MeshData::cuboid(engine_math::Vec3::ONE)).unwrap();
+    assets.insert("crate", engine_assets::MeshData::cuboid(engine_math::Vec3::ONE).unwrap()).unwrap();
     let missing = engine_assets::AssetHandle::<Texture>::from_name("no-mesh-texture");
     let mut world = world_with_camera();
     world.spawn((
