@@ -341,7 +341,8 @@ Missing from the original category list and now tracked: **save games** (34), **
   anchor, flips, tint, cutout or alpha blend, lit flag, and an optional `MaterialAsset` handle.
   Unassigned sprites keep the fields above. An assigned material replaces blend, lit, and the texture
   binding, and the sprite tint still multiplies. Extracted, culled by bounding sphere, and batched by
-  texture and pipeline (5,000 unassigned sprites one draw in a test; 32 assigned opaque sprites one draw).
+  pipeline, material id and revision, and texture (5,000 unassigned sprites one draw in a test;
+  1,000 assigned opaque sprites one draw). Cutoff, tint, and UV stay per instance.
 * **Required.** Atlases, sheets, trim/pivot handling, pixel-art policy, consistent size units.
 * **Planned.** Atlas builder and sub-region update (M5), sheets (M8). **Depends on.** D-27, D-06.
 * **Integration.** Sprites are bones' children, tiles' sibling path, particles' target path.
@@ -368,9 +369,9 @@ Missing from the original category list and now tracked: **save games** (34), **
   object's depth (KI-14). Unassigned meshes stay opaque.
 * **Required.** One documented rule for opaque, cutout and blended content from sprites, meshes, tiles,
   particles and skinned characters; defined behaviour when blended objects intersect.
-* **Planned.** Material-aware batching of 1,000 sprites is M5-5D. Particles and skinned characters join
-  the same transparent sequence when they exist. Reverse-Z only if an artefact is shown (D-07).
-  **Depends on.** M5-5B (`3b3cd4a`) and M5-5C (working tree). The three coplanar conflicts stay M6/D-48.
+* **Planned.** Particles and skinned characters join the same transparent sequence when they exist.
+  Reverse-Z only if an artefact is shown (D-07).
+  **Depends on.** M5-5B (`3b3cd4a`), M5-5C (`ab1b6f7`), and M5-5D (working tree). The three coplanar conflicts stay M6/D-48.
 * **Integration.** Shadows, particles and skinned meshes all pick a class; UI is outside this model.
 * **Tests/examples.** `blend.rs` reads back a blended mesh behind a sprite and another in front, and the sprite-in-front arrangement.
 * **Not initially.** Order-independent transparency, per-pixel sorting.
@@ -380,10 +381,11 @@ Missing from the original category list and now tracked: **save games** (34), **
   albedo texture, `lit`), `cuboid` and `cone` generators, back-face culled, instanced. Code-built only;
   no loader. `Mesh.material_asset` optionally selects a `MaterialAsset` (`e0c29ef`). When it resolves,
   extraction uses that asset for colour, albedo, alpha class, lit, and culling. Opaque and Mask write
-  depth. Blend joins the transparent sequence, tests depth, and does not write it. The inline field
+  depth. Blend joins the transparent sequence, tests depth, and does not write it. Compatible meshes
+  batch on mesh asset, texture, draw class, and material id and revision. The inline field
   remains the unassigned opaque path. The normal handle is not shaded.
-* **Required.** More generators, tangents, a loader, skin data later. **Planned.** M5-5D, then M5-6
-  and M12. **Depends on.** ADR-0015, D-36, D-17. The inline `Material` remains the rendered type
+* **Required.** More generators, tangents, a loader, skin data later. **Planned.** M5-6 mesh
+  generators, then M12. **Depends on.** ADR-0015, D-36, D-17. The inline `Material` remains the rendered type
   until a handle is assigned.
 * **Integration.** Sprites and meshes should share a material concept where sensible but need not share
   a pipeline (D-05, D-13).

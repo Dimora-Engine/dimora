@@ -311,13 +311,13 @@ opaque and back-face culled. With a handle, `MaterialAsset` supplies the colour,
 lit flag, and `double_sided`. Albedo `None` is untextured. Opaque and Mask write depth. Blend joins
 the same transparent sequence as blended sprites, tests depth, and does not write it. The fragment
 keeps the sampled alpha. Meshes use the same `GlobalTransform`, the same `CameraView` and the same
-depth buffer as sprites. Depth-writing instances that share a mesh, a texture, and a draw class
-become one draw. Blended meshes merge only while they stay contiguous in the sorted sequence.
+depth buffer as sprites. Depth-writing instances that share a mesh, a texture, a draw class,
+and a material become one draw. Blended meshes merge only while they stay contiguous in the sorted sequence.
 
 ## Batching
 
 * Sprites become `SpriteInstance` records (model matrix, UV rect, tint, flags). Consecutive
-  instances sharing a texture become one instanced draw. A sprite never issues its own GPU
+  instances that share a batch key become one instanced draw. A sprite never issues its own GPU
   commands, and batches never reorder instances, so correctness never depends on batching.
 * Cutout sprites and tiles are grouped by texture to minimise batches; blended sprites keep their
   depth order.
@@ -328,14 +328,14 @@ become one draw. Blended meshes merge only while they stay contiguous in the sor
 * Culling (a bounding sphere against the camera frustum) runs before instances are created.
 * Sprites that share one atlas texture batch as one texture. `AtlasBuilder` fills those UV rects
   (M5-4A, `bf4d9bb`); GPU samples of that path are M5-4B (`1666695`). A material albedo uses those
-  UVs as stored and does not repack the atlas. Consecutive sprites merge when the texture and the
-  pipeline match. Opaque and mask sprites are grouped by that pair. Blended sprites keep sort order.
-  Depth-writing meshes merge on `(mesh, texture, draw class)`. Blended sprites and blended meshes
-  merge only inside a contiguous run of the shared sequence. Material id and revision are stored on
-  the instance and join the key in M5-5D. A measured group of 32 compatible opaque material sprites
-  is one draw. Four compatible blended meshes were one draw. A sprite between two blended meshes was
-  three. That is a baseline, not the 1,000-sprite criterion. GPU-driven instancing and culling beyond
-  the frustum test are still open.
+  UVs as stored and does not repack the atlas. A sprite run merges when the pipeline, material id,
+  material revision, and texture match. The texture is the view and the sampler. Tint, UV, and
+  `lit` stay on the instance. The cutoff copied there is the one value on the shared material.
+  Unassigned sprites have no material id. Opaque and mask sprites
+  are grouped by that key. Blended sprites keep sort order and merge only with an already
+  neighbouring match. Depth-writing meshes merge on mesh, texture, draw class, and material.
+  Blended meshes do the same only inside a contiguous run. One thousand compatible opaque sprites
+  are one instanced draw. GPU-driven instancing and culling beyond the frustum test are still open.
 
 ## Camera configurations
 

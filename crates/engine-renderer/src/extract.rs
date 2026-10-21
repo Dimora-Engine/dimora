@@ -147,8 +147,10 @@ pub fn extract_scene(world: &World, assets: &AssetManager, target_size: Vec2) ->
             meshes.push(instance);
         }
     }
-    // Group identical (mesh, texture, draw) triples so the backend can merge them into instanced draws.
-    meshes.sort_by_key(|m| (m.mesh.id(), m.texture.map(|t| t.id()), m.draw));
+    // Group depth-writing meshes that can share a draw. Material id and revision are part of that
+    // key. Colour stays on the instance. Cutoff is copied from the material, which has one value.
+    // This list is not the transparent sequence.
+    meshes.sort_by_key(|m| (m.mesh.id(), m.texture.map(|t| t.id()), m.draw, m.material_id, m.material_revision));
 
     // One list. Layer ascending, view depth descending, order ascending, then visit order.
     // Sorting the two primitive lists apart and concatenating them would draw every mesh on one
@@ -161,12 +163,12 @@ pub fn extract_scene(world: &World, assets: &AssetManager, target_size: Vec2) ->
             .then(a.sequence.cmp(&b.sequence))
     });
     let (blended_sprites, blended_meshes, transparent) = pack_transparent(blended);
-    // Opaque and mask sprites do not need ordering for correctness. Group by texture, then by cull
-    // mode, so a run shares one pipeline. Blended sprites stay in the combined sort order.
-    let group = |i: &SpriteInstance| (i.texture.id(), i.shading.pipeline());
+    // Opaque and mask sprites do not need ordering for correctness. Group by the batch key so a
+    // compatible run is contiguous. Blended sprites stay in the combined sort order above.
+    let group = |i: &SpriteInstance| (i.texture.id(), i.shading.pipeline(), i.material_id, i.material_revision);
     opaque.sort_by_key(group);
     mask.sort_by_key(group);
-    cutout.sort_by_key(|i| i.texture.id());
+    cutout.sort_by_key(group);
 
     Some(RenderScene {
         view,
@@ -200,8 +202,9 @@ struct BlendItem {
     kind: BlendKind,
 }
 
-/// Packs the sorted blend list. A run extends only when it is the same kind and the same draw key,
-/// and only when that run is the previous item. That keeps submission order equal to sort order.
+/// Packs the sorted blend list. A run extends only when the new item is the same kind as the
+/// previous one and [`SpriteInstance::shares_batch`] or [`MeshInstance::shares_batch`] accepts it.
+/// A different material, pipeline, texture, or mesh asset ends the run. Nothing here reorders.
 fn pack_transparent(items: Vec<BlendItem>) -> (SpriteLayer, Vec<MeshInstance>, Vec<TransparentBatch>) {
     let mut sprites = Vec::new();
     let mut meshes = Vec::new();
@@ -225,13 +228,15 @@ fn append_sprite(
     let index = sprites.len() as u32;
     let texture = instance.texture;
     let pipeline = instance.shading.pipeline();
+    let extend = sprites.last().is_some_and(|previous| previous.shares_batch(&instance))
+        && matches!(transparent.last(), Some(TransparentBatch::Sprites(_)));
     sprites.push(instance);
-    if let Some(TransparentBatch::Sprites(batch)) = transparent.last_mut() {
-        if batch.texture == texture && batch.pipeline == pipeline {
+    if extend {
+        if let Some(TransparentBatch::Sprites(batch)) = transparent.last_mut() {
             batch.range.end = index + 1;
-            sprite_batches.last_mut().expect("a sprite run has a matching sprite batch").range.end = index + 1;
-            return;
         }
+        sprite_batches.last_mut().expect("a sprite run has a matching sprite batch").range.end = index + 1;
+        return;
     }
     let batch = SpriteBatch { texture, pipeline, range: index..index + 1 };
     transparent.push(TransparentBatch::Sprites(batch.clone()));
@@ -243,14 +248,14 @@ fn append_mesh(meshes: &mut Vec<MeshInstance>, transparent: &mut Vec<Transparent
     let mesh = instance.mesh;
     let texture = instance.texture;
     let draw = instance.draw;
+    let extend = meshes.last().is_some_and(|previous| previous.shares_batch(&instance))
+        && matches!(transparent.last(), Some(TransparentBatch::Meshes { .. }));
     meshes.push(instance);
-    if let Some(TransparentBatch::Meshes { mesh: previous, texture: previous_texture, draw: previous_draw, range }) =
-        transparent.last_mut()
-    {
-        if *previous == mesh && *previous_texture == texture && *previous_draw == draw {
+    if extend {
+        if let Some(TransparentBatch::Meshes { range, .. }) = transparent.last_mut() {
             range.end = index + 1;
-            return;
         }
+        return;
     }
     transparent.push(TransparentBatch::Meshes { mesh, texture, draw, range: index..index + 1 });
 }

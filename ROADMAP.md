@@ -47,8 +47,9 @@ pulled into M5.
 (`c687d5b`, `11b914f`, `622ef80`, `b51f1fb`, `84d5ab1`). M5-4A, the CPU shelf packer, is commit
 `bf4d9bb` and is not pushed. M5-4B, GPU atlas sampling, is commit `1666695` and is not pushed.
 M5-5A, the CPU `MaterialAsset`, is commit `e0c29ef` and is not pushed. M5-5B, material-driven
-rendering, is commit `3b3cd4a` and is not pushed. M5-5C, unified blended rendering, is in the working
-tree and is not committed. Localized mip regeneration and the 1,000-sprite material batch have not started.
+rendering, is commit `3b3cd4a` and is not pushed. M5-5C, unified blended rendering, is commit `ab1b6f7` and is not pushed. M5-5D, material-aware
+batching, is in the working tree and is not committed. Localized mip regeneration and the mesh
+generators have not started.
 
 **Implemented and tested, beyond the 2026-10-13 audit.** Named stages, commands and events, the `log`
 crate and `Diagnostics`, actions and window controls, scene load/unload/replace on the command flush,
@@ -61,9 +62,11 @@ are PNG and synchronous. Materials are an inline colour, one albedo, and a lit f
 with per-texture colour space, samplers, optional mip generation, and proved rectangle uploads. A CPU
 shelf packer is commit `bf4d9bb`. GPU atlas samples are commit `1666695`. A CPU `MaterialAsset`
 is commit `e0c29ef`. M5-5B (`3b3cd4a`) draws an assigned material on sprites and on opaque
-or mask meshes. M5-5C, in the working tree, draws blended meshes in the same sequence as blended
-sprites. Unassigned meshes still use the inline material. Localized mip regeneration and the
-1,000-sprite material batch are not done.
+or mask meshes. M5-5C (`ab1b6f7`) draws blended meshes in the same sequence as blended
+sprites. Unassigned meshes still use the inline material. M5-5D, in the working tree, batches
+compatible sprites and meshes by pipeline, material identity and revision, and texture. One
+thousand compatible opaque sprites are one instanced draw. Localized mip regeneration and the
+mesh generators are not done.
 
 **Still absent.** Collision, sprite-sheet animation, 3D characters, UI, audio, particles, shadows,
 scripting, serialization, a general importer, bundles, an editor, and packaging. CI exists as a workflow
@@ -97,8 +100,9 @@ first" tiers in [docs/DECISIONS.md](docs/DECISIONS.md#what-to-resolve-first).
   is not pushed. M5-4A, the CPU shelf packer, is commit `bf4d9bb` and is not pushed. M5-4B, GPU atlas
   sampling, is commit `1666695` and is not pushed. M5-5A, the CPU `MaterialAsset`, is commit `e0c29ef`
   and is not pushed. M5-5B, material handles and material-driven rendering, is commit `3b3cd4a` and
-  is not pushed. M5-5C, unified blended rendering, is in the working tree and is not committed.
-  Localized mip regeneration has not started. The 1,000-sprite batch has not started.
+  is not pushed. M5-5C, unified blended rendering, is commit `ab1b6f7` and is not pushed.
+  M5-5D, material-aware batching, is in the working tree and is not committed. Localized mip
+  regeneration has not started. Mesh generators have not started.
   The milestone is in progress and is not complete.
 * **M6 stays after M5.** The camera-configuration prototype is verified. The rest of M6 is not started.
   M7 and M8 can proceed in parallel after M3a, M4, M5, and M6 as stated below. M9 freezes the foundational
@@ -505,8 +509,9 @@ M5-3A (`b51f1fb`) records CPU region updates, validation, and a bounded transiti
 regenerate only the affected mip texels. M5-4A (`bf4d9bb`) packs images on the CPU. M5-4B (`1666695`) samples those atlases on the GPU.
 M5-5A (`e0c29ef`) adds the CPU `MaterialAsset` and `AlphaMode`. M5-5B (`3b3cd4a`) binds a
 handle on sprites and meshes and draws opaque, mask, and blended sprites plus opaque and mask meshes.
-M5-5C, in the working tree, draws blended meshes in that same sequence. It does not satisfy the
-1,000-sprite batch.
+M5-5C (`ab1b6f7`) draws blended meshes in that same sequence. M5-5D, in the working tree, is the
+1,000-sprite batch: one material revision, one texture and sampler, the shared quad, and one
+pipeline are one instanced draw. Blended objects are still not reordered to form a batch.
 
 **Acceptance criteria.**
 - GPU test: a minified high-frequency texture approaches its mean colour with mipmaps, and aliases

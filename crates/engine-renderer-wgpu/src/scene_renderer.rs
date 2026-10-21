@@ -6,7 +6,7 @@ use engine_assets::{
     MeshData, MipFilter, SamplerDesc, TexelRect, Texture, TextureDimensionLimits, TextureEdit, TextureFilter,
     TexturePixelEdits,
 };
-use engine_renderer::{MeshDraw, RenderScene, SpriteLayer, SpritePipelineKind, TransparentBatch};
+use engine_renderer::{MeshDraw, MeshInstance, RenderScene, SpriteLayer, SpritePipelineKind, TransparentBatch};
 use wgpu::util::DeviceExt;
 
 use crate::mip::{self, MipGenerator};
@@ -31,6 +31,12 @@ pub struct FrameStats {
     pub draw_calls: u32,
     pub sprite_instances: u32,
     pub mesh_instances: u32,
+    /// Instances passed to the draw that submitted the most instances. This is the range given to
+    /// `draw` or `draw_indexed`, not a count of CPU batch objects.
+    pub largest_draw_instances: u32,
+    /// Sum of the instance ranges passed to draw calls. An indexed mesh draw counts instances, not
+    /// indices. A missing GPU mesh that is skipped is not included.
+    pub submitted_instances: u32,
 }
 
 /// Frames a cached texture or mesh may go unused before it is evicted, unless configured otherwise
@@ -78,6 +84,9 @@ pub struct GpuResourceStats {
     /// Logical source bytes submitted to [`Self::full_base_uploads`] and [`Self::partial_base_uploads`].
     /// This is not measured GPU memory bandwidth, and a mip-chain rebuild is not added.
     pub base_upload_bytes: u64,
+    /// Times an instance buffer was replaced because the frame's bytes did not fit. The buffer
+    /// created with the renderer is not counted. This is not a GPU timing measurement.
+    pub instance_buffer_grows: u64,
 }
 
 /// Effective GPU sampling and storage for one cached asset texture.
@@ -177,16 +186,21 @@ impl InstanceBuffer {
             mapped_at_creation: false,
         })
     }
-    fn upload<T: Pod>(&mut self, gpu: &GpuContext, data: &[T]) {
+    /// Writes `data` into the buffer. Returns whether the buffer had to grow. An empty slice does
+    /// not grow and does not write.
+    fn upload<T: Pod>(&mut self, gpu: &GpuContext, data: &[T]) -> bool {
         let bytes: &[u8] = bytemuck::cast_slice(data);
         if bytes.is_empty() {
-            return;
+            return false;
         }
+        let mut grew = false;
         if bytes.len() as u64 > self.capacity {
             self.capacity = (bytes.len() as u64).next_power_of_two();
             self.buffer = Self::alloc(&gpu.device, self.label, self.capacity);
+            grew = true;
         }
         gpu.queue.write_buffer(&self.buffer, 0, bytes);
+        grew
     }
 }
 
@@ -613,10 +627,14 @@ impl SceneRenderer {
         }
         self.evict_unused(assets);
 
-        self.opaque_instances.upload(gpu, &sprite_instances(&scene.opaque_sprites));
-        self.mask_instances.upload(gpu, &sprite_instances(&scene.mask_sprites));
-        self.cutout_instances.upload(gpu, &sprite_instances(&scene.cutout_sprites));
-        self.blend_instances.upload(gpu, &sprite_instances(&scene.blended_sprites));
+        self.resource_stats.instance_buffer_grows +=
+            u64::from(self.opaque_instances.upload(gpu, &sprite_instances(&scene.opaque_sprites)));
+        self.resource_stats.instance_buffer_grows +=
+            u64::from(self.mask_instances.upload(gpu, &sprite_instances(&scene.mask_sprites)));
+        self.resource_stats.instance_buffer_grows +=
+            u64::from(self.cutout_instances.upload(gpu, &sprite_instances(&scene.cutout_sprites)));
+        self.resource_stats.instance_buffer_grows +=
+            u64::from(self.blend_instances.upload(gpu, &sprite_instances(&scene.blended_sprites)));
         let mesh_data: Vec<GpuMeshInstance> = scene
             .meshes
             .iter()
@@ -626,7 +644,7 @@ impl SceneRenderer {
                 flags: [m.lit as u32, m.cutoff.to_bits(), 0, 0],
             })
             .collect();
-        self.mesh_instances.upload(gpu, &mesh_data);
+        self.resource_stats.instance_buffer_grows += u64::from(self.mesh_instances.upload(gpu, &mesh_data));
         let blend_mesh_data: Vec<GpuMeshInstance> = scene
             .blended_meshes
             .iter()
@@ -636,7 +654,7 @@ impl SceneRenderer {
                 flags: [m.lit as u32, m.cutoff.to_bits(), 0, 0],
             })
             .collect();
-        self.blend_mesh_instances.upload(gpu, &blend_mesh_data);
+        self.resource_stats.instance_buffer_grows += u64::from(self.blend_mesh_instances.upload(gpu, &blend_mesh_data));
         self.ensure_depth(gpu, size);
 
         let sprite_count = scene.opaque_sprites.instances.len()
@@ -647,6 +665,8 @@ impl SceneRenderer {
             sprite_instances: sprite_count as u32,
             mesh_instances: (scene.meshes.len() + scene.blended_meshes.len()) as u32,
             draw_calls: 0,
+            largest_draw_instances: 0,
+            submitted_instances: 0,
         };
 
         let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("frame") });
@@ -684,17 +704,16 @@ impl SceneRenderer {
             pass.set_vertex_buffer(1, self.mesh_instances.buffer.slice(..));
             let mut i = 0;
             while i < scene.meshes.len() {
-                let draw = scene.meshes[i].draw;
-                let key = (scene.meshes[i].mesh, scene.meshes[i].texture, draw);
-                let end = i + scene.meshes[i..].iter().take_while(|m| (m.mesh, m.texture, m.draw) == key).count();
-                if let Some(mesh) = self.meshes.get(&key.0.id()) {
-                    pass.set_pipeline(self.mesh_pipeline(draw));
-                    let texture = key.1.and_then(|t| self.textures.get(&t.id())).unwrap_or(&self.white);
+                let end = MeshInstance::run_end(&scene.meshes, i);
+                let draw = scene.meshes[i];
+                if let Some(mesh) = self.meshes.get(&draw.mesh.id()) {
+                    pass.set_pipeline(self.mesh_pipeline(draw.draw));
+                    let texture = draw.texture.and_then(|t| self.textures.get(&t.id())).unwrap_or(&self.white);
                     pass.set_bind_group(1, &texture.bind_group, &[]);
                     pass.set_vertex_buffer(0, mesh.vertices.slice(..));
                     pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
                     pass.draw_indexed(0..mesh.index_count, 0, i as u32..end as u32);
-                    stats.draw_calls += 1;
+                    record_draw(&mut stats, (end - i) as u32);
                 }
                 i = end;
             }
@@ -730,7 +749,7 @@ impl SceneRenderer {
                     pass.set_bind_group(1, &texture.bind_group, &[]);
                     pass.set_vertex_buffer(0, self.blend_instances.buffer.slice(..));
                     pass.draw(0..6, batch.range.clone());
-                    stats.draw_calls += 1;
+                    record_draw(stats, batch.range.end - batch.range.start);
                 }
                 TransparentBatch::Meshes { mesh, texture, draw, range } => {
                     let Some(gpu_mesh) = self.meshes.get(&mesh.id()) else { continue };
@@ -741,7 +760,7 @@ impl SceneRenderer {
                     pass.set_vertex_buffer(1, self.blend_mesh_instances.buffer.slice(..));
                     pass.set_index_buffer(gpu_mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
                     pass.draw_indexed(0..gpu_mesh.index_count, 0, range.clone());
-                    stats.draw_calls += 1;
+                    record_draw(stats, range.end - range.start);
                 }
             }
         }
@@ -775,7 +794,7 @@ impl SceneRenderer {
             let texture = self.textures.get(&batch.texture.id()).unwrap_or(&self.missing);
             pass.set_bind_group(1, &texture.bind_group, &[]);
             pass.draw(0..6, batch.range.clone());
-            stats.draw_calls += 1;
+            record_draw(stats, batch.range.end - batch.range.start);
         }
     }
 
@@ -1162,6 +1181,14 @@ impl SceneRenderer {
             handle.id(),
             GpuMesh { revision, last_used: self.frame, vertices, indices, index_count: mesh.indices.len() as u32 },
         );
+    }
+}
+
+fn record_draw(stats: &mut FrameStats, instances: u32) {
+    stats.draw_calls += 1;
+    stats.submitted_instances += instances;
+    if instances > stats.largest_draw_instances {
+        stats.largest_draw_instances = instances;
     }
 }
 

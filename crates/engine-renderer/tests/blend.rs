@@ -306,14 +306,18 @@ fn a_mesh_that_spans_a_sprite_still_sorts_by_its_centre() {
 fn contiguous_blend_meshes_share_a_batch_until_a_sprite_splits_them() {
     let mut assets = AssetManager::in_memory();
     prepare(&mut assets);
-    let blend = glass(&mut assets, "blend", 1.0);
+    // One material, so the meshes are compatible. Distinct materials would be distinct draws.
+    let shared = glass(&mut assets, "shared", 0.5);
     let mut world = world();
-    spawn_mesh(&mut world, 3.0, 0.9, None, &mut assets, "card");
-    spawn_mesh(&mut world, 2.0, 0.8, None, &mut assets, "card");
-    spawn_sprite(&mut world, 1.0, 0.4, blend, None);
-    spawn_mesh(&mut world, 0.0, 0.1, None, &mut assets, "card");
+    world.spawn((Transform::from_xyz(0.0, 0.0, 3.0), Mesh::new("card").with_material_asset(shared)));
+    world.spawn((Transform::from_xyz(0.0, 0.0, 2.0), Mesh::new("card").with_material_asset(shared)));
+    spawn_sprite(&mut world, 1.0, 0.8, shared, None);
+    world.spawn((Transform::IDENTITY, Mesh::new("card").with_material_asset(shared)));
     let scene = extract(&mut world, &assets);
-    assert_eq!(marks(&scene), [0.9, 0.8, 0.4, 0.1]);
+    assert_eq!(marks(&scene), [0.5, 0.5, 0.4, 0.5]);
+    assert_eq!(scene.blended_meshes[0].model.cols[3].z, 3.0);
+    assert_eq!(scene.blended_meshes[1].model.cols[3].z, 2.0);
+    assert_eq!(scene.blended_meshes[2].model.cols[3].z, 0.0);
     assert_eq!(scene.transparent.len(), 3, "the two far meshes are one run; the near mesh is split off");
     match &scene.transparent[0] {
         TransparentBatch::Meshes { range, .. } => assert_eq!(range, &(0..2)),
