@@ -1,6 +1,6 @@
 # ADR-0017: Texture colour space, samplers, partial updates, and atlas mip limits
 
-* **Status:** Settled as the M5 contract. M5-2A (`c687d5b`) and M5-2B (`11b914f`) implement the CPU descriptors, GPU formats, and sampler cache. M5-2C (`622ef80`) generates mip chains on the GPU. M5-3A (`b51f1fb`) records bounded CPU region transitions. M5-3B (`84d5ab1`) uploads those rectangles and rebuilds an allocated mip chain from the new base level. M5-4A (`bf4d9bb`) packs RGBA8 images on the CPU. M5-4B (`1666695`) samples those atlases on the GPU and records the layouts below. Localized mip regeneration is not implemented. M5 is not complete.
+* **Status:** Settled as the M5 contract. M5-2A (`c687d5b`) and M5-2B (`11b914f`) implement the CPU descriptors, GPU formats, and sampler cache. M5-2C (`622ef80`) generates mip chains on the GPU. M5-3A (`b51f1fb`) records bounded CPU region transitions. M5-3B (`84d5ab1`) uploads those rectangles and rebuilds an allocated mip chain from the new base level. M5-4A (`bf4d9bb`) packs RGBA8 images on the CPU. M5-4B (`1666695`) samples those atlases on the GPU and records the layouts below. Localized mip-texel regeneration is not implemented. Formal acceptance on 2026-10-22 approves whole-chain regeneration as the M5 behavior and defers texel-local regeneration, with no milestone. The implementation checkpoint is `92286ce`.
 * **Date:** 2026-10-16
 * **Backlog id:** M5 texture tasks (KI-6, KI-25). D-06 stays open for texel snapping.
 * **Decided by:** project owner (M5-1 planning approval, corrected in the M5-1 final review)
@@ -151,7 +151,8 @@ CPU tests in M5-4A cover deterministic placement and bytes, shelf wraps, non-squ
 * M5-3A (`b51f1fb`) adds `Texture::update_region`, the bounded transition journal, `base_upload`, and `validate_texture_dimensions`. It does not upload a rectangle or pack an atlas.
 * M5-3B (`84d5ab1`) uploads proved rectangles with `write_texture`, falls back to a full base upload when the journal cannot prove the difference, and regenerates an allocated mip chain after that base upload. It does not regenerate only the affected mip texels.
 * M5-4A (`bf4d9bb`) adds the CPU shelf packer described above. It does not regenerate localized mips and does not add sprite-sheet animation.
-* M5-4B (`1666695`) adds `Atlas::replace_source` and the GPU measurements above. It does not regenerate localized mips, does not add sprite-sheet animation, and does not change material batching. M5 stays in progress.
+* M5-4B (`1666695`) adds `Atlas::replace_source` and the GPU measurements above. It does not regenerate localized mips, does not add sprite-sheet animation, and does not change material batching. At that checkpoint M5 was still in progress.
+* Formal acceptance on 2026-10-22 keeps the M5-3B policy: proved base rectangles, a full rebuild of an allocated chain, and no texel-local mip regeneration. `affected_mip_rect` stays unused. The implementation checkpoint is `92286ce`.
 * M5-2 preserves the constructors, defaults, handles, and sprite and mesh rendering listed above. The four screenshots against `6dbabb8` stay byte-identical unless a separately reviewed correctness issue requires a change.
 * M14 is the first consumer of `ColorSpace::Linear` for normals. The slot exists only as storage until then (ADR-0015).
 * D-06 remains open.

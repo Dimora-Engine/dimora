@@ -58,10 +58,10 @@ without it.
 | 7 | Errors, logging, diagnostics, config | Partial | `log` 0.4 and `Diagnostics` (ADR-0012, M3a-4). No runtime config. No profiler, no history | M20, M24 |
 | **Rendering** | | | | |
 | 8 | Cameras and projection | Working; six views demonstrated by the example | Ortho + perspective, viewport, picking rays; 27 camera tests. `spatial_scene` also renders isometric, top-down, steep and side through example-local constructors (not an engine preset API). One camera/frame; closed projection enum; custom projection still absent | M6 |
-| 9 | Spatial sprites | Working | Orientation modes, region, tint, cutout/alpha; batching test; CPU shelf packer (`bf4d9bb`); GPU atlas samples in the working tree, not committed | M5 |
-| 10 | Depth, transparency, ordering | Partial | One depth buffer shared by meshes and sprites (GPU tests); blended sprites sort by centre; meshes cannot blend. Three coplanar conflicts are verified and unsolved (D-48) | M5, M6, M14 |
-| 11 | Meshes and materials | Partial / Placeholder | Indexed instanced meshes; `Material` = colour + albedo + `lit`, not an asset | M5 |
-| 12 | Textures, atlases | Partial | PNG; per-texture colour space, sampler, and mips; proved rectangle upload (`84d5ab1`); CPU shelf packer (`bf4d9bb`); GPU atlas samples uncommitted; mip isolation is per measured layout | M5 |
+| 9 | Spatial sprites | Working | Orientation modes, region, tint, cutout/alpha; material batching (`a7efd6c`); CPU shelf packer (`bf4d9bb`); GPU atlas samples (`1666695`). M5 is accepted locally | M5 |
+| 10 | Depth, transparency, ordering | Working for sprites and meshes | One depth buffer. Blended sprites and blended meshes share one sequence (`ab1b6f7`). Object-level sort remains. Three coplanar conflicts stay unsolved (D-48, M6) | M6, M14 |
+| 11 | Meshes and materials | Working for the M5 asset | `MaterialAsset` (`e0c29ef`). Procedural plane, cube, cuboid, sphere, and cylinder (`92286ce`). Normal slot is stored and not shaded. No loader. `cone` still asserts | M12, M14 |
+| 12 | Textures, atlases | Working for M5 sampling | PNG; colour space, sampler, and mips; proved rectangle upload and whole-chain mip rebuild (`84d5ab1`); CPU shelf packer (`bf4d9bb`); GPU atlas samples (`1666695`). Localized mip texels are not implemented | M10 |
 | 13 | Lighting and fog | Working, forward only | Ambient/directional/point/spot (16), fog; 1 GPU test; no shadows, normal maps | M14 |
 | 14 | Shadows | Absent | | M14 |
 | 15 | Tilemaps | Working, basic | Expanded to quads every frame; no chunking, collision, loader | M13 |
@@ -380,7 +380,7 @@ Missing from the original category list and now tracked: **save games** (34), **
 * **Now.** `MeshData` (position, normal, uv, `u32` indices), `Mesh` + inline `Material` (colour, one
   albedo texture, `lit`), back-face culled, instanced. Code-built only; no loader.
   `MeshData::plane`, `cube`, `cuboid`, `sphere`, and `cylinder` build that data in local space
-  (ADR-0018, M5-6 working tree). `cube` is `cuboid` with equal sides. `cone` remains the earlier
+  (ADR-0018, M5-6 `92286ce`). M5 is accepted locally. `cube` is `cuboid` with equal sides. `cone` remains the earlier
   helper. `Mesh.material_asset` optionally selects a `MaterialAsset` (`e0c29ef`). When it resolves,
   extraction uses that asset for colour, albedo, alpha class, lit, and culling. Opaque and Mask write
   depth. Blend joins the transparent sequence, tests depth, and does not write it. Compatible meshes
@@ -406,20 +406,20 @@ Missing from the original category list and now tracked: **save games** (34), **
   fingerprint transitions (M5-3A, `b51f1fb`). When that journal proves the difference from the cached
   GPU image, the renderer uploads those base-level rectangles with `write_texture` and, if a chain is
   allocated, regenerates the whole chain (M5-3B, `84d5ab1`). A missing proof uploads
-  the whole base level. Sampler-only changes still do not upload pixels (KI-6). `AtlasBuilder` packs
+  the whole base level. Sampler-only changes still do not upload pixels. `Texture::from_rgba8` asserts when the byte count is not `width * height * 4`. PNG decode and `update_region` return errors. `AtlasBuilder` packs
   named RGBA8 images on the CPU in insertion order, with padding and edge extrusion, and returns a
   `Texture` plus visible `AtlasRegion` values (M5-4A, `bf4d9bb`). The default atlas mip request is
   `Mipmaps::None`. GPU tests (M5-4B, `1666695`) sample those regions through
   the existing renderer. `Atlas::replace_source` refreshes a same-size image and its extruded gutter
   through one `Texture::update_region`. Measured mip isolation is layout-specific and is not
   `floor(log2(padding))`. Linear filtering of a tightly packed atlas is not universally safe.
-* **Required.** The rest of ADR-0017: localized mip regeneration. The measured atlas layouts are in
-  that ADR. They do not reject a pack and they do not promise full-chain isolation. Wrap, separate
+* **Not implemented.** Localized mip-texel regeneration. Formal acceptance on 2026-10-22 classifies it as a deferred performance optimization with no milestone. `affected_mip_rect` remains the unused note for a later rebuild. KI-25 stays open. This row does not mark that optimization done. Also not implemented: normal-map shading (M14), order-independent transparency, sprite-sheet animation (M8), the glyph-atlas consumer (M10), and M6 coplanar stabilization.
+* **Implemented with M5, and still limited by the measured layouts.** The atlas layouts are in
+  ADR-0017. They do not reject a pack and they do not promise full-chain isolation. Wrap, separate
   filters, anisotropy normalization, per-texture colour space, the split GPU image and sampler caches,
   and mip generation are implemented (M5-2B is `11b914f`; M5-2C is `622ef80`). The CPU region journal
   is M5-3A (`b51f1fb`). Proved rectangle uploads and whole-chain mip rebuilds are M5-3B (`84d5ab1`).
   The CPU shelf packer is M5-4A (`bf4d9bb`). GPU atlas acceptance is M5-4B (`1666695`).
-  Localized mip updates are not implemented.
   **Depends on.** ADR-0016.
   D-06 (snapping) stays M6.
 * **Integration.** The glyph atlas (M10), sheets (M8), normal maps (M14), render targets (M6).

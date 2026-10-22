@@ -40,7 +40,7 @@ A generated mesh is not a collider and has no per-face material. One asset uses 
 
 ## Consequences and follow-up
 
-* M5-6 is the working tree. M5 is not accepted as a milestone. Localized mip regeneration is still absent. M6 and D-48 are unchanged.
+* M5-6 is commit `92286ce`. M5 is accepted locally. The acceptance record is in TASKS.md. Localized mip-texel regeneration is still absent and is deferred, with no milestone. M6's remaining tasks and D-48 are unchanged.
 * Call sites of `cuboid` handle `Result`. The vertex order of a valid box is the order the previous function built.
 * A later loader or skinned mesh uses `MeshData`. It does not add a primitive pipeline.
 

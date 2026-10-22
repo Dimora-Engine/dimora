@@ -35,39 +35,36 @@ exists: [docs/CAPABILITIES.md](docs/CAPABILITIES.md) is the record of what does.
 
 **Complete locally, not pushed.** M0 and M1. M2's numbered tasks T1 to T3, with licence files (KI-17) and
 the owner's confirmation of GitHub as host still carried. M3a and M3b. M4, through the lamp prefab and the
-crate-private scene helpers, at commit `2b79806`.
+crate-private scene helpers, at commit `2b79806`. M5, materials and textures, formally accepted on
+2026-10-22. The implementation checkpoint is `92286ce0546a4d94bb0365581ae7469fe2ad3260`. The acceptance
+record is a later documentation commit. Localized mip-texel regeneration is not part of that acceptance.
 
 **In progress.** M6 has one verified piece: the `spatial_scene` camera-configuration prototype (commit
 `6dbabb8`, tests in `examples/spatial_scene/tests/configurations.rs`). Custom projection, multiple
 viewports, camera-to-texture, tilemap chunking, and the performance baseline are not done. M6 is not
 pulled into M5.
 
-**Next implementation.** M5, materials and textures, is in progress. M5-1 records the decisions
-(ADR-0015, ADR-0016, ADR-0017). M5-2A through M5-3B are committed locally and are not pushed
-(`c687d5b`, `11b914f`, `622ef80`, `b51f1fb`, `84d5ab1`). M5-4A, the CPU shelf packer, is commit
-`bf4d9bb` and is not pushed. M5-4B, GPU atlas sampling, is commit `1666695` and is not pushed.
-M5-5A, the CPU `MaterialAsset`, is commit `e0c29ef` and is not pushed. M5-5B, material-driven
-rendering, is commit `3b3cd4a` and is not pushed. M5-5C, unified blended rendering, is commit `ab1b6f7` and is not pushed. M5-5D, material-aware
-batching, is commit `a7efd6c` and is not pushed. M5-6, procedural mesh generators, is in the
-working tree and is not committed. Localized mip regeneration has not started.
+**M5 is complete locally and accepted.** The implementation checkpoint is
+`92286ce0546a4d94bb0365581ae7469fe2ad3260`. M5-2A through M5-6 are the local commits
+`c687d5b`, `11b914f`, `622ef80`, `b51f1fb`, `84d5ab1`, `bf4d9bb`, `1666695`, `e0c29ef`,
+`3b3cd4a`, `ab1b6f7`, `a7efd6c`, and `92286ce`. None of them is pushed. Localized mip-texel
+regeneration is deferred and has no milestone. M6's remaining tasks have not started. The
+camera-configuration prototype remains the only M6 work.
 
 **Implemented and tested, beyond the 2026-10-13 audit.** Named stages, commands and events, the `log`
 crate and `Diagnostics`, actions and window controls, scene load/unload/replace on the command flush,
 hierarchical visibility, name and tag lookup, the component registry and text dumps, and one code-defined
-prefab. The last recorded workspace check is in TASKS.md under M4-5 (365 tests). This introduction does
-not add a new test run.
+prefab. M5 adds texture descriptors and GPU samplers, mipmap generation, partial base-level uploads,
+runtime atlas packing and same-size updates, `MaterialAsset` with Opaque, Mask, and Blend, one blended
+sprite and mesh sequence, material-aware instancing, and plane, cube, cuboid, sphere, and cylinder
+generators. The acceptance evidence is in TASKS.md. The last recorded workspace check before that
+acceptance is the M5 audit (573 tests). This introduction does not add a separate test run.
 
 **Still partial.** Tilemaps have no chunking. Skeletal animation is a data model and one player. Assets
-are PNG and synchronous. Materials are an inline colour, one albedo, and a lit flag. Textures are RGBA8
-with per-texture colour space, samplers, optional mip generation, and proved rectangle uploads. A CPU
-shelf packer is commit `bf4d9bb`. GPU atlas samples are commit `1666695`. A CPU `MaterialAsset`
-is commit `e0c29ef`. M5-5B (`3b3cd4a`) draws an assigned material on sprites and on opaque
-or mask meshes. M5-5C (`ab1b6f7`) draws blended meshes in the same sequence as blended
-sprites. Unassigned meshes still use the inline material. M5-5D (`a7efd6c`) batches
-compatible sprites and meshes by pipeline, material identity and revision, and texture. One
-thousand compatible opaque sprites are one instanced draw. M5-6, in the working tree, adds
-plane, cube, cuboid, sphere, and cylinder meshes as ordinary `MeshData`. Localized mip
-regeneration is not done.
+are PNG and synchronous. Unassigned meshes still use the inline material. Localized mip-texel
+regeneration is not implemented. Normal-map shading, sprite-sheet animation, the glyph atlas, and
+order-independent transparency are not implemented. `Texture::from_rgba8` still asserts on a wrong
+byte length. `MeshData::cone` still asserts.
 
 **Still absent.** Collision, sprite-sheet animation, 3D characters, UI, audio, particles, shadows,
 scripting, serialization, a general importer, bundles, an editor, and packaging. CI exists as a workflow
@@ -93,18 +90,10 @@ first" tiers in [docs/DECISIONS.md](docs/DECISIONS.md#what-to-resolve-first).
   Synchronous load is `128c70e`. Unload and replace are `e12fb5b`. Deferred scene operations are
   `8398e49`. The `spatial_scene` switch is `d58c66b`. The lamp prefab and the crate-private scene helpers
   are `2b79806`. Scene files stay in M19. D-16 stays open.
-* **Now: M5, materials and textures.** Decisions are recorded (ADR-0015, ADR-0016, ADR-0017). M5-2A,
-  the CPU texture descriptors, is committed locally as `c687d5b` and is not pushed. M5-2B, GPU formats
-  and the sampler cache, is commit `11b914f` and is not pushed. M5-2C, GPU mip generation, is
-  commit `622ef80` and is not pushed. M5-3A, bounded CPU region transitions, is commit `b51f1fb` and
-  is not pushed. M5-3B, GPU rectangle uploads and whole-chain mip rebuilds, is commit `84d5ab1` and
-  is not pushed. M5-4A, the CPU shelf packer, is commit `bf4d9bb` and is not pushed. M5-4B, GPU atlas
-  sampling, is commit `1666695` and is not pushed. M5-5A, the CPU `MaterialAsset`, is commit `e0c29ef`
-  and is not pushed. M5-5B, material handles and material-driven rendering, is commit `3b3cd4a` and
-  is not pushed. M5-5C, unified blended rendering, is commit `ab1b6f7` and is not pushed.
-  M5-5D, material-aware batching, is commit `a7efd6c` and is not pushed. M5-6, procedural mesh
-  generators, is in the working tree and is not committed. Localized mip regeneration has not started.
-  The milestone is in progress and is not complete.
+* **M5 is complete locally and accepted, and is not pushed.** The implementation checkpoint is
+  `92286ce0546a4d94bb0365581ae7469fe2ad3260`. The acceptance record is the documentation commit that
+  follows it. Decisions are ADR-0015, ADR-0016, ADR-0017, and ADR-0018. Localized mip-texel
+  regeneration is deferred, with no milestone. It is not implemented.
 * **M6 stays after M5.** The camera-configuration prototype is verified. The rest of M6 is not started.
   M7 and M8 can proceed in parallel after M3a, M4, M5, and M6 as stated below. M9 freezes the foundational
   gameplay, scene, and component-integration contracts. Later milestones may add public APIs through a
@@ -472,7 +461,9 @@ Scene files stay in M19. D-16 stays open.
 
 ---
 
-## M5. Materials and textures: In progress
+## M5. Materials and textures: Complete locally and accepted (not pushed)
+
+**Status.** Complete / accepted on 2026-10-22. Implementation checkpoint `92286ce0546a4d94bb0365581ae7469fe2ad3260`. The acceptance record is a documentation commit after that checkpoint. Not pushed. M6 is not started beyond the camera-configuration prototype already recorded.
 
 **Objective.** A small but real material and texture model that normal maps, shadows and the asset
 pipeline can build on without rewriting the renderer. It serves every camera configuration and visual
@@ -513,7 +504,9 @@ handle on sprites and meshes and draws opaque, mask, and blended sprites plus op
 M5-5C (`ab1b6f7`) draws blended meshes in that same sequence. M5-5D (`a7efd6c`) is the
 1,000-sprite batch: one material revision, one texture and sampler, the shared quad, and one
 pipeline are one instanced draw. Blended objects are still not reordered to form a batch.
-M5-6, in the working tree, is plane, cube, cuboid, sphere, and cylinder on `MeshData` (ADR-0018).
+M5-6 (`92286ce0546a4d94bb0365581ae7469fe2ad3260`) is plane, cube, cuboid, sphere, and cylinder on `MeshData` (ADR-0018). That commit is the implementation checkpoint. Formal acceptance is the later documentation commit. It does not change these tasks.
+
+**Accepted reading of the sub-rectangle bullet (2026-10-22).** The bullet above is unchanged. Acceptance reads it as a partial base-level upload, untouched base-level pixels outside that rectangle, and a rebuild of the entire allocated mip chain when those base pixels change. That rebuild is the required mip maintenance, and it is not counted as a full-image upload. Sampler-only changes do not rebuild the chain. The rebuilt levels must match a full generation of the new base. Regenerating only the mip texels the rectangle affects is not required. That work is deferred, with no milestone. `affected_mip_rect` stays unused. KI-25 stays open for it and for the M10 glyph atlas.
 
 **Acceptance criteria.**
 - GPU test: a minified high-frequency texture approaches its mean colour with mipmaps, and aliases
@@ -543,11 +536,12 @@ M5-6, in the working tree, is plane, cube, cuboid, sphere, and cylinder on `Mesh
 - The four release screenshots against commit `6dbabb8` stay byte-identical. Baselines are not replaced
   to make a test pass.
 
-**Tests/examples.** Above. M5-2's texture tests are specified in TASKS.md and are not written yet.
+**Tests/examples.** The acceptance tests above are written. Names and the 2026-10-21 results are in TASKS.md under "M5 acceptance audit". An earlier draft of this line said the M5-2 tests were not written. That status is obsolete. The acceptance bullets are unchanged.
 
 **Deferred.** PBR, material graphs, custom shader authoring, a shader compiler, texture compression,
 texture streaming, normal-map shading (M14), a second renderer, a second world. Pixel snapping stays in
-M6 (D-06). Coplanar ordering stays in M6 (D-48).
+M6 (D-06). Coplanar ordering stays in M6 (D-48). Localized mip-texel regeneration is a performance
+optimization with no milestone. Whole-chain regeneration after a base change is the accepted M5 behavior.
 
 ---
 

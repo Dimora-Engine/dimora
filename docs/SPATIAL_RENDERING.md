@@ -313,7 +313,7 @@ the same transparent sequence as blended sprites, tests depth, and does not writ
 keeps the sampled alpha. Meshes use the same `GlobalTransform`, the same `CameraView` and the same
 depth buffer as sprites. Depth-writing instances that share a mesh, a texture, a draw class,
 and a material become one draw. Blended meshes merge only while they stay contiguous in the sorted sequence.
-`MeshData::plane`, `cube`, `cuboid`, `sphere`, and `cylinder` (ADR-0018) are the same kind of asset.
+`MeshData::plane`, `cube`, `cuboid`, `sphere`, and `cylinder` (ADR-0018, M5-6 `92286ce`) are the same kind of asset. M5 is accepted locally.
 `cube(size)` matches `cuboid` with that size on every axis. A plane is the horizontal XZ ground,
 normal +Y. Boxes are centred, with 24 flat-shaded vertices and 36 indices. A sphere is a UV sphere
 with radial normals. A cylinder is centred on Y; `cylinder` includes caps, and
