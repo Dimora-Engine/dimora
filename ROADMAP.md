@@ -40,15 +40,18 @@ crate-private scene helpers, at commit `2b79806`. M5, materials and textures, fo
 record is a later documentation commit. Localized mip-texel regeneration is not part of that acceptance.
 
 **In progress.** M6 has the `spatial_scene` camera-configuration prototype (commit `6dbabb8`), custom
-projection (M6-1B, `a38cb30`), the example `custom` camera (M6-1C, `795bd95`), and M6-2B surface cameras, committed locally: every active camera, viewports, color or load, and per-camera depth. Camera-to-texture,
-tilemap chunking, and the performance baseline are not done. M6 is not complete and is not pulled into M5.
+projection (M6-1B, `a38cb30`), the example `custom` camera (M6-1C, `795bd95`), M6-2B surface cameras
+(`6a47882`, committed locally), and M6-2C offscreen targets and camera-to-texture (committed locally,
+not pushed). Tilemap chunking and the performance baseline are not done. M6 is not complete and is not
+pulled into M5.
 
 **M5 is complete locally and accepted.** The implementation checkpoint is
 `92286ce0546a4d94bb0365581ae7469fe2ad3260`. M5-2A through M5-6 are the local commits
 `c687d5b`, `11b914f`, `622ef80`, `b51f1fb`, `84d5ab1`, `bf4d9bb`, `1666695`, `e0c29ef`,
 `3b3cd4a`, `ab1b6f7`, `a7efd6c`, and `92286ce`. None of them is pushed. Localized mip-texel
-regeneration is deferred and has no milestone. M6-2B surface cameras are committed locally and are not pushed.
-Camera-to-texture, D-48, chunking, debug draw, and benchmarks have not started.
+regeneration is deferred and has no milestone. M6-2B surface cameras are commit `6a47882` and are not pushed.
+M6-2C camera-to-texture is committed locally and is not pushed. D-48, chunking, debug draw, and
+benchmarks have not started.
 
 **Implemented and tested, beyond the 2026-10-13 audit.** Named stages, commands and events, the `log`
 crate and `Diagnostics`, actions and window controls, scene load/unload/replace on the command flush,
@@ -229,7 +232,7 @@ Each row is a capability nobody builds yet whose *shape* constrains work in the 
 | Scene and asset serialization | M19 | Components must stay plain data (no GPU objects, no cached derived values); asset references must be restorable to a stable identity; entity references need remapping | ARCHITECTURE.md requirement 8; D-16, D-18, D-47 |
 | Hot reload | M17 | A reload takes effect at a stage boundary; consumers resolve assets per use instead of caching derived data in components | Requirement 6; D-16 |
 | Scripting | M18 | Commands, events and a component registry must exist first; scripts get a small versioned surface, not `hecs` or renderer types | Requirements 7 and 9; D-40 to D-45 |
-| Multiple cameras, render targets and a custom projection | M6 | Seven example views, including `custom`, are demonstrated in `spatial_scene`. `CameraProjection::Custom(Mat4)` is implemented (D-25, `a38cb30`). M6-2B (committed locally) renders every active surface camera into `RenderScene.passes`. Offscreen targets are not implemented. Do not add features that assume one projection or one ground plane | R-2, R-16; D-08, D-25, D-48; ADR-0004 |
+| Multiple cameras, render targets and a custom projection | M6 | Seven example views, including `custom`, are demonstrated in `spatial_scene`. `CameraProjection::Custom(Mat4)` is implemented (D-25, `a38cb30`). M6-2B (`6a47882`) renders every active surface camera. M6-2C (committed locally, not pushed) adds offscreen targets and camera-to-texture. There is no render graph. Do not add features that assume one projection or one ground plane | R-2, R-16; D-08, D-25, D-48; ADR-0004 |
 | Blended meshes, particles, skinned characters | M5, M12, M15 | They need a transparency class in the render model before they exist | R-1; D-05 |
 | Fixed-step interpolation | M3a | **Done (M3a-5, committed locally, not pushed).** Opt-in, extraction-only, never writes `Transform` or `GlobalTransform` (ADR-0007) | R-3 |
 | UI in screen and world space | M10 | Window scale factor, sub-rectangle texture update and an overlay pass; M3b and M5 carry the prerequisites | R-12, KI-24, KI-25; D-24, D-37 to D-39 |
@@ -561,11 +564,13 @@ baseline. Camera projection stays separate from gameplay orientation and visual 
 - **Example custom camera (M6-1C, committed locally, not pushed).** `spatial_scene` adds `custom` after the original six
   constructors. It is an example-local oblique matrix on `CameraProjection::Custom`, selected with
   `--camera custom` and the `C` key. It is not an engine preset and not an oblique builder.
-- **Surface cameras (D-08, M6-2B, committed locally).** Every active camera renders in ascending `(order, entity id)`,
-  with its own viewport, projection, clear or load, depth clear, culling, and transparent order. One
-  full-surface camera stays on the historical attachment clear. Offscreen targets are not in this slice.
-  M6 is not complete.
-- Camera-to-texture render targets (M6-2C, not started).
+- **Surface cameras (D-08, M6-2B, commit `6a47882`, not pushed).** Every active camera renders in ascending
+  `(order, entity id)`, with its own viewport, projection, clear or load, depth clear, culling, and
+  transparent order. One full-surface camera stays on the historical attachment clear.
+- **Offscreen targets and camera-to-texture (D-08, M6-2C, committed locally, not pushed).** A camera
+  writes `CameraOutput::Surface` or `CameraOutput::Target`. A later sprite samples that color image
+  through the existing sprite pipeline. Dependencies follow camera order in the same frame. There is no
+  render graph and no previous-frame fallback. M6 is not complete.
 - **Camera-configuration test scene. Done and verified (2026-10-14), with a seventh constructor in M6-1C (committed locally, not pushed).** `spatial_scene` is one world (sprites
   at several depths, overlapping and coplanar decals, cutout foliage, meshes, a ground, a moving sprite)
   viewed through seven example-local constructors: perspective, orthographic, isometric (orthographic, yawed and
@@ -621,15 +626,19 @@ orthographic-equivalent pixels, an oblique matrix, depth, blend order, camera tr
 matching GPU homogeneous clipping. **Example camera (M6-1C).** `spatial_scene` renders the same world
 through `custom`: an example-local sheared orthographic matrix, pose on `Transform`, `--camera custom`,
 and `C` / `P` behaviour that does not discard that matrix. That meets the scene-under-a-custom-projection
-part of the configuration bullet. **Surface cameras (M6-2B, committed locally).** Two viewports, overlap,
+part of the configuration bullet. **Surface cameras (M6-2B, `6a47882`).** Two viewports, overlap,
 picture-in-picture, `CameraClear::Color` and `Load`, and a per-camera depth clear are implemented and
-covered by GPU readback. D-08 stays partial. **Not met:** camera-to-texture; target dependency and
-sampling; D-48; chunking; benchmarks; an engine preset API; a public oblique builder. M6 is not complete.
+covered by GPU readback. **Camera-to-texture (M6-2C, committed locally, not pushed).** An offscreen camera's image is
+sampled by a later surface sprite, with resize, material and alpha class, invalid dependencies, and
+several writers covered by GPU readback. D-08 is implemented locally. **Not met:** D-48; chunking;
+benchmarks; an engine preset API; a public oblique builder. M6 is not complete.
 The blended-sprite-versus-mesh assertion was not repeated per example configuration. The constructors are example-local.
 
 **Tests/examples.** `spatial_scene` has `--camera <name>`. The GPU tests for the scene are
 `examples/spatial_scene/tests/configurations.rs`. Surface cameras, including picture-in-picture, are
 `crates/engine-renderer/tests/multi_camera.rs` and `crates/engine-renderer-wgpu/tests/multi_camera.rs`.
+Offscreen targets are `crates/engine-renderer/tests/render_target.rs` and
+`crates/engine-renderer-wgpu/tests/render_target.rs`.
 
 **Deferred.** Render graph, deferred shading, HDR/post-processing, compute-driven culling.
 

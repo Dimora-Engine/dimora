@@ -5,6 +5,8 @@ use engine_assets::{AssetHandle, MaterialAsset, MeshData, SpriteAsset, Texture};
 use engine_core::Color;
 use engine_math::{Rect, Vec2};
 
+use crate::render_target::RenderTargetId;
+
 /// How a sprite combines with what is behind it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum SpriteBlend {
@@ -72,6 +74,19 @@ pub struct Sprite {
     /// the sprite asset. An albedo `Some` is sampled with those UVs and is not remapped, so the
     /// texture has to share that layout. [`MaterialAsset::default`] is opaque and single-sided.
     pub material: Option<AssetHandle<MaterialAsset>>,
+    /// When `Some`, this sprite samples that offscreen target instead of the [`SpriteAsset`]
+    /// texture and instead of [`engine_assets::MaterialAsset::albedo`].
+    ///
+    /// Material alpha class, `base_color`, tint, lighting, and culling stay on the material (or on
+    /// the unassigned sprite when `material` is `None`). Size, pivot, and pixels per unit stay on
+    /// the sprite asset. The sampled coordinates are the full target in `[0, 1]`, with
+    /// [`Self::flip_x`] and [`Self::flip_y`] applied. An atlas [`Self::region`] is not used.
+    ///
+    /// The sample is valid only after an earlier camera in the same frame has written the target.
+    /// The sprite's own camera cannot sample the target it is writing. A missing, removed, or
+    /// not-yet-written target uses the missing-texture placeholder. The previous frame's image is
+    /// not a fallback. Material revision is unchanged by this field.
+    pub render_target: Option<RenderTargetId>,
 }
 
 impl Sprite {
@@ -91,6 +106,7 @@ impl Sprite {
             blend: SpriteBlend::Alpha,
             lit: true,
             material: None,
+            render_target: None,
         }
     }
     pub fn with_region(mut self, region: Rect) -> Self {
@@ -140,6 +156,11 @@ impl Sprite {
     }
     pub fn with_material(mut self, material: AssetHandle<MaterialAsset>) -> Self {
         self.material = Some(material);
+        self
+    }
+    /// Samples `target` instead of the sprite asset texture and material albedo.
+    pub fn with_render_target(mut self, target: RenderTargetId) -> Self {
+        self.render_target = Some(target);
         self
     }
 }

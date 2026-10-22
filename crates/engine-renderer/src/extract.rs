@@ -5,22 +5,25 @@ use engine_core::Color;
 use engine_math::{Mat3, Mat4, Quat, Rect, Vec2, Vec3};
 use engine_world::{Entity, GlobalTransform, Parent, Visibility, World};
 
-use crate::camera::{Camera, CameraClear, CameraView};
+use crate::camera::{Camera, CameraClear, CameraOutput, CameraView};
 use crate::components::{
     AmbientLight, Fog, Light, LightKind, Mesh, RenderOrder, Sprite, SpriteBlend, SpriteOrientation, TileMap,
 };
 use crate::frustum::Frustum;
 use crate::interpolate::{render_poses, RenderPoses};
 use crate::missing::{report_absent_texture, resolve, MissingAssetWarnings};
+use crate::render_target::{RenderTargetId, RenderTargetStore};
 use crate::scene::*;
 
 /// Snapshots the world into a [`RenderScene`] for every active camera. `target_size` is the
-/// render target in pixels; each camera's viewport rectangle is resolved against it.
+/// **surface** in pixels. A camera whose output is an offscreen target resolves its viewport,
+/// aspect, and frustum against that target's dimensions instead.
 ///
 /// Active cameras are sorted by ascending `(Camera.order, entity id)`. Each one is culled,
 /// oriented, and transparency-sorted on its own. Materials and missing-asset warnings are
 /// resolved once for the frame. The world is only read; nothing here touches a GPU. Returns
-/// `None` when no camera is active.
+/// `None` when no active camera has a drawable destination. A camera whose offscreen target is
+/// missing is counted on the way and skipped. It is not redirected to the surface.
 ///
 /// `transforms` must be up to date: call `engine_world::propagate_transforms` first.
 ///
@@ -35,7 +38,7 @@ use crate::scene::*;
 pub fn extract_scene(world: &World, assets: &AssetManager, target_size: Vec2) -> Option<RenderScene> {
     let hidden = AncestorVisibility::read(world);
     let poses = render_poses(world);
-    let cameras = ordered_cameras(world, target_size, &poses);
+    let (cameras, missing_outputs) = ordered_cameras(world, target_size, &poses);
     if cameras.is_empty() {
         return None;
     }
@@ -52,9 +55,19 @@ pub fn extract_scene(world: &World, assets: &AssetManager, target_size: Vec2) ->
     let fog = world.try_resource::<Fog>().map_or(Fog::default(), |f| *f);
     let fog = [fog.color.r, fog.color.g, fog.color.b, fog.density];
 
-    let passes: Vec<CameraPass> =
-        cameras.iter().map(|camera| build_pass(world, assets, camera, &sprites, &tiles, &meshes, &lights)).collect();
-    let mut stats = ExtractStats { missing_assets: shared.missing_assets, ..ExtractStats::default() };
+    let mut written = HashSet::new();
+    let mut missing_targets = missing_outputs;
+    let mut passes = Vec::with_capacity(cameras.len());
+    for camera in &cameras {
+        let pass =
+            build_pass(world, assets, camera, &sprites, &tiles, &meshes, &lights, &written, &mut missing_targets);
+        if let CameraOutput::Target(id) = pass.output {
+            written.insert(id);
+        }
+        passes.push(pass);
+    }
+    let targets = world.try_resource::<RenderTargetStore>().map(|store| store.descriptions()).unwrap_or_default();
+    let mut stats = ExtractStats { missing_assets: shared.missing_assets, missing_targets, ..ExtractStats::default() };
     for pass in &passes {
         stats.sprites_visible += pass.stats.sprites_visible;
         stats.sprites_culled += pass.stats.sprites_culled;
@@ -62,15 +75,17 @@ pub fn extract_scene(world: &World, assets: &AssetManager, target_size: Vec2) ->
         stats.meshes_culled += pass.stats.meshes_culled;
         stats.lights += pass.stats.lights;
     }
-    Some(RenderScene { passes, ambient, fog, stats })
+    Some(RenderScene { passes, targets, ambient, fog, stats })
 }
 
-/// One active camera in draw order. Produced by [`active_surface_cameras`] and stored, by value,
-/// on each [`CameraPass`]. M6-2B renders every one of these to the surface.
+/// One active camera in draw order. Stored by value on each [`CameraPass`].
+/// [`Self::output`] is the surface or an offscreen target. [`active_surface_cameras`] keeps only
+/// the surface entries.
 #[derive(Clone, Copy, Debug)]
 pub struct OrderedCamera {
     pub camera_id: u32,
     pub order: i32,
+    pub output: CameraOutput,
     pub clear: CameraClear,
     pub clear_color: Color,
     pub view: CameraView,
@@ -88,18 +103,24 @@ pub struct SurfaceHit {
     pub viewport_pixel: Vec2,
 }
 
-/// Active cameras in draw order: ascending [`Camera::order`], then ascending entity id.
+/// Active surface cameras in draw order: ascending [`Camera::order`], then ascending entity id.
 ///
-/// An inactive camera is absent. `Visibility` is not consulted. Every camera in M6-2B targets
-/// the surface. The same function feeds extraction, so tests do not keep a second sort.
+/// An inactive camera is absent. `Visibility` is not consulted. Offscreen cameras are absent;
+/// [`camera_view_of`] still resolves one by id, using that target's dimensions. The same ordering
+/// feeds extraction, so tests do not keep a second sort.
 pub fn active_surface_cameras(world: &World, target_size: Vec2) -> Vec<OrderedCamera> {
     ordered_cameras(world, target_size, &render_poses(world))
+        .0
+        .into_iter()
+        .filter(|camera| camera.output == CameraOutput::Surface)
+        .collect()
 }
 
-/// The last drawn active camera whose viewport contains `window_pixel`.
+/// The last drawn active surface camera whose viewport contains `window_pixel`.
 ///
-/// Overlap uses that later camera. A pixel in no viewport returns `None`. The returned
-/// [`SurfaceHit::viewport_pixel`] is viewport-local.
+/// Overlap uses that later camera. A pixel in no surface viewport returns `None`. Offscreen
+/// cameras are not candidates, including one drawn later than every surface camera. The returned
+/// [`SurfaceHit::viewport_pixel`] is viewport-local to the surface.
 pub fn top_surface_camera(world: &World, window_pixel: Vec2, target_size: Vec2) -> Option<SurfaceHit> {
     active_surface_cameras(world, target_size)
         .into_iter()
@@ -114,35 +135,99 @@ pub fn top_surface_camera(world: &World, window_pixel: Vec2, target_size: Vec2) 
 
 /// The view of one camera entity, whether or not it is the topmost or even active.
 ///
-/// `None` when no camera entity has this id. Callers that already know which camera they want
-/// use this, then [`CameraView::window_to_viewport`] and [`CameraView::ray_from_pixels`].
+/// `target_size` is the surface. An offscreen camera uses its target's dimensions instead, and
+/// this returns `None` when that target is missing. It also returns `None` when no camera entity
+/// has this id. Callers that already know which camera they want use this, then
+/// [`CameraView::window_to_viewport`] and [`CameraView::ray_from_pixels`]. Offscreen pixels are
+/// target-local, not window pixels.
 pub fn camera_view_of(world: &World, camera_id: u32, target_size: Vec2) -> Option<CameraView> {
     let poses = render_poses(world);
-    world.query::<(&Camera, &GlobalTransform)>().iter().find(|(entity, _)| entity.id() == camera_id).map(
+    world.query::<(&Camera, &GlobalTransform)>().iter().find(|(entity, _)| entity.id() == camera_id).and_then(
         |(entity, (camera, global))| {
+            let size = destination_size(world, camera.output, target_size)?;
             let placed = GlobalTransform { matrix: poses.matrix(entity, global) };
-            CameraView::new(camera, &placed, target_size)
+            Some(CameraView::new(camera, &placed, size))
         },
     )
 }
 
-fn ordered_cameras(world: &World, target_size: Vec2, poses: &RenderPoses) -> Vec<OrderedCamera> {
+fn destination_size(world: &World, output: CameraOutput, surface: Vec2) -> Option<Vec2> {
+    match output {
+        CameraOutput::Surface => Some(surface),
+        CameraOutput::Target(id) => {
+            let store = world.try_resource::<RenderTargetStore>()?;
+            let desc = *store.get(id)?;
+            Some(Vec2::new(desc.width as f32, desc.height as f32))
+        }
+    }
+}
+
+fn ordered_cameras(world: &World, target_size: Vec2, poses: &RenderPoses) -> (Vec<OrderedCamera>, u32) {
     let mut cameras = Vec::new();
+    let mut missing_outputs = 0u32;
     for (entity, (camera, global)) in world.query::<(&Camera, &GlobalTransform)>().iter() {
         if !camera.active {
             continue;
         }
+        let Some(size) = destination_size(world, camera.output, target_size) else {
+            missing_outputs += 1;
+            if let CameraOutput::Target(id) = camera.output {
+                report_target(
+                    world,
+                    id,
+                    entity.id(),
+                    "missing as a camera output and was not redirected to the surface",
+                );
+            }
+            continue;
+        };
         let placed = GlobalTransform { matrix: poses.matrix(entity, global) };
         cameras.push(OrderedCamera {
             camera_id: entity.id(),
             order: camera.order,
+            output: camera.output,
             clear: camera.clear,
             clear_color: camera.clear_color,
-            view: CameraView::new(camera, &placed, target_size),
+            view: CameraView::new(camera, &placed, size),
         });
     }
     cameras.sort_by_key(|camera| (camera.order, camera.camera_id));
-    cameras
+    (cameras, missing_outputs)
+}
+
+fn sprite_sample(
+    world: &World,
+    camera: &OrderedCamera,
+    sprite: &PreparedSprite,
+    written: &HashSet<RenderTargetId>,
+    missing_targets: &mut u32,
+) -> (Option<RenderTargetId>, bool, [f32; 4]) {
+    let Some(id) = sprite.render_target else {
+        return (None, false, sprite.uv);
+    };
+    let uv = flipped_uv(Rect::new(Vec2::ZERO, Vec2::ONE), sprite.flip_x, sprite.flip_y);
+    let stored = world.try_resource::<RenderTargetStore>().is_some_and(|store| store.get(id).is_some());
+    let writing_it = camera.output == CameraOutput::Target(id);
+    if stored && written.contains(&id) && !writing_it {
+        return (Some(id), false, uv);
+    }
+    *missing_targets += 1;
+    let reason = if !stored {
+        "is missing and was not sampled"
+    } else if writing_it {
+        "is this camera's current output and was not sampled"
+    } else {
+        "has not been written earlier in this frame and was not sampled"
+    };
+    report_target(world, id, camera.camera_id, reason);
+    (Some(id), true, uv)
+}
+
+fn report_target(world: &World, id: RenderTargetId, camera_id: u32, reason: &str) {
+    let fresh = world.try_resource::<RenderTargetStore>().is_none_or(|store| store.warn_once(id));
+    if fresh {
+        log::warn!("render target {id} {reason} (camera {camera_id})");
+    }
 }
 
 struct PreparedSprite {
@@ -151,6 +236,9 @@ struct PreparedSprite {
     size: Vec2,
     anchor: Vec2,
     uv: [f32; 4],
+    flip_x: bool,
+    flip_y: bool,
+    render_target: Option<RenderTargetId>,
     appearance: SpriteAppearance,
     order: RenderOrder,
 }
@@ -193,6 +281,9 @@ fn prepare_sprites(
             size: sprite.size.unwrap_or_else(|| asset.world_size()),
             anchor: sprite.anchor.unwrap_or(asset.pivot),
             uv: flipped_uv(sub_region(asset.uv, sprite.region), sprite.flip_x, sprite.flip_y),
+            flip_x: sprite.flip_x,
+            flip_y: sprite.flip_y,
+            render_target: sprite.render_target,
             appearance,
             order: order.copied().unwrap_or_default(),
         });
@@ -295,6 +386,7 @@ fn select_lights(lights: &[LightData], view: &CameraView) -> Vec<LightData> {
     lights
 }
 
+#[allow(clippy::too_many_arguments)] // target availability is the written set plus the missing counter
 fn build_pass(
     world: &World,
     assets: &AssetManager,
@@ -303,6 +395,8 @@ fn build_pass(
     tiles: &[PreparedTile],
     meshes: &[PreparedMesh],
     lights: &[LightData],
+    written: &HashSet<RenderTargetId>,
+    missing_targets: &mut u32,
 ) -> CameraPass {
     let view = &camera.view;
     let frustum = Frustum::from_view_proj(&view.view_proj);
@@ -322,12 +416,15 @@ fn build_pass(
         }
         stats.sprites_visible += 1;
         let appearance = &sprite.appearance;
+        let (render_target, unavailable_target, uv) = sprite_sample(world, camera, sprite, written, missing_targets);
         let instance = SpriteInstance {
             model,
-            uv: sprite.uv,
+            uv,
             tint: appearance.tint,
             lit: appearance.lit,
             texture: appearance.texture,
+            render_target,
+            unavailable_target,
             shading: appearance.shading,
             material_id: appearance.material_id,
             material_revision: appearance.material_revision,
@@ -386,7 +483,16 @@ fn build_pass(
             .then(a.sequence.cmp(&b.sequence))
     });
     let (blended_sprites, blended_meshes, transparent) = pack_transparent(blended);
-    let group = |i: &SpriteInstance| (i.texture.id(), i.shading.pipeline(), i.material_id, i.material_revision);
+    let group = |i: &SpriteInstance| {
+        let source = if i.unavailable_target {
+            (0u8, 0u64)
+        } else if let Some(id) = i.render_target {
+            (1u8, id.raw())
+        } else {
+            (2u8, i.texture.id().0)
+        };
+        (source, i.shading.pipeline(), i.material_id, i.material_revision)
+    };
     opaque.sort_by_key(group);
     mask.sort_by_key(group);
     cutout.sort_by_key(group);
@@ -397,6 +503,7 @@ fn build_pass(
         camera_id: camera.camera_id,
         order: camera.order,
         view: *view,
+        output: camera.output,
         clear: camera.clear,
         clear_color: camera.clear_color,
         viewport_px: [view.viewport_origin.x, view.viewport_origin.y, view.viewport.x, view.viewport.y],
@@ -451,6 +558,8 @@ fn append_sprite(
 ) {
     let index = sprites.len() as u32;
     let texture = instance.texture;
+    let render_target = instance.render_target;
+    let unavailable_target = instance.unavailable_target;
     let pipeline = instance.shading.pipeline();
     let extend = sprites.last().is_some_and(|previous| previous.shares_batch(&instance))
         && matches!(transparent.last(), Some(TransparentBatch::Sprites(_)));
@@ -462,7 +571,7 @@ fn append_sprite(
         sprite_batches.last_mut().expect("a sprite run has a matching sprite batch").range.end = index + 1;
         return;
     }
-    let batch = SpriteBatch { texture, pipeline, range: index..index + 1 };
+    let batch = SpriteBatch { texture, render_target, unavailable_target, pipeline, range: index..index + 1 };
     transparent.push(TransparentBatch::Sprites(batch.clone()));
     sprite_batches.push(batch);
 }
@@ -789,6 +898,8 @@ fn extract_tilemap(
                 tint: [1.0; 4],
                 lit: map.lit,
                 texture: map.texture,
+                render_target: None,
+                unavailable_target: false,
                 shading: SpriteShading::LegacyCutout,
                 material_id: None,
                 material_revision: 0,

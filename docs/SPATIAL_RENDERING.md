@@ -136,13 +136,24 @@ Transform     where it is and where it looks (the view is the inverse of its wor
 Camera.projection  Orthographic | Perspective | Custom(Mat4)
 Camera.viewport    ViewportRect: the part of the render target it draws into
 Camera.clear       Color (default) or Load
+Camera.output      Surface (default) or Target(RenderTargetId)
 Camera.order       draw order among active cameras
 ```
 
-Every active camera is a pass. Passes sort by ascending `(order, entity id)`. A later pass can overlay
-an earlier one where the viewports overlap. `Visibility` does not drop a camera. Each pass has its own
-view, projection, frustum, sprite orientation, and transparent order. Texture, sampler, and mesh
-geometry caches are shared. Offscreen targets are not part of this contract (M6-2C).
+Every active camera with a drawable destination is a pass. Passes sort by ascending `(order, entity id)`
+across surface and offscreen outputs. Order is not rearranged to satisfy a sample. A later pass can
+overlay an earlier one where they share a destination and their viewports overlap. `Visibility` does not
+drop a camera. Each pass has its own view, projection, frustum, sprite orientation, and transparent
+order. The aspect and the viewport rectangle use that destination's pixels. A `Custom` matrix ignores
+the destination aspect. Texture, sampler, and mesh geometry caches are shared.
+
+`RenderTargetStore` lives on the world and stores plain descriptions. Ids start at 1 and are not reused.
+The renderer allocates the color image and a private depth image, and it replaces both when `resize`
+changes the size. New pixels are undefined until a camera writes the target. A sprite with
+`render_target` set samples that full image in `[0, 1]` instead of its `SpriteAsset` texture and
+instead of `MaterialAsset.albedo`. The sample is available only after an earlier camera in the same
+frame has written the id, and not while this camera is writing it. Anything else binds the magenta
+placeholder. The previous frame's image is not used. Several cameras may write one id.
 
 `CameraView` resolves them for a given render target and carries everything downstream needs:
 `view`, `proj`, `view_proj`, position, forward/right/up, and the viewport rectangle in pixels. The
@@ -150,12 +161,14 @@ aspect ratio comes from the viewport rectangle, not the window, so a camera in h
 not stretched. The same `view_proj` drives CPU projection (`CameraView::project`, picking
 rays, culling) and that camera's GPU uniform, so the two cannot disagree. `project` and
 `ray_from_pixels` are viewport-local. A window pixel subtracts `viewport_origin` first.
-`top_surface_camera` picks the last drawn camera whose rectangle contains the window pixel.
+`top_surface_camera` picks the last drawn surface camera whose rectangle contains the window pixel.
+An offscreen camera is not selected that way. `camera_view_of` still resolves it in target-local pixels.
 
-The first pass clears the whole color target to its clear color, whether the policy is `Color` or
-`Load`. A later `Color` pass fills only its rectangle and does not write depth. A later `Load` pass
-does not. Every pass clears depth to 1.0 and discards it. The renderer submits each camera before
-writing the next camera's globals or instance data. One full-surface camera does not add a fill draw.
+The first camera that writes a destination clears that whole image, whether the policy is `Color` or
+`Load`. A later `Color` pass on that destination fills only its rectangle and does not write depth. A
+later `Load` pass does not. Every pass clears that destination's depth to 1.0 and discards it. The
+renderer submits each camera before writing the next camera's globals or instance data. One
+full-surface camera does not add a fill draw. An offscreen target does not receive the surface clear.
 
 `CameraProjection::Custom` stores that view-to-clip matrix. `matrix(aspect)` returns it unchanged, so a
 viewport resize changes pixel mapping and does not rebuild the matrix. Perspective and orthographic still
@@ -359,8 +372,10 @@ large blended box still sorts by the centre of its bounding sphere.
 * Sprites that share one atlas texture batch as one texture. `AtlasBuilder` fills those UV rects
   (M5-4A, `bf4d9bb`); GPU samples of that path are M5-4B (`1666695`). A material albedo uses those
   UVs as stored and does not repack the atlas. A sprite run merges when the pipeline, material id,
-  material revision, and texture match. The texture is the view and the sampler. Tint, UV, and
-  `lit` stay on the instance. The cutoff copied there is the one value on the shared material.
+  material revision, and sampled image match. Without `Sprite.render_target`, that image is the
+  material albedo when it is set, otherwise the sprite texture. With `render_target` set, it is that
+  offscreen image, or the missing-texture placeholder when the sample is not available this frame.
+  Two different targets do not merge. The placeholder samples do. Tint, UV, and `lit` stay on the instance. The cutoff copied there is the one value on the shared material.
   Unassigned sprites have no material id. Opaque and mask sprites
   are grouped by that key. Blended sprites keep sort order and merge only with an already
   neighbouring match. Depth-writing meshes merge on mesh, texture, draw class, and material.

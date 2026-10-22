@@ -4,7 +4,9 @@ use engine_animation::animate_system;
 use engine_assets::AssetManager;
 use engine_core::{Actions, FixedTimestep, Input, InputEvent, Time};
 use engine_platform::WindowConfig;
-use engine_renderer::{extract_scene, AmbientLight, ExtractStats, MissingAssetWarnings, RenderScene};
+use engine_renderer::{
+    extract_scene, AmbientLight, ExtractStats, MissingAssetWarnings, RenderScene, RenderTargetStore,
+};
 use engine_renderer_wgpu::{CacheStats, FrameStats, GpuContext, RenderError, SceneRenderer};
 use engine_world::{propagate_transforms, snapshot_interpolation, Schedule, ScheduleError, World};
 
@@ -237,6 +239,7 @@ impl Game {
         world.insert_resource(RenderStats::default());
         world.insert_resource(Diagnostics::default());
         world.insert_resource(MissingAssetWarnings::default());
+        world.insert_resource(RenderTargetStore::new());
         world.insert_resource(Viewport::from_logical_pixels(config.window.width, config.window.height));
         world.insert_resource(FixedTimestep::new(config.fixed_hz));
         world.insert_resource(StepClock::default());

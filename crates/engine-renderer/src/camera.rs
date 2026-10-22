@@ -3,6 +3,7 @@ use engine_math::{Mat4, Vec2, Vec3};
 use engine_world::GlobalTransform;
 
 use crate::projection::{CameraProjection, Projection, ScreenPosition};
+use crate::render_target::RenderTargetId;
 
 /// The part of the render target a camera draws into, in normalized target coordinates with the
 /// origin at the **top-left** (`x`, `y`, `width`, `height` all in `[0, 1]`). The default fills the
@@ -40,16 +41,33 @@ impl Default for ViewportRect {
     }
 }
 
+/// Where a camera's image is written.
+///
+/// [`CameraOutput::Surface`] is the window or the headless color target passed to the renderer.
+/// [`CameraOutput::Target`] is an offscreen image owned by the renderer and described by
+/// [`crate::RenderTargetStore`]. The default from [`Camera::new`] is [`CameraOutput::Surface`].
+///
+/// This is CPU data. It does not hold a GPU texture.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum CameraOutput {
+    /// The surface being presented or read back for this frame.
+    #[default]
+    Surface,
+    /// An offscreen target. A missing id does not fall back to the surface.
+    Target(RenderTargetId),
+}
+
 /// What a camera does to the color already in its viewport before drawing its scene.
 ///
 /// [`CameraClear::Color`] replaces that rectangle with [`Camera::clear_color`].
 /// [`CameraClear::Load`] keeps the color already there. The default is [`CameraClear::Color`].
 ///
 /// A render-pass clear covers the whole attachment. A later camera's [`CameraClear::Color`] is
-/// therefore a viewport-sized draw, not another attachment clear. The first camera of a frame
-/// still clears the whole surface to its `clear_color`, including when its policy is `Load`,
-/// so the frame never loads an uninitialized surface. `Load` and `Color` differ from the second
-/// camera onward.
+/// therefore a viewport-sized draw, not another attachment clear. The first camera that writes a
+/// destination in a frame still clears that whole image to its `clear_color`, including when its
+/// policy is `Load`, so the frame never loads an uninitialized image. `Load` and `Color` differ
+/// from the second camera on that same destination. A surface camera and an offscreen target do
+/// not share that first clear.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CameraClear {
     /// Replace this camera's viewport with [`Camera::clear_color`] before its scene.
@@ -73,6 +91,8 @@ pub struct Camera {
     pub clear_color: Color,
     /// Viewport color policy. The default from [`Camera::new`] is [`CameraClear::Color`].
     pub clear: CameraClear,
+    /// Destination of this camera. [`CameraOutput::Surface`] unless [`Camera::with_output`] says otherwise.
+    pub output: CameraOutput,
     pub active: bool,
     /// Draw order among active cameras. Lower draws first. Equal orders use the entity id.
     pub order: i32,
@@ -85,6 +105,7 @@ impl Camera {
             viewport: ViewportRect::FULL,
             clear_color: Color::rgb(0.05, 0.06, 0.09),
             clear: CameraClear::Color,
+            output: CameraOutput::Surface,
             active: true,
             order: 0,
         }
@@ -105,6 +126,10 @@ impl Camera {
     }
     pub fn with_clear(mut self, clear: CameraClear) -> Self {
         self.clear = clear;
+        self
+    }
+    pub fn with_output(mut self, output: CameraOutput) -> Self {
+        self.output = output;
         self
     }
 }

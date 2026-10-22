@@ -302,10 +302,11 @@ Missing from the original category list and now tracked: **save games** (34), **
 ### 8. Cameras and projection
 * **Now.** `Camera` component (`Orthographic`, `Perspective`, `Custom(Mat4)`, normalised viewport, clear
   colour, `CameraClear`, order), `CameraView` (view, projection, viewport pixels, basis), `Projection`
-  trait, picking rays, frustum. Every active camera renders, ascending `(order, entity id)` (M6-2B,
-  D-08 partial, committed locally). `CameraClear::Color` fills that viewport; `Load` keeps it. The first
-  camera still clears the whole surface. Each pass clears depth. Offscreen targets are not implemented
-  (KI-5 remains open for render-to-texture).
+  trait, picking rays, frustum. Every active camera renders, ascending `(order, entity id)`.
+  `CameraOutput::Surface` is the default. `CameraOutput::Target` writes an offscreen image described by
+  `RenderTargetStore` (D-08, M6-2B `6a47882`, M6-2C committed locally, not pushed). `CameraClear::Color` fills that
+  viewport; `Load` keeps it. The first writer of a destination clears that image. Each pass clears that
+  destination's depth. A later sprite can sample a target written earlier in the same frame.
   `Custom` is a fixed view-to-clip matrix. `CameraProjection::custom` returns `ProjectionError::NonFinite`
   for NaN or infinity. Singular matrices render; `ray_from_pixels` returns `None` when there is no inverse.
   `with_clip_range` does not edit `Custom`. Perspective and orthographic still follow viewport aspect.
@@ -334,11 +335,11 @@ Missing from the original category list and now tracked: **save games** (34), **
   scene level with no universal style type. Today: sprite orientation is per `Sprite`, filtering per `Texture`.
   The example's seven constructors are **not** that API: nothing in an engine crate builds a preset, and there is
   no camera-level or renderer-level style policy.
-* **Required.** Camera-to-texture, and the same behaviour of picking, culling, depth and lighting in
-  every configuration. Multiple surface cameras and their viewports are implemented (M6-2B). Custom
-  matrices are implemented (D-25, M6-1B). **Planned.** M6-2C offscreen targets, then the rest of M6.
-  The configuration test scene is done (below). **Depends on.** D-08 (partial), D-48, D-07; D-06 is
-  opt-in and not a dependency of other views. D-25 is implemented.
+* **Required.** The same behaviour of picking, culling, depth and lighting in every configuration.
+  Multiple surface cameras and offscreen targets are implemented (D-08, locally). Custom matrices are
+  implemented (D-25, M6-1B). **Planned.** The rest of M6: D-48, chunking, debug draw, and benchmarks.
+  The configuration test scene is done (below). **Depends on.** D-48, D-07; D-06 is opt-in and not a
+  dependency of other views. D-08 and D-25 are implemented locally.
 * **Integration.** UI world anchors, picking, audio listener, directional frames (D-31) and the editor
   viewport all read the active camera's view.
 * **Performance.** Per-camera extraction multiplies CPU cost; cull per camera.
@@ -347,16 +348,20 @@ Missing from the original category list and now tracked: **save games** (34), **
   coplanar conflicts, and the example `custom` shear, picking, and GPU pixels. M6-2B adds
   `engine-renderer` `tests/multi_camera.rs` and `engine-renderer-wgpu` `tests/multi_camera.rs`:
   split viewports, overlap, picture-in-picture color and load, per-camera depth, mixed projections,
-  per-camera transparency, and two-camera batch counts. Camera-to-texture is still to do.
+  per-camera transparency, and two-camera batch counts. M6-2C adds `tests/render_target.rs` in both
+  crates: store and dependency rules, and GPU camera-to-texture, resize, materials, invalid
+  dependencies, and several writers.
 * **Not initially.** Cameras as render graph nodes, stereo, post-processing.
 
 ### 9. Spatial sprites
 * **Now.** `Sprite` + `Transform`: world-space quad, `Billboard`/`Upright`/`Fixed`, region, size,
-  anchor, flips, tint, cutout or alpha blend, lit flag, and an optional `MaterialAsset` handle.
-  Unassigned sprites keep the fields above. An assigned material replaces blend, lit, and the texture
-  binding, and the sprite tint still multiplies. Extracted, culled by bounding sphere, and batched by
-  pipeline, material id and revision, and texture (5,000 unassigned sprites one draw in a test;
-  1,000 assigned opaque sprites one draw). Tint and UV stay per instance. The cutoff copied there is the one value on the shared material.
+  anchor, flips, tint, cutout or alpha blend, lit flag, an optional `MaterialAsset` handle, and an
+  optional `RenderTargetId` source. Unassigned sprites keep the fields above. An assigned material
+  replaces blend, lit, and the texture binding, and the sprite tint still multiplies. A render-target
+  source replaces the sampled image with that full target and leaves the material class, tint, and
+  size in place. Extracted, culled by bounding sphere, and batched by pipeline, material id and
+  revision, and the sampled image (5,000 unassigned sprites one draw in a test; 1,000 assigned opaque
+  sprites one draw). Tint and UV stay per instance. The cutoff copied there is the one value on the shared material.
 * **Required.** Atlases, sheets, trim/pivot handling, pixel-art policy, consistent size units.
 * **Planned.** Atlas builder and sub-region update (M5), sheets (M8). **Depends on.** D-27, D-06.
 * **Integration.** Sprites are bones' children, tiles' sibling path, particles' target path.

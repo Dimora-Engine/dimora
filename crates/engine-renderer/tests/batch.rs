@@ -105,6 +105,8 @@ fn a_material_revision_mismatch_splits_the_sprite_key() {
         tint: [1.0, 0.0, 0.0, 1.0],
         lit: false,
         texture,
+        render_target: None,
+        unavailable_target: false,
         shading,
         material_id: Some(material),
         material_revision: revision,

@@ -21,6 +21,7 @@ const SPRITE_FIELDS: &[FieldDesc] = &[
     FieldDesc::new("blend", "SpriteBlend"),
     FieldDesc::new("lit", "bool"),
     FieldDesc::new("material", "Option<AssetHandle<MaterialAsset>>"),
+    FieldDesc::new("render_target", "Option<RenderTargetId>"),
 ];
 
 const ORDER_FIELDS: &[FieldDesc] = &[FieldDesc::new("layer", "i32"), FieldDesc::new("order", "i32")];
@@ -47,6 +48,7 @@ const CAMERA_FIELDS: &[FieldDesc] = &[
     FieldDesc::new("viewport", "ViewportRect"),
     FieldDesc::new("clear_color", "Color"),
     FieldDesc::new("clear", "CameraClear"),
+    FieldDesc::new("output", "CameraOutput"),
     FieldDesc::new("active", "bool"),
     FieldDesc::new("order", "i32"),
 ];
@@ -107,6 +109,10 @@ fn sprite_values(sprite: &Sprite) -> Vec<String> {
         format!("{:?}", sprite.blend),
         sprite.lit.to_string(),
         option_asset(sprite.material),
+        match sprite.render_target {
+            Some(id) => id.to_string(),
+            None => "none".to_string(),
+        },
     ]
 }
 
@@ -145,6 +151,7 @@ fn camera_values(camera: &Camera) -> Vec<String> {
         format!("{:?}", camera.viewport),
         color(camera.clear_color),
         format!("{:?}", camera.clear),
+        format!("{:?}", camera.output),
         camera.active.to_string(),
         camera.order.to_string(),
     ]

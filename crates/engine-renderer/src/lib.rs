@@ -19,9 +19,10 @@ mod interpolate;
 mod missing;
 pub mod projection;
 mod registry;
+mod render_target;
 pub mod scene;
 
-pub use camera::{Camera, CameraClear, CameraView, ViewportRect};
+pub use camera::{Camera, CameraClear, CameraOutput, CameraView, ViewportRect};
 pub use components::{
     AmbientLight, Fog, Light, LightKind, Material, Mesh, RenderOrder, Sprite, SpriteBlend, SpriteOrientation, TileMap,
 };
@@ -32,6 +33,10 @@ pub use frustum::Frustum;
 pub use missing::{MissingAssetWarnings, MISSING_ASSET_WARNING_CAPACITY};
 pub use projection::{CameraProjection, Orthographic, Perspective, Projection, ProjectionError, ScreenPosition};
 pub use registry::register_render_components;
+pub use render_target::{
+    check_render_target_size, RenderTargetDesc, RenderTargetError, RenderTargetId, RenderTargetStore,
+    RENDER_TARGET_MAX_EXTENT,
+};
 pub use scene::{
     CameraPass, ExtractStats, LightData, MeshDraw, MeshInstance, RenderScene, SpriteBatch, SpriteInstance, SpriteLayer,
     SpritePipelineKind, SpriteShading, TransparentBatch, MAX_LIGHTS,

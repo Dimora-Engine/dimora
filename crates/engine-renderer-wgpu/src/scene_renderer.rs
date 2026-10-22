@@ -7,7 +7,8 @@ use engine_assets::{
     TexturePixelEdits,
 };
 use engine_renderer::{
-    CameraClear, CameraPass, MeshDraw, MeshInstance, RenderScene, SpriteLayer, SpritePipelineKind, TransparentBatch,
+    CameraClear, CameraOutput, CameraPass, MeshDraw, MeshInstance, RenderScene, RenderTargetDesc, RenderTargetId,
+    SpriteBatch, SpriteLayer, SpritePipelineKind, TransparentBatch,
 };
 use wgpu::util::DeviceExt;
 
@@ -39,6 +40,10 @@ pub struct FrameStats {
     pub clear_draw_calls: u32,
     /// Active camera passes submitted this frame.
     pub camera_passes: u32,
+    /// Passes whose output is the surface.
+    pub surface_passes: u32,
+    /// Passes whose output is an offscreen target.
+    pub offscreen_passes: u32,
     pub sprite_instances: u32,
     pub mesh_instances: u32,
     /// Instances passed to the draw that submitted the most instances. This is the range given to
@@ -108,6 +113,12 @@ pub struct GpuResourceStats {
     /// Times an instance buffer was replaced because the frame's bytes did not fit. The buffer
     /// created with the renderer is not counted. This is not a GPU timing measurement.
     pub instance_buffer_grows: u64,
+    /// Offscreen color images created for a [`RenderTargetId`] that had no GPU image. This is not
+    /// a CPU pixel upload and does not increment [`Self::texture_creates`] or [`Self::texture_writes`].
+    pub render_target_creates: u64,
+    /// Offscreen color and depth images replaced because the description's size or generation changed.
+    /// The previous image is dropped. wgpu keeps it alive until earlier submissions finish.
+    pub render_target_reallocs: u64,
 }
 
 /// Effective GPU sampling and storage for one cached asset texture.
@@ -185,6 +196,23 @@ struct GpuMesh {
     vertices: wgpu::Buffer,
     indices: wgpu::Buffer,
     index_count: u32,
+}
+
+/// One offscreen color image plus the depth image cleared for every pass that writes it.
+///
+/// The depth image is not sampleable. The color view is what a later sprite binds.
+struct GpuRenderTarget {
+    generation: u64,
+    width: u32,
+    height: u32,
+    color: wgpu::Texture,
+    view: wgpu::TextureView,
+    /// Owns the depth image for this target. The depth view is what passes bind. The image stays
+    /// on this struct so a resize can drop it with the color image. It is not sampleable.
+    #[allow(dead_code)]
+    depth: wgpu::Texture,
+    depth_view: wgpu::TextureView,
+    bind_group: wgpu::BindGroup,
 }
 
 /// Growable vertex buffer rewritten every frame.
@@ -271,6 +299,9 @@ pub struct SceneRenderer {
     textures: HashMap<AssetId, GpuTexture>,
     white: GpuTexture,
     missing: GpuTexture,
+    /// Sampler used by every offscreen target. Targets have no asset sampler descriptor.
+    target_sampler: wgpu::Sampler,
+    render_targets: HashMap<RenderTargetId, GpuRenderTarget>,
     meshes: HashMap<AssetId, GpuMesh>,
     opaque_instances: InstanceBuffer,
     mask_instances: InstanceBuffer,
@@ -569,6 +600,8 @@ impl SceneRenderer {
             clear_uniform,
             white,
             missing,
+            target_sampler: default_sampler,
+            render_targets: HashMap::new(),
             texture_layout,
             samplers,
             anisotropic_filtering,
@@ -708,12 +741,17 @@ impl SceneRenderer {
     /// in that submit reading the later camera. Submitting between cameras keeps camera A's
     /// matrices and instances alive until those draws have been recorded against that copy.
     ///
-    /// The first pass clears the whole color attachment to that camera's clear color, whether the
-    /// policy is [`CameraClear::Color`] or [`CameraClear::Load`]. A surface has no defined
-    /// previous image. Later `Color` cameras fill only their viewport. Later `Load` cameras do
-    /// not. Every pass clears depth to 1.0 and discards it, so one camera's depth does not test
-    /// against the next. One full-surface camera is still a single pass with no viewport-clear
-    /// draw.
+    /// The first pass that writes each destination clears that whole color image to that camera's
+    /// clear color, whether the policy is [`CameraClear::Color`] or [`CameraClear::Load`]. A
+    /// destination has no defined previous image. Later `Color` cameras on that same destination
+    /// fill only their viewport. Later `Load` cameras do not. An offscreen target does not receive
+    /// a surface camera's clear. Every pass clears its own depth image to 1.0 and discards it.
+    /// Surface depth is not reused for a target of a different size. One full-surface camera is
+    /// still a single pass with no viewport-clear draw.
+    ///
+    /// Offscreen images are allocated or resized from [`RenderScene::targets`] before any pass.
+    /// A resize drops the previous image. Pixels in the replacement are undefined until a camera
+    /// writes that target. Unchanged targets keep their image, view, and bind group.
     pub fn render(
         &mut self,
         gpu: &GpuContext,
@@ -723,10 +761,14 @@ impl SceneRenderer {
         size: (u32, u32),
     ) {
         self.frame += 1;
+        self.sync_render_targets(gpu, &scene.targets);
         for camera in &scene.passes {
             for layer in [&camera.opaque_sprites, &camera.mask_sprites, &camera.cutout_sprites, &camera.blended_sprites]
             {
                 for batch in &layer.batches {
+                    if batch.unavailable_target || batch.render_target.is_some() {
+                        continue;
+                    }
                     self.ensure_texture(gpu, assets, batch.texture);
                 }
             }
@@ -742,8 +784,14 @@ impl SceneRenderer {
 
         let mut stats = FrameStats { camera_passes: scene.passes.len() as u32, ..FrameStats::default() };
         let mut pass_stats = Vec::with_capacity(scene.passes.len());
-        for (index, camera) in scene.passes.iter().enumerate() {
-            let mut one = self.submit_camera(gpu, scene, camera, index == 0, target, &mut stats);
+        let mut opened = HashSet::new();
+        for camera in &scene.passes {
+            match camera.output {
+                CameraOutput::Surface => stats.surface_passes += 1,
+                CameraOutput::Target(_) => stats.offscreen_passes += 1,
+            }
+            let first = opened.insert(camera.output);
+            let mut one = self.submit_camera(gpu, scene, camera, first, target, &mut stats);
             one.sprite_instances = (camera.opaque_sprites.instances.len()
                 + camera.mask_sprites.instances.len()
                 + camera.cutout_sprites.instances.len()
@@ -799,8 +847,16 @@ impl SceneRenderer {
         let globals = GpuGlobals::from_camera(&camera.view, scene.ambient, scene.fog, &camera.lights);
         gpu.queue.write_buffer(&self.globals, 0, bytemuck::bytes_of(&globals));
 
-        // A later Color camera paints only its rectangle. The attachment clear is the whole
-        // target, so it is used once, on the first pass. Alpha matches that clear: 1.
+        if let CameraOutput::Target(id) = camera.output {
+            if !self.render_targets.contains_key(&id) {
+                log::warn!("render target {id} has no GPU image; camera {} was not drawn", camera.camera_id);
+                return PassFrameStats::default();
+            }
+        }
+
+        // A later Color camera paints only its rectangle on this destination. The attachment
+        // clear covers the whole image, so it is used once, for the first camera that writes it.
+        // Alpha matches that clear: 1.
         let fill_viewport = !first && camera.clear == CameraClear::Color;
         if fill_viewport {
             let uniform =
@@ -811,8 +867,18 @@ impl SceneRenderer {
         let mut one = PassFrameStats::default();
         let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("camera") });
         {
-            let size = self.depth.as_ref().map(|depth| depth.1).expect("depth created above");
-            let depth_view = &self.depth.as_ref().expect("depth created above").0;
+            let surface_depth = self.depth.as_ref().expect("depth created above");
+            let offscreen = match camera.output {
+                CameraOutput::Target(id) => self.render_targets.get(&id),
+                CameraOutput::Surface => None,
+            };
+            let (color_view, depth_view, size) = match camera.output {
+                CameraOutput::Surface => (target, &surface_depth.0, surface_depth.1),
+                CameraOutput::Target(_) => {
+                    let image = offscreen.expect("missing targets return before the encoder");
+                    (&image.view, &image.depth_view, (image.width, image.height))
+                }
+            };
             let color_load = if first {
                 wgpu::LoadOp::Clear(attachment_clear(camera.clear_color.r, camera.clear_color.g, camera.clear_color.b))
             } else {
@@ -821,7 +887,7 @@ impl SceneRenderer {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("camera"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: target,
+                    view: color_view,
                     depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations { load: color_load, store: wgpu::StoreOp::Store },
@@ -871,6 +937,16 @@ impl SceneRenderer {
         one
     }
 
+    fn sprite_bind_group<'a>(&'a self, batch: &SpriteBatch) -> &'a wgpu::BindGroup {
+        if batch.unavailable_target {
+            return &self.missing.bind_group;
+        }
+        if let Some(id) = batch.render_target {
+            return self.render_targets.get(&id).map(|target| &target.bind_group).unwrap_or(&self.missing.bind_group);
+        }
+        &self.textures.get(&batch.texture.id()).unwrap_or(&self.missing).bind_group
+    }
+
     fn mesh_pipeline(&self, draw: MeshDraw) -> &wgpu::RenderPipeline {
         match draw {
             MeshDraw::Solid { double_sided: false } => &self.mesh_solid,
@@ -895,8 +971,7 @@ impl SceneRenderer {
             match batch {
                 TransparentBatch::Sprites(batch) => {
                     pass.set_pipeline(self.sprite_pipeline(batch.pipeline));
-                    let texture = self.textures.get(&batch.texture.id()).unwrap_or(&self.missing);
-                    pass.set_bind_group(1, &texture.bind_group, &[]);
+                    pass.set_bind_group(1, self.sprite_bind_group(batch), &[]);
                     pass.set_vertex_buffer(0, self.blend_instances.buffer.slice(..));
                     pass.draw(0..6, batch.range.clone());
                     record_world(stats, one, batch.range.end - batch.range.start);
@@ -942,11 +1017,19 @@ impl SceneRenderer {
         pass.set_vertex_buffer(0, instances.buffer.slice(..));
         for batch in &layer.batches {
             pass.set_pipeline(self.sprite_pipeline(batch.pipeline));
-            let texture = self.textures.get(&batch.texture.id()).unwrap_or(&self.missing);
-            pass.set_bind_group(1, &texture.bind_group, &[]);
+            pass.set_bind_group(1, self.sprite_bind_group(batch), &[]);
             pass.draw(0..6, batch.range.clone());
             record_world(stats, one, batch.range.end - batch.range.start);
         }
+    }
+
+    /// Tightly packed RGBA8 of one offscreen target after [`Self::render`].
+    ///
+    /// This is a test and diagnostic read. Camera-to-texture sampling does not call it and does
+    /// not upload the pixels into a texture asset. `None` when `id` has no GPU image.
+    pub fn read_render_target(&self, gpu: &GpuContext, id: RenderTargetId) -> Option<Vec<u8>> {
+        let target = self.render_targets.get(&id)?;
+        read_texture_level(gpu, &target.color, 0, target.width, target.height)
     }
 
     /// Renders to an offscreen RGBA8 image and returns tightly packed pixels (sRGB encoded when
@@ -1024,6 +1107,85 @@ impl SceneRenderer {
         drop(data);
         readback.unmap();
         Ok(out)
+    }
+
+    /// Allocates, resizes, or drops offscreen images so they match `targets` before any pass.
+    ///
+    /// An unchanged id, size, and generation keeps the color image, depth image, view, and bind
+    /// group. A changed generation replaces both images. Dropped images stay alive inside wgpu
+    /// until submissions that already reference them finish. This does not copy old pixels and
+    /// does not count as a texture upload.
+    fn sync_render_targets(&mut self, gpu: &GpuContext, targets: &[RenderTargetDesc]) {
+        let live: HashSet<RenderTargetId> = targets.iter().map(|target| target.id).collect();
+        self.render_targets.retain(|id, _| live.contains(id));
+        for desc in targets {
+            if let Err(error) = validate_texture_dimensions(desc.width, desc.height, self.dimension_limits(gpu)) {
+                log::warn!("render target {} was not allocated: {error}", desc.id);
+                self.render_targets.remove(&desc.id);
+                continue;
+            }
+            let replace = match self.render_targets.get(&desc.id) {
+                Some(current) => {
+                    current.generation != desc.generation
+                        || current.width != desc.width
+                        || current.height != desc.height
+                }
+                None => false,
+            };
+            if self.render_targets.contains_key(&desc.id) && !replace {
+                continue;
+            }
+            self.allocate_render_target(gpu, desc, replace);
+        }
+    }
+
+    fn allocate_render_target(&mut self, gpu: &GpuContext, desc: &RenderTargetDesc, replace: bool) {
+        if replace {
+            self.resource_stats.render_target_reallocs += 1;
+        } else {
+            self.resource_stats.render_target_creates += 1;
+        }
+        let size = wgpu::Extent3d { width: desc.width, height: desc.height, depth_or_array_layers: 1 };
+        let color = gpu.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("render target"),
+            size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: self.format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = color.create_view(&wgpu::TextureViewDescriptor::default());
+        let depth = gpu.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("render target depth"),
+            size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: DEPTH_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        let depth_view = depth.create_view(&wgpu::TextureViewDescriptor::default());
+        let bind_group =
+            texture_bind_group(&gpu.device, &self.texture_layout, &view, &self.target_sampler, "render target");
+        self.resource_stats.bind_group_creates += 1;
+        self.render_targets.insert(
+            desc.id,
+            GpuRenderTarget {
+                generation: desc.generation,
+                width: desc.width,
+                height: desc.height,
+                color,
+                view,
+                depth,
+                depth_view,
+                bind_group,
+            },
+        );
     }
 
     fn ensure_depth(&mut self, gpu: &GpuContext, size: (u32, u32)) {

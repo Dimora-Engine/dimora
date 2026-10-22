@@ -6,7 +6,8 @@ use engine_assets::{AssetHandle, AssetId, MeshData, Texture};
 use engine_core::Color;
 use engine_math::{Mat4, Vec3};
 
-use crate::camera::{CameraClear, CameraView};
+use crate::camera::{CameraClear, CameraOutput, CameraView};
+use crate::render_target::{RenderTargetDesc, RenderTargetId};
 
 /// Most lights a single frame can use; extras are dropped (nearest to the camera are kept).
 pub const MAX_LIGHTS: usize = 16;
@@ -74,6 +75,12 @@ pub struct SpriteInstance {
     pub tint: [f32; 4],
     pub lit: bool,
     pub texture: AssetHandle<Texture>,
+    /// Sampled offscreen target. Ignored when [`Self::unavailable_target`] is set. When `Some`
+    /// and the target is available, [`Self::texture`] is not the sampled image.
+    pub render_target: Option<RenderTargetId>,
+    /// The explicit render-target source cannot be sampled in this camera's pass. The backend
+    /// binds the missing-texture placeholder.
+    pub unavailable_target: bool,
     pub shading: SpriteShading,
     /// `Some` when a material handle resolved. Together with [`Self::material_revision`] this is part
     /// of the batch key. `None` is an unassigned sprite, not a shared material.
@@ -92,10 +99,21 @@ impl SpriteInstance {
     /// `material_id: None` and revision 0. They are not given a fabricated material, and they batch
     /// with each other only when the texture and pipeline match.
     pub fn shares_batch(&self, other: &Self) -> bool {
-        self.texture == other.texture
+        self.sample_matches(other)
             && self.shading.pipeline() == other.shading.pipeline()
             && self.material_id == other.material_id
             && self.material_revision == other.material_revision
+    }
+
+    fn sample_matches(&self, other: &Self) -> bool {
+        if self.unavailable_target || other.unavailable_target {
+            return self.unavailable_target && other.unavailable_target;
+        }
+        match (self.render_target, other.render_target) {
+            (Some(left), Some(right)) => left == right,
+            (None, None) => self.texture == other.texture,
+            _ => false,
+        }
     }
 }
 
@@ -103,6 +121,10 @@ impl SpriteInstance {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SpriteBatch {
     pub texture: AssetHandle<Texture>,
+    /// See [`SpriteInstance::render_target`].
+    pub render_target: Option<RenderTargetId>,
+    /// See [`SpriteInstance::unavailable_target`].
+    pub unavailable_target: bool,
     pub pipeline: SpritePipelineKind,
     pub range: Range<u32>,
 }
@@ -126,6 +148,8 @@ impl SpriteLayer {
             } else {
                 batches.push(SpriteBatch {
                     texture: inst.texture,
+                    render_target: inst.render_target,
+                    unavailable_target: inst.unavailable_target,
                     pipeline: inst.shading.pipeline(),
                     range: i as u32..i as u32 + 1,
                 });
@@ -222,6 +246,9 @@ pub struct ExtractStats {
     pub meshes_culled: u32,
     /// Renderables skipped because an asset they reference is not loaded.
     pub missing_assets: u32,
+    /// Sprites that named a render target this camera could not sample, plus cameras whose output
+    /// target is missing. Counted once per occurrence, not once per logged line.
+    pub missing_targets: u32,
     pub lights: u32,
 }
 
@@ -237,6 +264,9 @@ pub struct CameraPass {
     /// [`Self::camera_id`].
     pub order: i32,
     pub view: CameraView,
+    /// Surface or offscreen destination. Passes are not grouped by this; draw order is
+    /// [`Self::order`] then [`Self::camera_id`].
+    pub output: CameraOutput,
     pub clear: CameraClear,
     pub clear_color: Color,
     /// `[x, y, width, height]` in pixels (origin top-left): the part of the target this camera
@@ -273,6 +303,10 @@ pub struct CameraPass {
 #[derive(Clone, Debug)]
 pub struct RenderScene {
     pub passes: Vec<CameraPass>,
+    /// Every live offscreen target this frame, copied from [`crate::RenderTargetStore`].
+    /// The renderer allocates and resizes from this list before it records passes. A removed
+    /// target is absent, and its GPU image is dropped. These descriptions hold no GPU objects.
+    pub targets: Vec<RenderTargetDesc>,
     /// Ambient RGB with intensity applied.
     pub ambient: [f32; 3],
     /// Fog color (rgb) and density.
