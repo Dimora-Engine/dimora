@@ -301,8 +301,11 @@ Missing from the original category list and now tracked: **save games** (34), **
 
 ### 8. Cameras and projection
 * **Now.** `Camera` component (`Orthographic`, `Perspective`, `Custom(Mat4)`, normalised viewport, clear
-  colour, order), `CameraView` (view, projection, viewport pixels, basis), `Projection` trait, picking
-  rays, frustum. Exactly one camera renders per frame (the lowest `(order, id)` active one) (KI-5).
+  colour, `CameraClear`, order), `CameraView` (view, projection, viewport pixels, basis), `Projection`
+  trait, picking rays, frustum. Every active camera renders, ascending `(order, entity id)` (M6-2B,
+  D-08 partial, committed locally). `CameraClear::Color` fills that viewport; `Load` keeps it. The first
+  camera still clears the whole surface. Each pass clears depth. Offscreen targets are not implemented
+  (KI-5 remains open for render-to-texture).
   `Custom` is a fixed view-to-clip matrix. `CameraProjection::custom` returns `ProjectionError::NonFinite`
   for NaN or infinity. Singular matrices render; `ray_from_pixels` returns `None` when there is no inverse.
   `with_clip_range` does not edit `Custom`. Perspective and orthographic still follow viewport aspect.
@@ -331,16 +334,20 @@ Missing from the original category list and now tracked: **save games** (34), **
   scene level with no universal style type. Today: sprite orientation is per `Sprite`, filtering per `Texture`.
   The example's seven constructors are **not** that API: nothing in an engine crate builds a preset, and there is
   no camera-level or renderer-level style policy.
-* **Required.** Multiple cameras with viewports, camera-to-texture, and the same behaviour of picking,
-  culling, depth and lighting in every configuration. Custom matrices are implemented (D-25, M6-1B).
-  **Planned.** The rest of M6. The configuration test scene is done (below). **Depends on.**
-  D-08, D-48, D-07; D-06 is opt-in and not a dependency of other views. D-25 is implemented.
+* **Required.** Camera-to-texture, and the same behaviour of picking, culling, depth and lighting in
+  every configuration. Multiple surface cameras and their viewports are implemented (M6-2B). Custom
+  matrices are implemented (D-25, M6-1B). **Planned.** M6-2C offscreen targets, then the rest of M6.
+  The configuration test scene is done (below). **Depends on.** D-08 (partial), D-48, D-07; D-06 is
+  opt-in and not a dependency of other views. D-25 is implemented.
 * **Integration.** UI world anchors, picking, audio listener, directional frames (D-31) and the editor
   viewport all read the active camera's view.
 * **Performance.** Per-camera extraction multiplies CPU cost; cull per camera.
 * **Tests/examples.** `examples/spatial_scene/tests/configurations.rs` (19 tests, 2026-10-22): the same world
   under all seven configurations, project-then-pick, mesh/sprite occlusion both ways, orientation, the three
-  coplanar conflicts, and the example `custom` shear, picking, and GPU pixels. Two viewports in one target, and picture-in-picture, are still to do.
+  coplanar conflicts, and the example `custom` shear, picking, and GPU pixels. M6-2B adds
+  `engine-renderer` `tests/multi_camera.rs` and `engine-renderer-wgpu` `tests/multi_camera.rs`:
+  split viewports, overlap, picture-in-picture color and load, per-camera depth, mixed projections,
+  per-camera transparency, and two-camera batch counts. Camera-to-texture is still to do.
 * **Not initially.** Cameras as render graph nodes, stereo, post-processing.
 
 ### 9. Spatial sprites

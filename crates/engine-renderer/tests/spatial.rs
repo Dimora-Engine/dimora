@@ -105,7 +105,8 @@ fn blended_sprites_sort_by_real_depth_not_spawn_order() {
         w.spawn((Transform::from_xyz(0.0, 0.0, z), Sprite::new("tex_a_sprite")));
     }
     let scene = extract(&mut w, &a);
-    let depths: Vec<f32> = scene.blended_sprites.instances.iter().map(|i| i.model.translation().z).collect();
+    let depths: Vec<f32> =
+        scene.sole_pass().blended_sprites.instances.iter().map(|i| i.model.translation().z).collect();
     assert_eq!(depths, vec![50.0, 20.0, 5.0]);
 }
 
@@ -118,6 +119,7 @@ fn explicit_layer_overrides_depth_and_order_breaks_ties() {
     w.spawn((Transform::from_xyz(1.0, 0.0, 50.0), Sprite::new("tex_a_sprite"), RenderOrder::new(0, 3)));
     w.spawn((Transform::from_xyz(2.0, 0.0, 50.0), Sprite::new("tex_a_sprite"), RenderOrder::new(0, -3)));
     let xs: Vec<(f32, f32)> = extract(&mut w, &a)
+        .sole_pass()
         .blended_sprites
         .instances
         .iter()
@@ -138,7 +140,7 @@ fn sprites_batch_by_texture_without_reordering() {
         w.spawn((Transform::from_xyz(0.0, 0.0, z), Sprite::new(tex)));
     }
     let scene = extract(&mut w, &a);
-    let ranges: Vec<_> = scene.blended_sprites.batches.iter().map(|b| b.range.clone()).collect();
+    let ranges: Vec<_> = scene.sole_pass().blended_sprites.batches.iter().map(|b| b.range.clone()).collect();
     assert_eq!(ranges, vec![0..2, 2..3, 3..4], "interleaved textures must not be merged across other sprites");
 
     // A thousand sprites on one texture are a single draw.
@@ -150,8 +152,8 @@ fn sprites_batch_by_texture_without_reordering() {
         ));
     }
     let scene = extract(&mut w, &a);
-    assert_eq!(scene.cutout_sprites.instances.len(), 1000);
-    assert_eq!(scene.cutout_sprites.batches.len(), 1);
+    assert_eq!(scene.sole_pass().cutout_sprites.instances.len(), 1000);
+    assert_eq!(scene.sole_pass().cutout_sprites.batches.len(), 1);
 }
 
 #[test]
@@ -177,9 +179,9 @@ fn sprites_and_meshes_share_one_spatial_world() {
     w.spawn((Transform::from_xyz(1.0, 2.0, 30.0), Mesh::new("cube")));
     w.spawn((Transform::from_xyz(1.0, 2.0, 30.0), Sprite::new("tex_a_sprite")));
     let scene = extract(&mut w, &a);
-    assert_eq!(scene.meshes[0].model.translation(), Vec3::new(1.0, 2.0, 30.0));
+    assert_eq!(scene.sole_pass().meshes[0].model.translation(), Vec3::new(1.0, 2.0, 30.0));
     // Sprite pivot is bottom-center by default, so its origin lands at the entity position.
-    let origin = scene.blended_sprites.instances[0].model.transform_point3(Vec3::new(0.5, 0.0, 0.0));
+    let origin = scene.sole_pass().blended_sprites.instances[0].model.transform_point3(Vec3::new(0.5, 0.0, 0.0));
     assert!(origin.approx_eq(Vec3::new(1.0, 2.0, 30.0), 1e-5));
 }
 
@@ -190,7 +192,7 @@ fn children_inherit_transforms_into_the_scene() {
     let root = w.spawn((Transform::from_xyz(0.0, 0.0, 10.0).with_rotation(Quat::from_rotation_y(FRAC_PI_2)),));
     w.spawn_child(root, (Transform::from_xyz(2.0, 0.0, 0.0), Sprite::new("tex_a_sprite")));
     let scene = extract(&mut w, &a);
-    let pos = scene.blended_sprites.instances[0].model.transform_point3(Vec3::new(0.5, 0.0, 0.0));
+    let pos = scene.sole_pass().blended_sprites.instances[0].model.transform_point3(Vec3::new(0.5, 0.0, 0.0));
     // Local +X after a +90 degree yaw points along world -Z.
     assert!(pos.approx_eq(Vec3::new(0.0, 0.0, 8.0), 1e-4), "{pos:?}");
 }
@@ -205,9 +207,9 @@ fn tilemap_expands_to_culled_cutout_instances() {
     // Lay it on the ground (rotate so local +Y points deeper into the scene).
     w.spawn((Transform::from_xyz(-4.0, -3.0, 5.0).with_rotation(Quat::from_rotation_x(FRAC_PI_2)), map));
     let scene = extract(&mut w, &a);
-    assert_eq!(scene.cutout_sprites.instances.len(), 32);
-    assert_eq!(scene.cutout_sprites.batches.len(), 1);
-    assert!(scene.blended_sprites.instances.is_empty());
+    assert_eq!(scene.sole_pass().cutout_sprites.instances.len(), 32);
+    assert_eq!(scene.sole_pass().cutout_sprites.batches.len(), 1);
+    assert!(scene.sole_pass().blended_sprites.instances.is_empty());
 }
 
 #[test]
@@ -222,9 +224,13 @@ fn lights_are_extracted_in_world_space_and_capped() {
         w.spawn((Transform::from_xyz(i as f32, 0.0, 10.0), Light::point(engine_core::Color::WHITE, 1.0, 5.0)));
     }
     let scene = extract(&mut w, &a);
-    assert_eq!(scene.lights.len(), MAX_LIGHTS);
-    let sun =
-        scene.lights.iter().find(|l| l.kind == LightKind::Directional).expect("directional light survives the cap");
+    assert_eq!(scene.sole_pass().lights.len(), MAX_LIGHTS);
+    let sun = scene
+        .sole_pass()
+        .lights
+        .iter()
+        .find(|l| l.kind == LightKind::Directional)
+        .expect("directional light survives the cap");
     assert!(sun.direction.approx_eq(Vec3::new(0.0, -1.0, 1.0).normalized(), 1e-5));
     assert_eq!(sun.color, [2.0, 2.0, 2.0]);
 }

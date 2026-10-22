@@ -40,16 +40,41 @@ impl Default for ViewportRect {
     }
 }
 
+/// What a camera does to the color already in its viewport before drawing its scene.
+///
+/// [`CameraClear::Color`] replaces that rectangle with [`Camera::clear_color`].
+/// [`CameraClear::Load`] keeps the color already there. The default is [`CameraClear::Color`].
+///
+/// A render-pass clear covers the whole attachment. A later camera's [`CameraClear::Color`] is
+/// therefore a viewport-sized draw, not another attachment clear. The first camera of a frame
+/// still clears the whole surface to its `clear_color`, including when its policy is `Load`,
+/// so the frame never loads an uninitialized surface. `Load` and `Color` differ from the second
+/// camera onward.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CameraClear {
+    /// Replace this camera's viewport with [`Camera::clear_color`] before its scene.
+    #[default]
+    Color,
+    /// Keep the color already in this viewport, then draw the scene over it.
+    Load,
+}
+
 /// Camera component. Its *position and orientation* come from the entity's `Transform`; this
 /// says how view space is projected ([`CameraProjection`]) and where the image lands on the render
 /// target ([`ViewportRect`]). Moving the camera in 3D is what produces parallax.
+///
+/// Every [`Self::active`] camera is rendered, in ascending `(order, entity id)`. A lower order
+/// draws first and sits underneath. A higher order draws later and can overlay it. There is no
+/// separate priority field. `Visibility` does not activate or hide a camera.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Camera {
     pub projection: CameraProjection,
     pub viewport: ViewportRect,
     pub clear_color: Color,
+    /// Viewport color policy. The default from [`Camera::new`] is [`CameraClear::Color`].
+    pub clear: CameraClear,
     pub active: bool,
-    /// Among active cameras the lowest `order` is rendered.
+    /// Draw order among active cameras. Lower draws first. Equal orders use the entity id.
     pub order: i32,
 }
 
@@ -59,6 +84,7 @@ impl Camera {
             projection,
             viewport: ViewportRect::FULL,
             clear_color: Color::rgb(0.05, 0.06, 0.09),
+            clear: CameraClear::Color,
             active: true,
             order: 0,
         }
@@ -75,6 +101,10 @@ impl Camera {
     }
     pub fn with_clear_color(mut self, c: Color) -> Self {
         self.clear_color = c;
+        self
+    }
+    pub fn with_clear(mut self, clear: CameraClear) -> Self {
+        self.clear = clear;
         self
     }
 }
@@ -126,6 +156,22 @@ impl CameraView {
     pub fn project(&self, world_position: Vec3) -> Option<ScreenPosition> {
         let clip = self.view_proj * world_position.extend(1.0);
         ScreenPosition::from_clip(clip, self.view.transform_point3(world_position).z, self.viewport)
+    }
+
+    /// Whether `window_pixel` lies in this viewport. Coordinates are target pixels, origin
+    /// top-left. The rectangle is half-open: the far edges belong to a neighbor that starts there.
+    pub fn contains_window_pixel(&self, window_pixel: Vec2) -> bool {
+        let (origin, size) = (self.viewport_origin, self.viewport);
+        window_pixel.x >= origin.x
+            && window_pixel.y >= origin.y
+            && window_pixel.x < origin.x + size.x
+            && window_pixel.y < origin.y + size.y
+    }
+
+    /// `window_pixel - viewport_origin`. [`Self::ray_from_pixels`] and [`Self::project`] use
+    /// this viewport-local space, not window pixels.
+    pub fn window_to_viewport(&self, window_pixel: Vec2) -> Vec2 {
+        window_pixel - self.viewport_origin
     }
 
     /// World-space ray through a pixel (origin top-left of this viewport): `(origin, unit direction)`.

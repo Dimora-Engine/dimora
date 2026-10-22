@@ -64,24 +64,24 @@ fn marks(scene: &RenderScene) -> Vec<f32> {
     let mut out = Vec::new();
     let mut sprites = 0;
     let mut meshes = 0;
-    for batch in &scene.transparent {
+    for batch in &scene.sole_pass().transparent {
         match batch {
             TransparentBatch::Sprites(batch) => {
                 for index in batch.range.clone() {
-                    out.push(scene.blended_sprites.instances[index as usize].tint[0]);
+                    out.push(scene.sole_pass().blended_sprites.instances[index as usize].tint[0]);
                     sprites += 1;
                 }
             }
             TransparentBatch::Meshes { range, .. } => {
                 for index in range.clone() {
-                    out.push(scene.blended_meshes[index as usize].color[0]);
+                    out.push(scene.sole_pass().blended_meshes[index as usize].color[0]);
                     meshes += 1;
                 }
             }
         }
     }
-    assert_eq!(sprites, scene.blended_sprites.instances.len());
-    assert_eq!(meshes, scene.blended_meshes.len());
+    assert_eq!(sprites, scene.sole_pass().blended_sprites.instances.len());
+    assert_eq!(meshes, scene.sole_pass().blended_meshes.len());
     out
 }
 
@@ -136,11 +136,11 @@ fn blend_meshes_join_the_sequence_and_opaque_and_mask_meshes_do_not() {
     world.spawn((Transform::from_xyz(2.0, 0.0, 2.0), Mesh::new("card").with_material_asset(blend)));
 
     let scene = extract(&mut world, &assets);
-    assert!(scene.blended_meshes.iter().all(|mesh| matches!(mesh.draw, MeshDraw::Blend { .. })));
-    assert_eq!(scene.blended_meshes.len(), 1);
-    assert_eq!(scene.meshes.len(), 2, "opaque and mask stay on the depth-writing list");
-    assert!(scene.meshes.iter().any(|mesh| mesh.draw == MeshDraw::Solid { double_sided: false }));
-    assert!(scene.meshes.iter().any(|mesh| mesh.draw == MeshDraw::Mask { double_sided: false }));
+    assert!(scene.sole_pass().blended_meshes.iter().all(|mesh| matches!(mesh.draw, MeshDraw::Blend { .. })));
+    assert_eq!(scene.sole_pass().blended_meshes.len(), 1);
+    assert_eq!(scene.sole_pass().meshes.len(), 2, "opaque and mask stay on the depth-writing list");
+    assert!(scene.sole_pass().meshes.iter().any(|mesh| mesh.draw == MeshDraw::Solid { double_sided: false }));
+    assert!(scene.sole_pass().meshes.iter().any(|mesh| mesh.draw == MeshDraw::Mask { double_sided: false }));
     assert_eq!(marks(&scene), [0.6, 0.2, 0.4], "legacy sprite, blend mesh, material sprite, far to near");
     assert_eq!(scene.stats.meshes_visible, 3);
     assert_eq!(scene.stats.missing_assets, 0);
@@ -182,9 +182,9 @@ fn sprite_and_mesh_depths_share_view_space_and_the_bounding_centre() {
     world.spawn((Transform::IDENTITY, Mesh::new("slab").with_material_asset(glass(&mut assets, "offset", 0.25))));
 
     let scene = extract(&mut world, &assets);
-    let far = scene.view.view.transform_point3(Vec3::new(0.0, 0.0, 4.0)).z;
-    let mid = scene.view.view.transform_point3(Vec3::new(0.0, 0.0, 1.0)).z;
-    let near = scene.view.view.transform_point3(Vec3::ZERO).z;
+    let far = scene.sole_pass().view.view.transform_point3(Vec3::new(0.0, 0.0, 4.0)).z;
+    let mid = scene.sole_pass().view.view.transform_point3(Vec3::new(0.0, 0.0, 1.0)).z;
+    let near = scene.sole_pass().view.view.transform_point3(Vec3::ZERO).z;
     assert!(far > mid && mid > near, "larger view Z is farther: {far} {mid} {near}");
     // 0.25 is the slab. Its centre is at z = 2, between the sprite at 4 and the pair at 1.
     // Using the entity origin would place that mesh nearer than the sprite at 0.
@@ -229,16 +229,16 @@ fn a_material_revision_can_change_the_mesh_alpha_class() {
     world.spawn((Transform::IDENTITY, Mesh::new("card").with_material_asset(material)));
 
     let opaque = extract(&mut world, &assets);
-    assert_eq!(opaque.meshes.len(), 1);
-    assert!(opaque.blended_meshes.is_empty());
-    assert_eq!(opaque.meshes[0].material_revision, assets.revision(material));
+    assert_eq!(opaque.sole_pass().meshes.len(), 1);
+    assert!(opaque.sole_pass().blended_meshes.is_empty());
+    assert_eq!(opaque.sole_pass().meshes[0].material_revision, assets.revision(material));
 
     assets.insert("surface", MaterialAsset::unlit(Color::WHITE).with_alpha_mode(AlphaMode::Blend)).unwrap();
     let blend = extract(&mut world, &assets);
-    assert!(blend.meshes.is_empty());
-    assert_eq!(blend.blended_meshes.len(), 1);
-    assert_eq!(blend.blended_meshes[0].draw, MeshDraw::Blend { double_sided: false });
-    assert_ne!(blend.blended_meshes[0].material_revision, opaque.meshes[0].material_revision);
+    assert!(blend.sole_pass().meshes.is_empty());
+    assert_eq!(blend.sole_pass().blended_meshes.len(), 1);
+    assert_eq!(blend.sole_pass().blended_meshes[0].draw, MeshDraw::Blend { double_sided: false });
+    assert_ne!(blend.sole_pass().blended_meshes[0].material_revision, opaque.sole_pass().meshes[0].material_revision);
 
     assets
         .insert(
@@ -247,9 +247,9 @@ fn a_material_revision_can_change_the_mesh_alpha_class() {
         )
         .unwrap();
     let mask = extract(&mut world, &assets);
-    assert!(mask.transparent.is_empty());
-    assert_eq!(mask.meshes[0].draw, MeshDraw::Mask { double_sided: true });
-    assert_eq!(mask.meshes[0].cutoff, 0.3);
+    assert!(mask.sole_pass().transparent.is_empty());
+    assert_eq!(mask.sole_pass().meshes[0].draw, MeshDraw::Mask { double_sided: true });
+    assert_eq!(mask.sole_pass().meshes[0].cutoff, 0.3);
 }
 
 #[test]
@@ -266,9 +266,9 @@ fn camera_projection_does_not_classify_and_a_turn_reverses_depth_order() {
         world.spawn((Transform::IDENTITY, Mesh::new("card").with_material_asset(blend)));
         world.spawn((Transform::from_xyz(2.0, 0.0, 0.0), Mesh::new("card").with_material_asset(opaque)));
         let scene = extract(&mut world, &assets);
-        assert_eq!(scene.blended_meshes.len(), 1);
-        assert_eq!(scene.meshes.len(), 1);
-        assert!(matches!(scene.transparent[0], TransparentBatch::Meshes { .. }));
+        assert_eq!(scene.sole_pass().blended_meshes.len(), 1);
+        assert_eq!(scene.sole_pass().meshes.len(), 1);
+        assert!(matches!(scene.sole_pass().transparent[0], TransparentBatch::Meshes { .. }));
     }
 
     let mut front = world_with(Camera::orthographic(4.0), Transform::from_xyz(0.0, 0.0, -8.0));
@@ -315,11 +315,11 @@ fn contiguous_blend_meshes_share_a_batch_until_a_sprite_splits_them() {
     world.spawn((Transform::IDENTITY, Mesh::new("card").with_material_asset(shared)));
     let scene = extract(&mut world, &assets);
     assert_eq!(marks(&scene), [0.5, 0.5, 0.4, 0.5]);
-    assert_eq!(scene.blended_meshes[0].model.cols[3].z, 3.0);
-    assert_eq!(scene.blended_meshes[1].model.cols[3].z, 2.0);
-    assert_eq!(scene.blended_meshes[2].model.cols[3].z, 0.0);
-    assert_eq!(scene.transparent.len(), 3, "the two far meshes are one run; the near mesh is split off");
-    match &scene.transparent[0] {
+    assert_eq!(scene.sole_pass().blended_meshes[0].model.cols[3].z, 3.0);
+    assert_eq!(scene.sole_pass().blended_meshes[1].model.cols[3].z, 2.0);
+    assert_eq!(scene.sole_pass().blended_meshes[2].model.cols[3].z, 0.0);
+    assert_eq!(scene.sole_pass().transparent.len(), 3, "the two far meshes are one run; the near mesh is split off");
+    match &scene.sole_pass().transparent[0] {
         TransparentBatch::Meshes { range, .. } => assert_eq!(range, &(0..2)),
         other => panic!("expected a mesh run, got {other:?}"),
     }

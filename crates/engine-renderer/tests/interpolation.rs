@@ -69,10 +69,11 @@ fn sim_stamp(world: &World) -> Vec<(Transform, Mat4)> {
 fn mesh_translation(scene: &RenderScene, color: Color) -> Vec3 {
     let rgba = color.to_array();
     scene
+        .sole_pass()
         .meshes
         .iter()
         .find(|mesh| mesh.color == rgba)
-        .unwrap_or_else(|| panic!("no mesh {rgba:?} in {}", scene.meshes.len()))
+        .unwrap_or_else(|| panic!("no mesh {rgba:?} in {}", scene.sole_pass().meshes.len()))
         .model
         .translation()
 }
@@ -83,7 +84,7 @@ fn an_unmarked_entity_extracts_its_global_transform() {
     let entity = world.spawn((Transform::from_xyz(3.0, 4.0, 0.0), mesh(Color::WHITE)));
     refresh(&mut world);
     let scene = extract(&world, &assets);
-    assert_eq!(scene.meshes[0].model, world.component::<GlobalTransform>(entity).unwrap().matrix);
+    assert_eq!(scene.sole_pass().meshes[0].model, world.component::<GlobalTransform>(entity).unwrap().matrix);
 }
 
 #[test]
@@ -93,7 +94,7 @@ fn a_marker_with_no_history_keeps_the_global_transform() {
     refresh(&mut world);
     set_alpha(&mut world, 0.5);
     let scene = extract(&world, &assets);
-    assert_eq!(scene.meshes[0].model, world.component::<GlobalTransform>(entity).unwrap().matrix);
+    assert_eq!(scene.sole_pass().meshes[0].model, world.component::<GlobalTransform>(entity).unwrap().matrix);
     assert!(world.component::<Interpolate>(entity).unwrap().previous.is_none());
 }
 
@@ -112,7 +113,7 @@ fn translation_rotation_and_scale_follow_transform_lerp() {
     set_alpha(&mut world, 0.5);
     let scene = extract(&world, &assets);
     let expected = previous.lerp(&current, 0.5);
-    assert!(scene.meshes[0].model.approx_eq(&expected.to_matrix(), 1e-4));
+    assert!(scene.sole_pass().meshes[0].model.approx_eq(&expected.to_matrix(), 1e-4));
     assert_eq!(*world.component::<Transform>(entity).unwrap(), current);
     assert_eq!(world.component::<GlobalTransform>(entity).unwrap().matrix, current.to_matrix());
     assert!(expected.scale.x < 0.0, "negative scale keeps its sign when both ends agree");
@@ -130,7 +131,7 @@ fn rotation_takes_the_shortest_arc_and_scale_sign_changes_pass_through_zero() {
     set_alpha(&mut world, 0.5);
     let scene = extract(&world, &assets);
     let blended = previous.lerp(&current, 0.5);
-    assert!(scene.meshes[0].model.approx_eq(&blended.to_matrix(), 1e-4));
+    assert!(scene.sole_pass().meshes[0].model.approx_eq(&blended.to_matrix(), 1e-4));
     let (_, angle) = blended.rotation.to_axis_angle();
     assert!((angle - 85f32.to_radians()).abs() < 0.05, "190 degrees blends along the short arc, angle {angle}");
     assert!(blended.scale.x.abs() < 1e-4, "a scale sign change passes through zero");
@@ -140,8 +141,8 @@ fn rotation_takes_the_shortest_arc_and_scale_sign_changes_pass_through_zero() {
     world.component_mut::<Interpolate>(entity).unwrap().previous = Some(Transform::IDENTITY);
     refresh(&mut world);
     let scene = extract(&world, &assets);
-    assert!(scene.meshes[0].model.approx_eq(&Transform::IDENTITY.lerp(&opposite, 0.5).to_matrix(), 1e-4));
-    assert!(scene.meshes[0].model.cols[0].x.is_finite());
+    assert!(scene.sole_pass().meshes[0].model.approx_eq(&Transform::IDENTITY.lerp(&opposite, 0.5).to_matrix(), 1e-4));
+    assert!(scene.sole_pass().meshes[0].model.cols[0].x.is_finite());
 }
 
 #[test]
@@ -155,7 +156,7 @@ fn a_non_finite_history_renders_the_current_local() {
     refresh(&mut world);
     set_alpha(&mut world, 0.5);
     let scene = extract(&world, &assets);
-    assert_eq!(scene.meshes[0].model.translation(), current.position);
+    assert_eq!(scene.sole_pass().meshes[0].model.translation(), current.position);
     assert!(world.component::<Transform>(entity).unwrap().position.x.is_finite());
 }
 
@@ -350,7 +351,7 @@ fn despawning_a_parent_removes_the_interpolated_child() {
     world.despawn(parent).unwrap();
     assert!(!world.contains(child));
     let scene = extract(&world, &assets);
-    assert!(scene.meshes.is_empty());
+    assert!(scene.sole_pass().meshes.is_empty());
 }
 
 #[test]
@@ -367,11 +368,12 @@ fn sprite_orientations_and_camera_configurations_share_one_matrix() {
     refresh(&mut world);
     set_alpha(&mut world, 0.5);
     let scene = extract(&world, &assets);
-    assert_eq!(scene.cutout_sprites.instances.len(), 3);
-    for instance in &scene.cutout_sprites.instances {
+    assert_eq!(scene.sole_pass().cutout_sprites.instances.len(), 3);
+    for instance in &scene.sole_pass().cutout_sprites.instances {
         assert!(instance.model.translation().approx_eq(expected.position, 1e-4));
     }
     let fixed_axis = scene
+        .sole_pass()
         .cutout_sprites
         .instances
         .iter()
@@ -380,7 +382,7 @@ fn sprite_orientations_and_camera_configurations_share_one_matrix() {
         .model
         .cols[0]
         .xyz();
-    let turned = scene.cutout_sprites.instances.iter().any(|instance| {
+    let turned = scene.sole_pass().cutout_sprites.instances.iter().any(|instance| {
         !instance.model.cols[0].xyz().approx_eq(fixed_axis, 1e-3)
             && instance.model.translation().approx_eq(expected.position, 1e-4)
     });
@@ -404,7 +406,7 @@ fn sprite_orientations_and_camera_configurations_share_one_matrix() {
         refresh(&mut world);
         let scene = extract(&world, &assets);
         assert!(mesh_translation(&scene, Color::WHITE).approx_eq(expected.position, 1e-4));
-        views.push(scene.view.view);
+        views.push(scene.sole_pass().view.view);
     }
     assert!(views[0] != views[2], "the isometric-style pose changes the view, not the interpolated mesh");
     assert_eq!(views.len(), 3);
@@ -421,7 +423,7 @@ fn a_marked_camera_and_a_child_camera_use_the_same_blend() {
     refresh(&mut world);
     set_alpha(&mut world, 0.5);
     let scene = extract(&world, &assets);
-    assert!(scene.view.position.approx_eq(Vec3::new(0.0, 0.0, -15.0), 1e-3));
+    assert!(scene.sole_pass().view.position.approx_eq(Vec3::new(0.0, 0.0, -15.0), 1e-3));
     assert_eq!(world.component::<GlobalTransform>(camera).unwrap().translation(), current.position);
 
     world.remove::<Interpolate>(camera).unwrap();
@@ -431,7 +433,7 @@ fn a_marked_camera_and_a_child_camera_use_the_same_blend() {
     *world.component_mut::<Transform>(camera).unwrap() = Transform::IDENTITY;
     refresh(&mut world);
     let scene = extract(&world, &assets);
-    assert!(scene.view.position.approx_eq(Vec3::new(0.0, 0.0, -15.0), 1e-3));
+    assert!(scene.sole_pass().view.position.approx_eq(Vec3::new(0.0, 0.0, -15.0), 1e-3));
     assert!(world.component::<GlobalTransform>(camera).unwrap().translation().approx_eq(current.position, 1e-4));
 }
 
@@ -449,8 +451,11 @@ fn lights_and_tilemaps_follow_a_marked_parent() {
     refresh(&mut world);
     set_alpha(&mut world, 0.5);
     let scene = extract(&world, &assets);
-    assert!(scene.lights[0].position.approx_eq(Vec3::new(3.0, 0.0, 0.0), 1e-4));
-    assert!(scene.cutout_sprites.instances[0].model.translation().approx_eq(Vec3::new(3.0, 0.0, 0.0), 1e-4));
+    assert!(scene.sole_pass().lights[0].position.approx_eq(Vec3::new(3.0, 0.0, 0.0), 1e-4));
+    assert!(scene.sole_pass().cutout_sprites.instances[0]
+        .model
+        .translation()
+        .approx_eq(Vec3::new(3.0, 0.0, 0.0), 1e-4));
 }
 
 #[test]
@@ -465,7 +470,7 @@ fn removing_the_marker_restores_the_simulation_matrix() {
     assert!((mesh_translation(&blended, Color::WHITE).x - 2.0).abs() < 1e-4);
     world.remove::<Interpolate>(entity).unwrap();
     let plain = extract(&world, &assets);
-    assert_eq!(plain.meshes[0].model, world.component::<GlobalTransform>(entity).unwrap().matrix);
+    assert_eq!(plain.sole_pass().meshes[0].model, world.component::<GlobalTransform>(entity).unwrap().matrix);
 }
 
 #[test]
@@ -476,5 +481,5 @@ fn despawn_leaves_nothing_to_draw() {
     refresh(&mut world);
     world.despawn(entity).unwrap();
     let scene = extract(&world, &assets);
-    assert!(scene.meshes.is_empty());
+    assert!(scene.sole_pass().meshes.is_empty());
 }

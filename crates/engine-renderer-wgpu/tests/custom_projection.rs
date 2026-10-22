@@ -151,7 +151,7 @@ fn custom_perspective_matches_builtin_pixels() {
     let (built_in_image, _) = render(&gpu, &mut renderer, &mut spawn(builtin), &assets);
     let (custom_image, scene) = render(&gpu, &mut renderer, &mut spawn(custom), &assets);
     assert_same_image(&built_in_image, &custom_image, "custom perspective");
-    assert!(scene.view.proj.approx_eq(&custom.projection.matrix(1.0), 1e-5));
+    assert!(scene.sole_pass().view.proj.approx_eq(&custom.projection.matrix(1.0), 1e-5));
     expect_px(&custom_image, W, 64, 64, [0, 0, 255, 255], 2, "the cube, not the sprite, covers the centre");
     assert_ne!(px(&custom_image, W, 64, 64), [0, 0, 0, 255]);
 }
@@ -198,14 +198,14 @@ fn oblique_custom_projection_matches_project_and_not_plain_ortho() {
     sheared.spawn((Transform::from_xyz(0.0, 0.35, 0.0), sprite("quad", red, 0.2)));
     sheared.spawn((Transform::from_xyz(0.0, -0.35, 0.2), Mesh::new("cube").with_material(blue)));
     let (image, scene) = render(&gpu, &mut renderer, &mut sheared, &assets);
-    sample_projected(&image, W, &scene.view, Vec3::new(0.0, 0.35, 0.0), [255, 0, 0, 255], "sheared sprite");
-    sample_projected(&image, W, &scene.view, Vec3::new(0.0, -0.35, 0.2), [0, 0, 255, 255], "sheared cube");
+    sample_projected(&image, W, &scene.sole_pass().view, Vec3::new(0.0, 0.35, 0.0), [255, 0, 0, 255], "sheared sprite");
+    sample_projected(&image, W, &scene.sole_pass().view, Vec3::new(0.0, -0.35, 0.2), [0, 0, 255, 255], "sheared cube");
     let plain = CameraView::new(
         &Camera::orthographic(2.0),
         &GlobalTransform { matrix: Transform::from_xyz(0.0, 0.0, -4.0).to_matrix() },
         Vec2::new(W as f32, H as f32),
     );
-    let sprite_oblique = scene.view.project(Vec3::new(0.0, 0.35, 0.0)).unwrap();
+    let sprite_oblique = scene.sole_pass().view.project(Vec3::new(0.0, 0.35, 0.0)).unwrap();
     let sprite_plain = plain.project(Vec3::new(0.0, 0.35, 0.0)).unwrap();
     assert!((sprite_oblique.pixels.x - sprite_plain.pixels.x).abs() > 4.0, "oblique is not orthographic");
     let plain_x = sprite_plain.pixels.x.floor() as u32;
@@ -288,8 +288,8 @@ fn custom_projection_sprite_orientations_share_one_matrix() {
         let mut world = world(camera, Transform::from_xyz(0.0, 0.0, -4.0));
         world.spawn((Transform::IDENTITY, sprite("quad", red, 1.0).with_orientation(orientation)));
         let (image, scene) = render(&gpu, &mut renderer, &mut world, &assets);
-        sample_projected(&image, W, &scene.view, Vec3::ZERO, [255, 0, 0, 255], "orientation");
-        assert!(scene.view.proj.approx_eq(&camera.projection.matrix(99.0), 1e-6));
+        sample_projected(&image, W, &scene.sole_pass().view, Vec3::ZERO, [255, 0, 0, 255], "orientation");
+        assert!(scene.sole_pass().view.proj.approx_eq(&camera.projection.matrix(99.0), 1e-6));
     }
 }
 
@@ -306,9 +306,9 @@ fn custom_projection_camera_translation_rotation_and_parent() {
     let mut moved = world(camera, Transform::from_xyz(0.35, 0.0, -4.0));
     moved.spawn((Transform::IDENTITY, sprite("quad", red, 0.3)));
     let (moved_image, moved_scene) = render(&gpu, &mut renderer, &mut moved, &assets);
-    sample_projected(&moved_image, W, &moved_scene.view, Vec3::ZERO, [255, 0, 0, 255], "translated camera");
+    sample_projected(&moved_image, W, &moved_scene.sole_pass().view, Vec3::ZERO, [255, 0, 0, 255], "translated camera");
     expect_px(&moved_image, W, 64, 64, [0, 0, 0, 255], 2, "translation moves the sprite off the centre");
-    assert!(moved_scene.view.proj.approx_eq(&matrix, 0.0));
+    assert!(moved_scene.sole_pass().view.proj.approx_eq(&matrix, 0.0));
 
     let turned = Camera::new(CameraProjection::custom(CameraProjection::perspective(60.0).matrix(1.0)).unwrap())
         .with_clear_color(Color::BLACK);
@@ -319,8 +319,15 @@ fn custom_projection_camera_translation_rotation_and_parent() {
         sprite("quad", red, 1.2).with_orientation(SpriteOrientation::Billboard),
     ));
     let (yawed_image, yawed_scene) = render(&gpu, &mut renderer, &mut yawed, &assets);
-    assert!(yawed_scene.view.forward.approx_eq(Vec3::X, 1e-4));
-    sample_projected(&yawed_image, W, &yawed_scene.view, Vec3::new(6.0, 0.0, 0.0), [255, 0, 0, 255], "rotated camera");
+    assert!(yawed_scene.sole_pass().view.forward.approx_eq(Vec3::X, 1e-4));
+    sample_projected(
+        &yawed_image,
+        W,
+        &yawed_scene.sole_pass().view,
+        Vec3::new(6.0, 0.0, 0.0),
+        [255, 0, 0, 255],
+        "rotated camera",
+    );
 
     let mut child = World::new();
     child.insert_resource(AmbientLight { color: Color::WHITE, intensity: 1.0 });
@@ -329,14 +336,14 @@ fn custom_projection_camera_translation_rotation_and_parent() {
     child.spawn((Transform::IDENTITY, sprite("quad", red, 0.3)));
     let (child_image, child_scene) = render(&gpu, &mut renderer, &mut child, &assets);
     assert!(
-        moved_scene.view.position.approx_eq(child_scene.view.position, 1e-3),
+        moved_scene.sole_pass().view.position.approx_eq(child_scene.sole_pass().view.position, 1e-3),
         "camera {:?} vs parented {:?}",
-        moved_scene.view.position,
-        child_scene.view.position
+        moved_scene.sole_pass().view.position,
+        child_scene.sole_pass().view.position
     );
-    assert!(moved_scene.view.view_proj.approx_eq(&child_scene.view.view_proj, 1e-4));
+    assert!(moved_scene.sole_pass().view.view_proj.approx_eq(&child_scene.sole_pass().view.view_proj, 1e-4));
     assert_same_image(&moved_image, &child_image, "parent transform matches a translated camera");
-    assert!(child_scene.view.proj.approx_eq(&matrix, 0.0));
+    assert!(child_scene.sole_pass().view.proj.approx_eq(&matrix, 0.0));
 }
 
 #[test]
@@ -354,13 +361,13 @@ fn custom_projection_viewport_resize_keeps_the_matrix() {
 
     let (square, square_scene) = render_size(&gpu, &mut renderer, &mut scene_world, &assets, 128, 128);
     let (wide, wide_scene) = render_size(&gpu, &mut renderer, &mut scene_world, &assets, 256, 128);
-    assert!(square_scene.view.proj.approx_eq(&baked, 0.0));
-    assert!(wide_scene.view.proj.approx_eq(&square_scene.view.proj, 0.0));
-    let square_ndc = square_scene.view.project(point).unwrap().ndc;
-    let wide_ndc = wide_scene.view.project(point).unwrap().ndc;
+    assert!(square_scene.sole_pass().view.proj.approx_eq(&baked, 0.0));
+    assert!(wide_scene.sole_pass().view.proj.approx_eq(&square_scene.sole_pass().view.proj, 0.0));
+    let square_ndc = square_scene.sole_pass().view.project(point).unwrap().ndc;
+    let wide_ndc = wide_scene.sole_pass().view.project(point).unwrap().ndc;
     assert!(square_ndc.approx_eq(wide_ndc, 1e-5), "a resize does not rebuild the custom matrix");
-    sample_projected(&square, 128, &square_scene.view, point, [255, 0, 0, 255], "square viewport");
-    sample_projected(&wide, 256, &wide_scene.view, point, [255, 0, 0, 255], "wide viewport");
+    sample_projected(&square, 128, &square_scene.sole_pass().view, point, [255, 0, 0, 255], "square viewport");
+    sample_projected(&wide, 256, &wide_scene.sole_pass().view, point, [255, 0, 0, 255], "wide viewport");
 
     let perspective = Camera::perspective(90.0).with_clear_color(Color::BLACK);
     let placed = GlobalTransform { matrix: Transform::from_xyz(0.0, 0.0, -4.0).to_matrix() };
@@ -371,13 +378,13 @@ fn custom_projection_viewport_resize_keeps_the_matrix() {
     perspective_world.spawn((Transform::from_position(point), sprite("quad", red, 0.08)));
     let (perspective_image, perspective_scene) =
         render_size(&gpu, &mut renderer, &mut perspective_world, &assets, 256, 128);
-    let custom_x = wide_scene.view.project(point).unwrap().pixels.x;
-    let perspective_x = perspective_scene.view.project(point).unwrap().pixels.x;
+    let custom_x = wide_scene.sole_pass().view.project(point).unwrap().pixels.x;
+    let perspective_x = perspective_scene.sole_pass().view.project(point).unwrap().pixels.x;
     assert!((custom_x - perspective_x).abs() > 8.0, "the wide custom frustum is not the wide perspective frustum");
     sample_projected(
         &perspective_image,
         256,
-        &perspective_scene.view,
+        &perspective_scene.sole_pass().view,
         point,
         [255, 0, 0, 255],
         "perspective on the wide viewport",
@@ -419,8 +426,8 @@ fn one_thousand_sprites_remain_one_draw_under_a_custom_projection() {
     }
     let (pixels, scene) = render(&gpu, &mut renderer, &mut world, &assets);
     assert_eq!(scene.stats.sprites_visible, 1000);
-    assert_eq!(scene.opaque_sprites.batches.len(), 1);
-    assert_eq!(scene.opaque_sprites.batches[0].range, 0..1000);
+    assert_eq!(scene.sole_pass().opaque_sprites.batches.len(), 1);
+    assert_eq!(scene.sole_pass().opaque_sprites.batches[0].range, 0..1000);
     let stats = renderer.stats();
     assert_eq!(stats.draw_calls, 1);
     assert_eq!(stats.sprite_instances, 1000);
@@ -457,7 +464,14 @@ fn custom_frustum_culls_on_the_gpu_and_a_degenerate_plane_does_not() {
     shifted.spawn((Transform::from_xyz(-1.2, 0.0, 5.0), sprite("quad", red, 0.15)));
     let (image, scene) = render(&gpu, &mut renderer, &mut shifted, &assets);
     assert_eq!((scene.stats.sprites_visible, scene.stats.sprites_culled), (1, 1));
-    sample_projected(&image, W, &scene.view, Vec3::new(0.4, 0.0, 5.0), [255, 0, 0, 255], "inside the off-centre box");
+    sample_projected(
+        &image,
+        W,
+        &scene.sole_pass().view,
+        Vec3::new(0.4, 0.0, 5.0),
+        [255, 0, 0, 255],
+        "inside the off-centre box",
+    );
 
     let ortho = CameraProjection::orthographic(10.0).matrix(1.0);
     let shear = Mat4::from_cols(
@@ -474,7 +488,14 @@ fn custom_frustum_culls_on_the_gpu_and_a_degenerate_plane_does_not() {
     oblique.spawn((Transform::from_xyz(4.0, 0.0, 4.0), sprite("quad", red, 0.4)));
     let (image, scene) = render(&gpu, &mut renderer, &mut oblique, &assets);
     assert_eq!((scene.stats.sprites_visible, scene.stats.sprites_culled), (1, 1));
-    sample_projected(&image, W, &scene.view, Vec3::new(0.0, 0.0, 4.0), [255, 0, 0, 255], "inside the oblique frustum");
+    sample_projected(
+        &image,
+        W,
+        &scene.sole_pass().view,
+        Vec3::new(0.0, 0.0, 4.0),
+        [255, 0, 0, 255],
+        "inside the oblique frustum",
+    );
 
     let mut finite_far = CameraProjection::orthographic(2.0).with_clip_range(0.1, 20.0).matrix(1.0);
     finite_far.cols[0].w = finite_far.cols[0].z;

@@ -21,16 +21,18 @@ pub mod projection;
 mod registry;
 pub mod scene;
 
-pub use camera::{Camera, CameraView, ViewportRect};
+pub use camera::{Camera, CameraClear, CameraView, ViewportRect};
 pub use components::{
     AmbientLight, Fog, Light, LightKind, Material, Mesh, RenderOrder, Sprite, SpriteBlend, SpriteOrientation, TileMap,
 };
-pub use extract::extract_scene;
+pub use extract::{
+    active_surface_cameras, camera_view_of, extract_scene, top_surface_camera, OrderedCamera, SurfaceHit,
+};
 pub use frustum::Frustum;
 pub use missing::{MissingAssetWarnings, MISSING_ASSET_WARNING_CAPACITY};
 pub use projection::{CameraProjection, Orthographic, Perspective, Projection, ProjectionError, ScreenPosition};
 pub use registry::register_render_components;
 pub use scene::{
-    ExtractStats, LightData, MeshDraw, MeshInstance, RenderScene, SpriteBatch, SpriteInstance, SpriteLayer,
+    CameraPass, ExtractStats, LightData, MeshDraw, MeshInstance, RenderScene, SpriteBatch, SpriteInstance, SpriteLayer,
     SpritePipelineKind, SpriteShading, TransparentBatch, MAX_LIGHTS,
 };

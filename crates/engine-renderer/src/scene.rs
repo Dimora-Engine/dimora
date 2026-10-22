@@ -6,7 +6,7 @@ use engine_assets::{AssetHandle, AssetId, MeshData, Texture};
 use engine_core::Color;
 use engine_math::{Mat4, Vec3};
 
-use crate::camera::CameraView;
+use crate::camera::{CameraClear, CameraView};
 
 /// Most lights a single frame can use; extras are dropped (nearest to the camera are kept).
 pub const MAX_LIGHTS: usize = 16;
@@ -138,7 +138,7 @@ impl SpriteLayer {
 /// GPU state for one mesh draw. Variants are the real pipeline differences, not material ids.
 ///
 /// [`Self::Blend`] is depth-tested, does not write depth, and joins the combined transparent
-/// sequence. Opaque and mask meshes stay in [`RenderScene::meshes`] and ignore [`crate::RenderOrder`].
+/// sequence. Opaque and mask meshes stay in [`CameraPass::meshes`] and ignore [`crate::RenderOrder`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum MeshDraw {
     /// No blend and no alpha discard. Legacy meshes and opaque materials.
@@ -156,8 +156,8 @@ pub enum MeshDraw {
 
 /// One run in the combined back-to-front sequence.
 ///
-/// Sprite ranges index [`RenderScene::blended_sprites`]. Mesh ranges index
-/// [`RenderScene::blended_meshes`]. A run grows only while the next item is the same kind and
+/// Sprite ranges index [`CameraPass::blended_sprites`]. Mesh ranges index
+/// [`CameraPass::blended_meshes`]. A run grows only while the next item is the same kind and
 /// [`SpriteInstance::shares_batch`] or [`MeshInstance::shares_batch`] with the previous one.
 /// A mesh between two sprites keeps those sprites as separate draws, even when the sprites match.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -225,18 +225,25 @@ pub struct ExtractStats {
     pub lights: u32,
 }
 
-/// Everything a backend needs to draw one frame. Contains no ECS or asset-manager references.
+/// One active camera, already culled and sorted for its own view.
+///
+/// The lists are this camera's submissions. Another pass does not share them. Mesh vertex buffers
+/// stay in the asset cache; these instances are transforms and material keys only.
 #[derive(Clone, Debug)]
-pub struct RenderScene {
+pub struct CameraPass {
+    /// `Entity::id` of the source camera. Plain data, not a world borrow.
+    pub camera_id: u32,
+    /// [`crate::Camera::order`]. Passes in a [`RenderScene`] are already sorted by this, then by
+    /// [`Self::camera_id`].
+    pub order: i32,
     pub view: CameraView,
+    pub clear: CameraClear,
     pub clear_color: Color,
     /// `[x, y, width, height]` in pixels (origin top-left): the part of the target this camera
     /// draws into. Equal to the whole target unless the camera has a sub-viewport.
     pub viewport_px: [f32; 4],
-    /// Ambient RGB with intensity applied.
-    pub ambient: [f32; 3],
-    /// Fog color (rgb) and density.
-    pub fog: [f32; 4],
+    /// Lights for this camera. Above [`MAX_LIGHTS`], positional lights are the nearest to this
+    /// camera. Directional lights are kept. The positions stay in world space.
     pub lights: Vec<LightData>,
     /// Opaque geometry, drawn first with depth writes: meshes, then material opaque sprites,
     /// material mask sprites, then legacy cutout sprites and tiles.
@@ -244,12 +251,45 @@ pub struct RenderScene {
     pub opaque_sprites: SpriteLayer,
     pub mask_sprites: SpriteLayer,
     pub cutout_sprites: SpriteLayer,
-    /// Blended sprites in transparent-sequence order. Batches are the contiguous sprite runs only.
-    /// A mesh between two sprites splits those runs even when the sprites share a texture.
+    /// Blended sprites in this camera's transparent-sequence order.
     pub blended_sprites: SpriteLayer,
-    /// Blended meshes in transparent-sequence order. Ranges in [`Self::transparent`] index this.
+    /// Blended meshes in this camera's transparent-sequence order. Ranges in [`Self::transparent`]
+    /// index this.
     pub blended_meshes: Vec<MeshInstance>,
-    /// Blended sprites and blended meshes, one back-to-front order. The backend walks this list.
+    /// Blended sprites and blended meshes, one back-to-front order for this camera. The backend
+    /// walks this list and does not sort it again.
     pub transparent: Vec<TransparentBatch>,
+    /// Visibility counts for this camera. [`ExtractStats::missing_assets`] stays 0 here; missing
+    /// assets are counted once on [`RenderScene::stats`].
     pub stats: ExtractStats,
+}
+
+/// Everything a backend needs to draw one frame. Contains no ECS or asset-manager references.
+///
+/// [`Self::passes`] is every active camera in draw order (ascending `order`, then entity id).
+/// There is no separate `view` field. A frame with one camera has one pass; [`Self::sole_pass`]
+/// is that pass. Ambient and fog are world resources and are shared. Lights are per pass because
+/// the nearest-light cap depends on the camera position.
+#[derive(Clone, Debug)]
+pub struct RenderScene {
+    pub passes: Vec<CameraPass>,
+    /// Ambient RGB with intensity applied.
+    pub ambient: [f32; 3],
+    /// Fog color (rgb) and density.
+    pub fog: [f32; 4],
+    /// Sum of the pass visibility counts. `missing_assets` is the shared resolution count, once
+    /// per missing reference, not once per camera. `sprites_visible` counts a sprite again for
+    /// each camera that draws it.
+    pub stats: ExtractStats,
+}
+
+impl RenderScene {
+    /// The only camera pass.
+    ///
+    /// Panics when this frame has zero or several passes. Single-camera callers use this.
+    /// A multi-camera frame is read from [`Self::passes`], which stays the only stored list.
+    pub fn sole_pass(&self) -> &CameraPass {
+        assert!(self.passes.len() == 1, "sole_pass requires exactly one camera pass, found {}", self.passes.len());
+        &self.passes[0]
+    }
 }

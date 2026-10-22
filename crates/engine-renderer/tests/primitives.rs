@@ -30,18 +30,18 @@ fn shared_generated_assets_batch_and_different_geometry_does_not() {
     world.spawn((Transform::from_xyz(-1.0, 0.0, 0.0), Mesh::new("box").with_material_asset(material)));
     world.spawn((Transform::from_xyz(1.0, 0.0, 0.0), Mesh::new("box").with_material_asset(material)));
     let scene = extract(&mut world, &assets);
-    assert_eq!(scene.meshes.len(), 2);
-    assert_eq!(engine_renderer::MeshInstance::run_end(&scene.meshes, 0), 2);
+    assert_eq!(scene.sole_pass().meshes.len(), 2);
+    assert_eq!(engine_renderer::MeshInstance::run_end(&scene.sole_pass().meshes, 0), 2);
     assert_eq!(scene.stats.meshes_culled, 0);
 
     world.spawn((Transform::from_xyz(0.0, 2.0, 0.0), Mesh::new("ball").with_material_asset(material)));
     let scene = extract(&mut world, &assets);
-    assert_eq!(scene.meshes.len(), 3);
+    assert_eq!(scene.sole_pass().meshes.len(), 3);
     let runs = {
         let mut count = 0;
         let mut i = 0;
-        while i < scene.meshes.len() {
-            i = engine_renderer::MeshInstance::run_end(&scene.meshes, i);
+        while i < scene.sole_pass().meshes.len() {
+            i = engine_renderer::MeshInstance::run_end(&scene.sole_pass().meshes, i);
             count += 1;
         }
         count
@@ -61,7 +61,7 @@ fn a_parent_transform_moves_a_generated_mesh_and_bounds_cull_it() {
     let scene = extract(&mut world, &assets);
     assert_eq!(scene.stats.meshes_visible, 1);
     assert_eq!(scene.stats.meshes_culled, 1);
-    let moved = scene.meshes.iter().find(|mesh| mesh.model.cols[3].x > 0.1).expect("child");
+    let moved = scene.sole_pass().meshes.iter().find(|mesh| mesh.model.cols[3].x > 0.1).expect("child");
     assert!((moved.model.cols[3].x - 0.5).abs() < 1e-4);
     assert!(moved.material_id.is_none(), "an unassigned generated mesh keeps the inline material");
 }
@@ -104,9 +104,9 @@ fn a_blended_cuboid_keeps_its_place_beside_a_sprite() {
         Sprite::new("sprite").with_size(Vec2::splat(0.5)).with_anchor(Vec2::splat(0.5)).with_material(glass),
     ));
     let scene = extract(&mut world, &assets);
-    assert_eq!(scene.transparent.len(), 2);
-    assert!(matches!(scene.transparent[0], TransparentBatch::Meshes { .. }), "the farther cuboid is first");
-    assert!(matches!(scene.transparent[1], TransparentBatch::Sprites(_)));
+    assert_eq!(scene.sole_pass().transparent.len(), 2);
+    assert!(matches!(scene.sole_pass().transparent[0], TransparentBatch::Meshes { .. }), "the farther cuboid is first");
+    assert!(matches!(scene.sole_pass().transparent[1], TransparentBatch::Sprites(_)));
 
     let mut swapped = World::new();
     camera(&mut swapped, 4.0);
@@ -116,8 +116,8 @@ fn a_blended_cuboid_keeps_its_place_beside_a_sprite() {
         Sprite::new("sprite").with_size(Vec2::splat(0.5)).with_anchor(Vec2::splat(0.5)).with_material(glass),
     ));
     let scene = extract(&mut swapped, &assets);
-    assert!(matches!(scene.transparent[0], TransparentBatch::Sprites(_)));
-    assert!(matches!(scene.transparent[1], TransparentBatch::Meshes { .. }));
+    assert!(matches!(scene.sole_pass().transparent[0], TransparentBatch::Sprites(_)));
+    assert!(matches!(scene.sole_pass().transparent[1], TransparentBatch::Meshes { .. }));
 }
 
 #[test]
@@ -140,6 +140,6 @@ fn three_cameras_do_not_change_a_cuboid_batch() {
         world.spawn((Transform::from_xyz(0.4, 0.0, 0.0), Mesh::new("box").with_material_asset(material)));
         let scene = extract(&mut world, &assets);
         assert_eq!(scene.stats.meshes_visible, 2);
-        assert_eq!(engine_renderer::MeshInstance::run_end(&scene.meshes, 0), 2);
+        assert_eq!(engine_renderer::MeshInstance::run_end(&scene.sole_pass().meshes, 0), 2);
     }
 }

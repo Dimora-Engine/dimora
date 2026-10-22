@@ -61,7 +61,7 @@ fn handles_default_to_none_and_existing_constructors_stay_compatible() {
     let mut world = world();
     world.spawn((Transform::IDENTITY, mesh));
     let scene = extract(&mut world, &assets);
-    let drawn = &scene.meshes[0];
+    let drawn = &scene.sole_pass().meshes[0];
     assert_eq!(drawn.color, Color::rgb(0.0, 0.0, 1.0).to_array());
     assert!(!drawn.lit);
     assert_eq!(drawn.draw, MeshDraw::Solid { double_sided: false });
@@ -86,18 +86,18 @@ fn an_unassigned_sprite_and_tile_keep_the_legacy_classification() {
     ));
 
     let scene = extract(&mut world, &assets);
-    assert!(scene.opaque_sprites.instances.is_empty());
-    assert!(scene.mask_sprites.instances.is_empty());
-    assert_eq!(scene.cutout_sprites.instances.len(), 2);
-    assert!(scene.cutout_sprites.instances.iter().all(|i| i.shading == SpriteShading::LegacyCutout));
-    assert!(scene.cutout_sprites.instances.iter().all(|i| i.material_id.is_none()));
-    let hero = scene.cutout_sprites.instances.iter().find(|i| i.tint[0] == 0.25).expect("tinted cutout");
+    assert!(scene.sole_pass().opaque_sprites.instances.is_empty());
+    assert!(scene.sole_pass().mask_sprites.instances.is_empty());
+    assert_eq!(scene.sole_pass().cutout_sprites.instances.len(), 2);
+    assert!(scene.sole_pass().cutout_sprites.instances.iter().all(|i| i.shading == SpriteShading::LegacyCutout));
+    assert!(scene.sole_pass().cutout_sprites.instances.iter().all(|i| i.material_id.is_none()));
+    let hero = scene.sole_pass().cutout_sprites.instances.iter().find(|i| i.tint[0] == 0.25).expect("tinted cutout");
     assert!(!hero.lit);
     assert_eq!(hero.tint, [0.25, 0.5, 0.75, 1.0]);
-    assert_eq!(scene.blended_sprites.instances.len(), 1);
-    assert_eq!(scene.blended_sprites.instances[0].shading, SpriteShading::LegacyBlend);
-    assert!(scene.blended_sprites.instances[0].lit);
-    assert_eq!(scene.blended_sprites.batches[0].pipeline, SpritePipelineKind::LegacyBlend);
+    assert_eq!(scene.sole_pass().blended_sprites.instances.len(), 1);
+    assert_eq!(scene.sole_pass().blended_sprites.instances[0].shading, SpriteShading::LegacyBlend);
+    assert!(scene.sole_pass().blended_sprites.instances[0].lit);
+    assert_eq!(scene.sole_pass().blended_sprites.batches[0].pipeline, SpritePipelineKind::LegacyBlend);
 }
 
 #[test]
@@ -125,7 +125,7 @@ fn a_resolved_material_selects_texture_color_alpha_light_and_culling() {
             .with_blend(SpriteBlend::Cutout),
     ));
     let scene = extract(&mut world, &assets);
-    let drawn = &scene.mask_sprites.instances[0];
+    let drawn = &scene.sole_pass().mask_sprites.instances[0];
     assert_eq!(drawn.texture, override_tex);
     assert_ne!(drawn.texture, sprite_texture);
     assert_eq!(drawn.tint, [6.0, 1.0, -0.5, 0.25], "linear product is not clamped");
@@ -134,13 +134,13 @@ fn a_resolved_material_selects_texture_color_alpha_light_and_culling() {
     assert_eq!(drawn.shading.pipeline(), SpritePipelineKind::MaskDouble);
     assert_eq!(drawn.material_id, Some(material.id()));
     assert_eq!(drawn.material_revision, assets.revision(material));
-    assert!(scene.cutout_sprites.instances.is_empty(), "mask does not stay on the legacy cutout list");
+    assert!(scene.sole_pass().cutout_sprites.instances.is_empty(), "mask does not stay on the legacy cutout list");
 
     let bare = Sprite::from_asset(sprite).with_region(Rect::new(Vec2::ZERO, Vec2::new(0.5, 1.0)));
     world.spawn((Transform::from_xyz(3.0, 0.0, 0.0), bare));
     let scene = extract(&mut world, &assets);
-    let legacy = scene.blended_sprites.instances.iter().find(|i| i.material_id.is_none()).unwrap();
-    let masked = &scene.mask_sprites.instances[0];
+    let legacy = scene.sole_pass().blended_sprites.instances.iter().find(|i| i.material_id.is_none()).unwrap();
+    let masked = &scene.sole_pass().mask_sprites.instances[0];
     assert_eq!(masked.uv, legacy.uv, "an albedo override keeps the sprite asset UVs");
 }
 
@@ -165,13 +165,13 @@ fn albedo_none_uses_the_sprite_texture_and_leaves_a_mesh_untextured() {
     world.spawn((Transform::IDENTITY, Sprite::from_asset(sprite).with_material(material).cutout()));
     world.spawn((Transform::from_xyz(2.0, 0.0, 0.0), Mesh::new("crate").with_material_asset(material)));
     let scene = extract(&mut world, &assets);
-    assert_eq!(scene.opaque_sprites.instances[0].texture, sprite_texture);
-    assert_eq!(scene.opaque_sprites.instances[0].shading, SpriteShading::Opaque { double_sided: false });
-    assert!(scene.meshes[0].texture.is_none());
-    assert_eq!(scene.meshes[0].color, Color::rgb(0.2, 0.3, 0.4).to_array());
-    assert!(scene.meshes[0].lit);
-    assert_eq!(scene.meshes[0].draw, MeshDraw::Solid { double_sided: false });
-    assert_eq!(scene.meshes[0].material_id, Some(material.id()));
+    assert_eq!(scene.sole_pass().opaque_sprites.instances[0].texture, sprite_texture);
+    assert_eq!(scene.sole_pass().opaque_sprites.instances[0].shading, SpriteShading::Opaque { double_sided: false });
+    assert!(scene.sole_pass().meshes[0].texture.is_none());
+    assert_eq!(scene.sole_pass().meshes[0].color, Color::rgb(0.2, 0.3, 0.4).to_array());
+    assert!(scene.sole_pass().meshes[0].lit);
+    assert_eq!(scene.sole_pass().meshes[0].draw, MeshDraw::Solid { double_sided: false });
+    assert_eq!(scene.sole_pass().meshes[0].material_id, Some(material.id()));
 }
 
 #[test]
@@ -188,7 +188,10 @@ fn a_missing_material_is_skipped_and_a_pending_load_is_quiet() {
     let scene = extract(&mut world, &assets);
     assert_eq!(scene.stats.sprites_visible, 0);
     assert_eq!(scene.stats.missing_assets, 1);
-    assert!(scene.blended_sprites.instances.is_empty(), "a missing material does not fall back to SpriteBlend");
+    assert!(
+        scene.sole_pass().blended_sprites.instances.is_empty(),
+        "a missing material does not fall back to SpriteBlend"
+    );
     let id = format!("{:016x}", unknown.id().0);
     let messages = capture::messages();
     assert_eq!(messages.len(), 1, "{messages:?}");
@@ -228,17 +231,17 @@ fn replacing_a_shared_material_changes_the_next_extract() {
     world.spawn((Transform::from_xyz(1.5, 0.0, 0.0), Sprite::new("hero").with_material(material)));
 
     let scene = extract(&mut world, &assets);
-    assert_eq!(scene.opaque_sprites.instances.len(), 2);
-    assert!(scene.opaque_sprites.instances.iter().all(|i| i.tint == [1.0, 0.0, 0.0, 1.0]));
-    assert!(scene.opaque_sprites.instances.iter().all(|i| i.material_id == Some(material.id())));
-    assert_eq!(scene.opaque_sprites.batches.len(), 1);
+    assert_eq!(scene.sole_pass().opaque_sprites.instances.len(), 2);
+    assert!(scene.sole_pass().opaque_sprites.instances.iter().all(|i| i.tint == [1.0, 0.0, 0.0, 1.0]));
+    assert!(scene.sole_pass().opaque_sprites.instances.iter().all(|i| i.material_id == Some(material.id())));
+    assert_eq!(scene.sole_pass().opaque_sprites.batches.len(), 1);
 
     assets.insert("shared", MaterialAsset::unlit(Color::rgb(0.0, 1.0, 0.0)).double_sided()).unwrap();
     let scene = extract(&mut world, &assets);
     assert!(assets.revision(material) > first_revision);
-    assert!(scene.opaque_sprites.instances.iter().all(|i| i.tint == [0.0, 1.0, 0.0, 1.0]));
-    assert!(scene.opaque_sprites.instances.iter().all(|i| !i.lit));
-    assert!(scene.opaque_sprites.instances.iter().all(|i| {
+    assert!(scene.sole_pass().opaque_sprites.instances.iter().all(|i| i.tint == [0.0, 1.0, 0.0, 1.0]));
+    assert!(scene.sole_pass().opaque_sprites.instances.iter().all(|i| !i.lit));
+    assert!(scene.sole_pass().opaque_sprites.instances.iter().all(|i| {
         i.shading == SpriteShading::Opaque { double_sided: true } && i.material_revision == assets.revision(material)
     }));
 
@@ -246,9 +249,10 @@ fn replacing_a_shared_material_changes_the_next_extract() {
         .insert("shared", MaterialAsset::default().with_alpha_mode(AlphaMode::mask(0.8).unwrap()).double_sided())
         .unwrap();
     let scene = extract(&mut world, &assets);
-    assert!(scene.opaque_sprites.instances.is_empty());
-    assert_eq!(scene.mask_sprites.instances.len(), 2);
+    assert!(scene.sole_pass().opaque_sprites.instances.is_empty());
+    assert_eq!(scene.sole_pass().mask_sprites.instances.len(), 2);
     assert!(scene
+        .sole_pass()
         .mask_sprites
         .instances
         .iter()
@@ -258,9 +262,19 @@ fn replacing_a_shared_material_changes_the_next_extract() {
     textured.albedo = Some(other);
     assets.insert("shared", textured).unwrap();
     let scene = extract(&mut world, &assets);
-    assert_eq!(scene.blended_sprites.instances.len(), 2);
-    assert!(scene.blended_sprites.instances.iter().all(|i| i.texture == other && i.texture != sprite_texture));
-    assert!(scene.blended_sprites.instances.iter().all(|i| i.shading == SpriteShading::Blend { double_sided: false }));
+    assert_eq!(scene.sole_pass().blended_sprites.instances.len(), 2);
+    assert!(scene
+        .sole_pass()
+        .blended_sprites
+        .instances
+        .iter()
+        .all(|i| i.texture == other && i.texture != sprite_texture));
+    assert!(scene
+        .sole_pass()
+        .blended_sprites
+        .instances
+        .iter()
+        .all(|i| i.shading == SpriteShading::Blend { double_sided: false }));
 }
 
 #[test]
@@ -283,20 +297,21 @@ fn blended_sprites_and_a_blended_mesh_share_one_sort() {
 
     let scene = extract(&mut world, &assets);
     let names: Vec<_> = scene
+        .sole_pass()
         .blended_sprites
         .instances
         .iter()
         .map(|i| if i.material_id.is_some() { "material" } else { "legacy" })
         .collect();
     assert_eq!(names, ["material", "legacy", "material"], "sprite order stays far to near");
-    assert_eq!(scene.blended_sprites.batches.len(), 3, "depth order is not rearranged to merge textures");
-    assert!(scene.meshes.is_empty(), "a blend mesh is not an opaque draw");
-    assert_eq!(scene.blended_meshes.len(), 1);
-    assert_eq!(scene.blended_meshes[0].draw, MeshDraw::Blend { double_sided: false });
+    assert_eq!(scene.sole_pass().blended_sprites.batches.len(), 3, "depth order is not rearranged to merge textures");
+    assert!(scene.sole_pass().meshes.is_empty(), "a blend mesh is not an opaque draw");
+    assert_eq!(scene.sole_pass().blended_meshes.len(), 1);
+    assert_eq!(scene.sole_pass().blended_meshes[0].draw, MeshDraw::Blend { double_sided: false });
     assert_eq!(scene.stats.missing_assets, 0);
     assert_eq!(scene.stats.meshes_visible, 1);
     assert!(
-        scene.transparent.len() >= 4,
+        scene.sole_pass().transparent.len() >= 4,
         "the mesh at z = 0 follows the sprite at the same depth, after the farther sprites"
     );
     assert!(capture::messages().is_empty(), "a drawn blend mesh is not an unsupported-state warning");
@@ -326,7 +341,7 @@ fn render_order_keeps_layer_then_depth_then_order() {
     ));
     world.spawn((same, Sprite::new("red").with_tint(Color::rgb(0.4, 0.0, 0.0)), RenderOrder::new(0, 1)));
     let scene = extract(&mut world, &assets);
-    let reds: Vec<f32> = scene.blended_sprites.instances.iter().map(|i| i.tint[0]).collect();
+    let reds: Vec<f32> = scene.sole_pass().blended_sprites.instances.iter().map(|i| i.tint[0]).collect();
     assert_eq!(reds, [0.2, 0.4, 0.3, 0.1], "layer 0 before layer 1, far before near, lower order first");
 }
 
@@ -346,7 +361,7 @@ fn a_mesh_mask_uses_the_material_cutoff_and_not_the_inline_lit_flag() {
         Mesh::new("crate").with_material(Material::color(Color::rgb(1.0, 0.0, 0.0))).with_material_asset(material),
     ));
     let scene = extract(&mut world, &assets);
-    let drawn = &scene.meshes[0];
+    let drawn = &scene.sole_pass().meshes[0];
     assert_eq!(drawn.draw, MeshDraw::Mask { double_sided: true });
     assert_eq!(drawn.cutoff, 0.4);
     assert!(!drawn.lit);
@@ -369,7 +384,10 @@ fn material_class_does_not_depend_on_the_camera_projection() {
         ));
         world.spawn((Transform::IDENTITY, Sprite::new("hero").with_material(material).fixed()));
         let scene = extract(&mut world, &assets);
-        assert_eq!(scene.mask_sprites.instances.len(), 1);
-        assert_eq!(scene.mask_sprites.instances[0].shading, SpriteShading::Mask { cutoff: 0.3, double_sided: true });
+        assert_eq!(scene.sole_pass().mask_sprites.instances.len(), 1);
+        assert_eq!(
+            scene.sole_pass().mask_sprites.instances[0].shading,
+            SpriteShading::Mask { cutoff: 0.3, double_sided: true }
+        );
     }
 }

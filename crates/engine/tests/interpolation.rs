@@ -29,7 +29,7 @@ fn sim_x(game: &Game, entity: Entity) -> f32 {
 }
 
 fn extracted_x(game: &Game) -> f32 {
-    game.extract().expect("camera").meshes[0].model.translation().x
+    game.extract().expect("camera").sole_pass().meshes[0].model.translation().x
 }
 
 #[test]
@@ -178,7 +178,7 @@ fn spawning_and_despawning_do_not_invent_history() {
     assert_eq!(extracted_x(&game), 4.0);
 
     game.world.despawn(entity).unwrap();
-    assert!(game.extract().unwrap().meshes.is_empty());
+    assert!(game.extract().unwrap().sole_pass().meshes.is_empty());
 }
 
 #[test]
@@ -319,7 +319,7 @@ fn interpolated_sprites_and_meshes_move_on_the_gpu_between_fixed_steps() {
 
 fn extracted_mesh_x(game: &Game) -> f32 {
     let scene = game.extract().unwrap();
-    let mesh = scene.meshes.iter().find(|mesh| mesh.color[2] > 0.5).expect("blue mesh");
+    let mesh = scene.sole_pass().meshes.iter().find(|mesh| mesh.color[2] > 0.5).expect("blue mesh");
     mesh.model.translation().x
 }
 

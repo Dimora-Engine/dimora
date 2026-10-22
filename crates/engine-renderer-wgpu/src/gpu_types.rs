@@ -2,7 +2,7 @@
 
 use bytemuck::{Pod, Zeroable};
 use engine_math::Vec3;
-use engine_renderer::{LightData, LightKind, RenderScene, MAX_LIGHTS};
+use engine_renderer::{CameraView, LightData, LightKind, MAX_LIGHTS};
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -25,19 +25,21 @@ pub struct GpuGlobals {
 }
 
 impl GpuGlobals {
-    pub fn from_scene(scene: &RenderScene) -> Self {
-        let mut lights = [GpuLight::zeroed(); MAX_LIGHTS];
-        for (slot, l) in lights.iter_mut().zip(&scene.lights) {
-            *slot = GpuLight::from_light(l);
+    /// Uniforms for one camera pass. The caller writes this into a buffer region that stays live
+    /// until that pass's submission has consumed it.
+    pub fn from_camera(view: &CameraView, ambient: [f32; 3], fog: [f32; 4], lights: &[LightData]) -> Self {
+        let mut gpu_lights = [GpuLight::zeroed(); MAX_LIGHTS];
+        for (slot, light) in gpu_lights.iter_mut().zip(lights) {
+            *slot = GpuLight::from_light(light);
         }
-        let [ar, ag, ab] = scene.ambient;
+        let [ar, ag, ab] = ambient;
         Self {
-            view_proj: scene.view.view_proj.to_cols_array(),
-            camera_pos: scene.view.position.extend(1.0).to_array(),
+            view_proj: view.view_proj.to_cols_array(),
+            camera_pos: view.position.extend(1.0).to_array(),
             ambient: [ar, ag, ab, 0.0],
-            fog: scene.fog,
-            counts: [scene.lights.len().min(MAX_LIGHTS) as u32, 0, 0, 0],
-            lights,
+            fog,
+            counts: [lights.len().min(MAX_LIGHTS) as u32, 0, 0, 0],
+            lights: gpu_lights,
         }
     }
 }

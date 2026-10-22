@@ -127,10 +127,16 @@ fn one_thousand_compatible_opaque_sprites_are_one_draw() {
     let extracted = scene(&mut world, &assets);
     assert_eq!(extracted.stats.sprites_visible, 1000);
     assert_eq!(extracted.stats.meshes_visible, 0);
-    assert_eq!(extracted.opaque_sprites.batches.len(), 1);
-    assert_eq!(extracted.opaque_sprites.batches[0].range, 0..1000);
-    assert_ne!(extracted.opaque_sprites.instances[0].uv, extracted.opaque_sprites.instances[1].uv);
-    assert_ne!(extracted.opaque_sprites.instances[0].tint, extracted.opaque_sprites.instances[2].tint);
+    assert_eq!(extracted.sole_pass().opaque_sprites.batches.len(), 1);
+    assert_eq!(extracted.sole_pass().opaque_sprites.batches[0].range, 0..1000);
+    assert_ne!(
+        extracted.sole_pass().opaque_sprites.instances[0].uv,
+        extracted.sole_pass().opaque_sprites.instances[1].uv
+    );
+    assert_ne!(
+        extracted.sole_pass().opaque_sprites.instances[0].tint,
+        extracted.sole_pass().opaque_sprites.instances[2].tint
+    );
 
     let before = renderer.resource_stats();
     let pixels = renderer.render_to_rgba(&gpu, &extracted, &assets, W, H).unwrap();
@@ -139,6 +145,9 @@ fn one_thousand_compatible_opaque_sprites_are_one_draw() {
     assert_eq!(stats.sprite_instances, 1000);
     assert_eq!(stats.mesh_instances, 0);
     assert_eq!(stats.draw_calls, 1, "one compatible instanced draw, with no extra pass");
+    assert_eq!(stats.world_draw_calls, 1);
+    assert_eq!(stats.clear_draw_calls, 0, "one full-surface camera uses the attachment clear");
+    assert_eq!(stats.camera_passes, 1);
     assert_eq!(stats.largest_draw_instances, 1000);
     assert_eq!(stats.submitted_instances, 1000);
     assert_eq!(resources.texture_creates - before.texture_creates, 1, "one atlas image; placeholders already exist");
@@ -164,7 +173,7 @@ fn one_thousand_compatible_opaque_sprites_are_one_draw() {
     assert_eq!(renderer.resource_stats().bind_group_creates, binds);
     eprintln!(
         "1000-sprite batch: cpu batches={} gpu draws={} instances={} texture_creates={} uploads={} samplers={} bind_groups={} buffer_grows={}",
-        extracted.opaque_sprites.batches.len(),
+        extracted.sole_pass().opaque_sprites.batches.len(),
         stats.draw_calls,
         stats.submitted_instances,
         resources.texture_creates - before.texture_creates,
@@ -193,8 +202,8 @@ fn mask_sprites_batch_per_material_and_keep_their_cutoff() {
     }
     world.spawn((Transform::from_xyz(0.0, 0.55, 0.0), sprite("half", tight)));
     let extracted = scene(&mut world, &assets);
-    assert_eq!(extracted.mask_sprites.batches.len(), 2);
-    assert_eq!(extracted.mask_sprites.instances.len(), 4);
+    assert_eq!(extracted.sole_pass().mask_sprites.batches.len(), 2);
+    assert_eq!(extracted.sole_pass().mask_sprites.instances.len(), 4);
     let image = renderer.render_to_rgba(&gpu, &extracted, &assets, W, H).unwrap();
     assert_eq!(renderer.stats().draw_calls, 2);
     assert_eq!(renderer.stats().submitted_instances, 4);
@@ -220,7 +229,7 @@ fn one_blended_sprite_draw_matches_separate_ordered_draws() {
     separate.spawn((Transform::from_xyz(0.0, 0.0, 1.0), sprite("white", red).with_size(Vec2::splat(1.2))));
     separate.spawn((Transform::IDENTITY, sprite("white", green).with_size(Vec2::splat(1.2))));
     let split = scene(&mut separate, &assets);
-    assert_eq!(split.transparent.len(), 2);
+    assert_eq!(split.sole_pass().transparent.len(), 2);
     let split_image = renderer.render_to_rgba(&gpu, &split, &assets, W, H).unwrap();
     assert_eq!(renderer.stats().draw_calls, 2);
 
@@ -234,8 +243,8 @@ fn one_blended_sprite_draw_matches_separate_ordered_draws() {
         sprite("white", shared).with_tint(Color::rgba(0.0, 1.0, 0.0, 0.5)).with_size(Vec2::splat(1.2)),
     ));
     let together = scene(&mut batched, &assets);
-    assert_eq!(together.transparent.len(), 1);
-    assert_eq!(together.blended_sprites.batches[0].range, 0..2);
+    assert_eq!(together.sole_pass().transparent.len(), 1);
+    assert_eq!(together.sole_pass().blended_sprites.batches[0].range, 0..2);
     let together_image = renderer.render_to_rgba(&gpu, &together, &assets, W, H).unwrap();
     assert_eq!(renderer.stats().draw_calls, 1);
     assert_eq!(renderer.stats().largest_draw_instances, 2);
@@ -270,7 +279,7 @@ fn blended_meshes_batch_only_inside_a_contiguous_run() {
         adjacent.spawn((Transform::from_xyz(x, 0.0, 1.0), Mesh::new("card").with_material_asset(glass)));
     }
     let extracted = scene(&mut adjacent, &assets);
-    assert_eq!(extracted.transparent.len(), 1);
+    assert_eq!(extracted.sole_pass().transparent.len(), 1);
     let _ = renderer.render_to_rgba(&gpu, &extracted, &assets, W, H).unwrap();
     assert_eq!(renderer.stats().draw_calls, 1);
     assert_eq!(renderer.stats().largest_draw_instances, 3);
@@ -280,7 +289,7 @@ fn blended_meshes_batch_only_inside_a_contiguous_run() {
     split.spawn((Transform::from_xyz(0.0, 0.0, 1.0), sprite("white", sprite_mat).with_size(Vec2::splat(0.3))));
     split.spawn((Transform::IDENTITY, Mesh::new("card").with_material_asset(glass)));
     let extracted = scene(&mut split, &assets);
-    assert_eq!(extracted.transparent.len(), 3);
+    assert_eq!(extracted.sole_pass().transparent.len(), 3);
     let image = renderer.render_to_rgba(&gpu, &extracted, &assets, W, H).unwrap();
     assert_eq!(renderer.stats().draw_calls, 3);
     // Blue 0.5, then green 0.5, then blue 0.5 over black.
@@ -293,7 +302,11 @@ fn blended_meshes_batch_only_inside_a_contiguous_run() {
     interrupted.spawn((Transform::from_xyz(0.0, 0.0, 1.0), Mesh::new("card").with_material_asset(other)));
     interrupted.spawn((Transform::from_xyz(0.5, 0.0, 0.0), Mesh::new("card").with_material_asset(glass)));
     let extracted = scene(&mut interrupted, &assets);
-    assert_eq!(extracted.transparent.len(), 3, "a different material in between does not regroup the matching meshes");
+    assert_eq!(
+        extracted.sole_pass().transparent.len(),
+        3,
+        "a different material in between does not regroup the matching meshes"
+    );
     let _ = renderer.render_to_rgba(&gpu, &extracted, &assets, W, H).unwrap();
     assert_eq!(renderer.stats().draw_calls, 3);
 }
@@ -318,7 +331,7 @@ fn mixed_sprite_and_mesh_runs_merge_only_at_kind_boundaries() {
         }
     }
     let extracted = scene(&mut world, &assets);
-    assert_eq!(extracted.transparent.len(), 2);
+    assert_eq!(extracted.sole_pass().transparent.len(), 2);
     let _ = renderer.render_to_rgba(&gpu, &extracted, &assets, W, H).unwrap();
     assert_eq!(renderer.stats().draw_calls, 2);
     assert_eq!(renderer.stats().submitted_instances, 4);
@@ -334,7 +347,7 @@ fn mixed_sprite_and_mesh_runs_merge_only_at_kind_boundaries() {
         }
     }
     let extracted = scene(&mut alternate, &assets);
-    assert_eq!(extracted.transparent.len(), 4);
+    assert_eq!(extracted.sole_pass().transparent.len(), 4);
     let _ = renderer.render_to_rgba(&gpu, &extracted, &assets, W, H).unwrap();
     assert_eq!(renderer.stats().draw_calls, 4, "alternating kinds are not merged across the layout change");
 }
@@ -377,7 +390,7 @@ fn material_replacement_updates_class_colour_cutoff_light_and_culling() {
     assets.insert("front", MaterialAsset::unlit(Color::WHITE).with_alpha_mode(AlphaMode::mask(0.75).unwrap())).unwrap();
     let image = render(&gpu, &mut renderer, &mut world, &assets);
     expect_px(&image, 64, 64, [0, 0, 255, 255], 2, "cutoff 0.75 discards alpha 0.5 and shows the sprite behind");
-    assert_eq!(scene(&mut world, &assets).mask_sprites.batches.len(), 1);
+    assert_eq!(scene(&mut world, &assets).sole_pass().mask_sprites.batches.len(), 1);
     assert_eq!(renderer.resource_stats().texture_creates, creates);
 
     assets
@@ -386,7 +399,7 @@ fn material_replacement_updates_class_colour_cutoff_light_and_culling() {
     let image = render(&gpu, &mut renderer, &mut world, &assets);
     // Four stacked sprites. Each is texture alpha 0.5 times material alpha 0.5, so 0.25, over blue.
     expect_px(&image, 64, 64, [175, 0, 80, 255], 4, "four blended instances composite in order over the blue sprite");
-    assert_eq!(scene(&mut world, &assets).transparent.len(), 1);
+    assert_eq!(scene(&mut world, &assets).sole_pass().transparent.len(), 1);
     assert_eq!(renderer.stats().largest_draw_instances, 4);
 
     world.insert_resource(AmbientLight { color: Color::WHITE, intensity: 0.0 });
@@ -469,15 +482,15 @@ fn legacy_sprites_and_meshes_keep_their_batches() {
     world.spawn((Transform::from_xyz(0.0, -0.3, 0.0), Mesh::new("box")));
     world.spawn((Transform::from_xyz(0.35, -0.3, 0.0), Mesh::new("card")));
     let extracted = scene(&mut world, &assets);
-    assert_eq!(extracted.cutout_sprites.batches.len(), 1);
-    assert_eq!(extracted.cutout_sprites.batches[0].range, 0..3);
-    assert_eq!(MeshInstance::run_end(&extracted.meshes, 0), 2);
-    assert_eq!(extracted.meshes.len(), 3);
+    assert_eq!(extracted.sole_pass().cutout_sprites.batches.len(), 1);
+    assert_eq!(extracted.sole_pass().cutout_sprites.batches[0].range, 0..3);
+    assert_eq!(MeshInstance::run_end(&extracted.sole_pass().meshes, 0), 2);
+    assert_eq!(extracted.sole_pass().meshes.len(), 3);
     let _ = renderer.render_to_rgba(&gpu, &extracted, &assets, W, H).unwrap();
     assert_eq!(renderer.stats().draw_calls, 3, "one sprite batch plus two mesh geometries");
     assert_eq!(renderer.stats().sprite_instances, 3);
     assert_eq!(renderer.stats().mesh_instances, 3);
-    assert!(extracted.cutout_sprites.instances.iter().all(|i| i.material_id.is_none()));
+    assert!(extracted.sole_pass().cutout_sprites.instances.iter().all(|i| i.material_id.is_none()));
 }
 
 #[test]
@@ -508,8 +521,8 @@ fn batching_and_depth_hold_under_three_cameras() {
             sprite("white", material).with_tint(Color::rgb(0.0, 1.0, 0.0)).with_size(Vec2::splat(0.7)),
         ));
         let extracted = scene(&mut world, &assets);
-        assert_eq!(extracted.opaque_sprites.batches.len(), 1, "{name}");
-        assert!(extracted.transparent.is_empty(), "{name} does not reclassify opaque");
+        assert_eq!(extracted.sole_pass().opaque_sprites.batches.len(), 1, "{name}");
+        assert!(extracted.sole_pass().transparent.is_empty(), "{name} does not reclassify opaque");
         let image = renderer.render_to_rgba(&gpu, &extracted, &assets, W, H).unwrap();
         assert_eq!(renderer.stats().draw_calls, 1, "{name}");
         assert_eq!(renderer.stats().largest_draw_instances, 2, "{name}");

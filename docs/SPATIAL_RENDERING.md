@@ -129,19 +129,33 @@ spatial inputs: `GlobalTransform`, `Visibility`, the active `CameraView`, and th
 
 ## Camera
 
-A camera entity has exactly three parts:
+A camera entity keeps its pose on `Transform` and its image policy on `Camera`:
 
 ```text
 Transform     where it is and where it looks (the view is the inverse of its world matrix)
 Camera.projection  Orthographic | Perspective | Custom(Mat4)
 Camera.viewport    ViewportRect: the part of the render target it draws into
+Camera.clear       Color (default) or Load
+Camera.order       draw order among active cameras
 ```
+
+Every active camera is a pass. Passes sort by ascending `(order, entity id)`. A later pass can overlay
+an earlier one where the viewports overlap. `Visibility` does not drop a camera. Each pass has its own
+view, projection, frustum, sprite orientation, and transparent order. Texture, sampler, and mesh
+geometry caches are shared. Offscreen targets are not part of this contract (M6-2C).
 
 `CameraView` resolves them for a given render target and carries everything downstream needs:
 `view`, `proj`, `view_proj`, position, forward/right/up, and the viewport rectangle in pixels. The
 aspect ratio comes from the viewport rectangle, not the window, so a camera in half the window is
 not stretched. The same `view_proj` drives CPU projection (`CameraView::project`, picking
-rays, culling) and the GPU, so the two cannot disagree.
+rays, culling) and that camera's GPU uniform, so the two cannot disagree. `project` and
+`ray_from_pixels` are viewport-local. A window pixel subtracts `viewport_origin` first.
+`top_surface_camera` picks the last drawn camera whose rectangle contains the window pixel.
+
+The first pass clears the whole color target to its clear color, whether the policy is `Color` or
+`Load`. A later `Color` pass fills only its rectangle and does not write depth. A later `Load` pass
+does not. Every pass clears depth to 1.0 and discards it. The renderer submits each camera before
+writing the next camera's globals or instance data. One full-surface camera does not add a fill draw.
 
 `CameraProjection::Custom` stores that view-to-clip matrix. `matrix(aspect)` returns it unchanged, so a
 viewport resize changes pixel mapping and does not rebuild the matrix. Perspective and orthographic still

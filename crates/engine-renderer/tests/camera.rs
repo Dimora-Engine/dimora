@@ -283,7 +283,7 @@ fn quad(camera: Transform, entity: Transform, sprite: Sprite) -> (Vec3, Vec3, Ve
     w.spawn((entity, sprite.with_size(Vec2::new(2.0, 4.0)).with_anchor(Vec2::new(0.5, 0.0))));
     propagate_transforms(&mut w);
     let scene = extract_scene(&w, &a, VIEWPORT).expect("camera");
-    let m = scene.blended_sprites.instances[0].model;
+    let m = scene.sole_pass().blended_sprites.instances[0].model;
     (
         m.transform_point3(Vec3::ZERO),
         m.transform_point3(Vec3::new(1.0, 0.0, 0.0)),
@@ -386,7 +386,7 @@ fn sprite_region_selects_a_sub_rectangle_of_the_asset() {
     propagate_transforms(&mut w);
     let scene = extract_scene(&w, &a, VIEWPORT).unwrap();
     // Right-bottom quadrant (UV v grows downward in the asset), mirrored horizontally.
-    assert_eq!(scene.blended_sprites.instances[0].uv, [1.0, 0.0, 0.5, 0.5]);
+    assert_eq!(scene.sole_pass().blended_sprites.instances[0].uv, [1.0, 0.0, 0.5, 0.5]);
 }
 
 #[test]
@@ -399,7 +399,7 @@ fn entities_without_render_order_are_ordered_by_depth_alone() {
     }
     propagate_transforms(&mut w);
     let scene = extract_scene(&w, &a, VIEWPORT).unwrap();
-    let z: Vec<f32> = scene.blended_sprites.instances.iter().map(|i| i.model.translation().z).collect();
+    let z: Vec<f32> = scene.sole_pass().blended_sprites.instances.iter().map(|i| i.model.translation().z).collect();
     assert_eq!(z, vec![30.0, 20.0, 10.0]);
 }
 
@@ -421,10 +421,11 @@ fn a_sprite_and_a_mesh_at_the_same_world_position_project_to_the_same_pixel() {
     propagate_transforms(&mut w);
     let scene = extract_scene(&w, &a, VIEWPORT).unwrap();
 
-    let mesh_centre = scene.meshes[0].model.translation();
-    let sprite_centre = scene.blended_sprites.instances[0].model.transform_point3(Vec3::new(0.5, 0.5, 0.0));
+    let mesh_centre = scene.sole_pass().meshes[0].model.translation();
+    let sprite_centre = scene.sole_pass().blended_sprites.instances[0].model.transform_point3(Vec3::new(0.5, 0.5, 0.0));
     assert!(mesh_centre.approx_eq(sprite_centre, 1e-4));
-    let (m, s) = (scene.view.project(mesh_centre).unwrap(), scene.view.project(sprite_centre).unwrap());
+    let (m, s) =
+        (scene.sole_pass().view.project(mesh_centre).unwrap(), scene.sole_pass().view.project(sprite_centre).unwrap());
     assert_eq!((m.pixels, m.depth), (s.pixels, s.depth), "one camera, one world");
 }
 
@@ -439,15 +440,16 @@ fn nearer_things_get_smaller_depth_values_regardless_of_kind() {
     w.spawn((Transform::from_xyz(0.0, 0.0, 30.0), Sprite::new("tex_sprite").cutout()));
     propagate_transforms(&mut w);
     let scene = extract_scene(&w, &a, VIEWPORT).unwrap();
-    let depth = |p: Vec3| scene.view.project(p).unwrap().depth;
-    let mesh = depth(scene.meshes[0].model.translation());
-    let sprite_depths: Vec<f32> = scene.cutout_sprites.instances.iter().map(|i| depth(i.model.translation())).collect();
+    let depth = |p: Vec3| scene.sole_pass().view.project(p).unwrap().depth;
+    let mesh = depth(scene.sole_pass().meshes[0].model.translation());
+    let sprite_depths: Vec<f32> =
+        scene.sole_pass().cutout_sprites.instances.iter().map(|i| depth(i.model.translation())).collect();
     let (in_front, behind) = (
         sprite_depths.iter().cloned().fold(f32::MAX, f32::min),
         sprite_depths.iter().cloned().fold(f32::MIN, f32::max),
     );
     assert!(in_front < mesh && mesh < behind);
-    assert_eq!(scene.cutout_sprites.instances.len(), 2);
+    assert_eq!(scene.sole_pass().cutout_sprites.instances.len(), 2);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -648,7 +650,7 @@ fn singular_custom_matrix_ray_returns_none() {
     world.spawn((Camera::new(finite_custom(singular)), Transform::IDENTITY));
     propagate_transforms(&mut world);
     let scene = extract_scene(&world, &AssetManager::in_memory(), VIEWPORT).expect("a singular matrix still extracts");
-    assert!(scene.view.proj.approx_eq(&singular, 0.0));
+    assert!(scene.sole_pass().view.proj.approx_eq(&singular, 0.0));
 }
 
 #[test]
@@ -768,7 +770,7 @@ fn extract_keeps_the_custom_view_projection() {
     propagate_transforms(&mut world);
     let scene = extract_scene(&world, &AssetManager::in_memory(), VIEWPORT).unwrap();
     let expected = view_of(camera, transform);
-    assert!(scene.view.proj.approx_eq(&matrix, 0.0));
-    assert!(scene.view.view_proj.approx_eq(&expected.view_proj, 1e-5));
+    assert!(scene.sole_pass().view.proj.approx_eq(&matrix, 0.0));
+    assert!(scene.sole_pass().view.view_proj.approx_eq(&expected.view_proj, 1e-5));
     assert!(!camera.projection.is_perspective());
 }

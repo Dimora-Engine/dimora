@@ -460,8 +460,8 @@ fn assert_scene_camera(game: &Game, camera: Entity, projection: CameraProjection
     let global = *game.world.component::<GlobalTransform>(camera).unwrap();
     let extracted = game.extract().unwrap();
     let expected = CameraView::new(&component, &global, Vec2::new(W as f32, H as f32));
-    assert_eq!(extracted.view.position, expected.position, "{name}");
-    assert_eq!(extracted.view.proj, expected.proj, "{name}");
+    assert_eq!(extracted.sole_pass().view.position, expected.position, "{name}");
+    assert_eq!(extracted.sole_pass().view.proj, expected.proj, "{name}");
 }
 
 #[test]

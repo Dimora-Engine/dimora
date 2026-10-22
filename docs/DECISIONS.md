@@ -86,7 +86,7 @@ the risk register). **Prototype where the answer depends on a measurement; do no
 | D-05 | Materials, alpha modes, blended meshes | M5 | M5, M14 | Decided, [ADR-0015](adr/0015-material-alpha-classes.md) (2026-10-16). Three classes, one blended sort, and the bounding-sphere-centre depth for a blended mesh. CPU `MaterialAsset` is `e0c29ef`. M5-5B is `3b3cd4a`. M5-5C is `ab1b6f7`. M5-5D is `a7efd6c`. Procedural meshes are [ADR-0018](adr/0018-procedural-mesh-generators.md) (M5-6, `92286ce`). M5 is accepted locally |
 | D-06 | Pixel-art filtering, texel snapping, MSAA: policies at the level of each technique, **not a default or a foundation** | M6 (after D-25 and D-08) | M6, M8, M9, M13 | Principles accepted (ADR-0004); API ownership and defaults **deferred pending a rendering prototype** |
 | D-07 | Depth convention (reverse-Z) | M6 | M6, M14 shadows | Open |
-| D-08 | Multi-camera and render targets | M6 | M6, M14, M22 | Open |
+| D-08 | Multi-camera and render targets | M6 | M6, M14, M22 | Partial. M6-2B (committed locally) renders every active surface camera. Offscreen targets and camera-to-texture are M6-2C and are not implemented |
 | D-25 | Custom projections inside `Camera` | M6 (**first in M6**, [ADR-0004](adr/0004-one-spatial-world-many-camera-configurations.md)) | M6, M13 (oblique tiles) | Implemented in M6-1B (`a38cb30`, not pushed): `CameraProjection::Custom(Mat4)`. The example `custom` camera is M6-1C (committed locally, not pushed) and is not an engine preset. D-48 and D-26 stay open |
 | D-48 | Camera configurations: gameplay orientation, coplanar ordering, orientation modes per view | M6 (decide before M7 and M8) | M6, M7, M8, M13, M14 | Principles accepted and `+Y` up / `XZ` ground retained as a **provisional convention** (ADR-0004, 2026-10-13). Prototype evidence recorded 2026-10-14 (three coplanar conflicts; no mechanism chosen). Gameplay-orientation components still deferred to M7 and M8 |
 | D-26 | Sprite orientation modes beyond `Billboard`, `Upright`, `Fixed`; `Upright` semantics for steep and oblique views | M6 | none hard | Candidate initial set kept, not exhaustive (ADR-0004). Observed 2026-10-14: orthographic height is `cos(pitch)` of a billboard, straight-down is edge-on, a 60° perspective view is roughly half. **Not accepted as the final design.** Extensions still open |
@@ -267,10 +267,38 @@ Decided in [ADR-0015](adr/0015-material-alpha-classes.md). Opaque, Mask, and Ble
 
 ### D-08 Multi-camera and render targets
 
-* **Problem.** Only one camera is rendered per frame (KI-5), and there is no render-to-texture.
-* **Options.** Several cameras drawn in `(order, id)` order into the surface; camera-to-texture
-  targets; both.
-* **Needed by.** M6. **Blocks.** Shadow passes (M14), editor viewports (M22), minimap-style effects.
+* **Problem.** Only one camera was rendered per frame (KI-5), and there is no render-to-texture.
+* **Surface contract (approved, implemented in M6-2B, committed locally).** Every `Camera.active` camera
+  renders to the surface. `Visibility` does not select cameras. Passes sort ascending by
+  `(Camera.order, entity id)`. A lower order draws first. A higher order draws later and can overlay
+  it. An equal order uses the lower entity id first, so the higher id is on top. Each camera keeps its
+  own viewport, projection, view, frustum, billboard and upright basis, visible instances, and
+  transparent sequence. The transparent sort is unchanged and runs per camera: `RenderOrder.layer`
+  ascending, camera-space depth descending, `RenderOrder.order` ascending, then extraction order.
+  `CameraClear::Color` (the default) replaces that camera's viewport with `clear_color` before its
+  scene. `CameraClear::Load` keeps the color already there. The first camera of a frame still clears
+  the whole color attachment to its `clear_color`, including when its policy is `Load`, because the
+  surface has no defined previous image. A later `Color` camera fills only its rectangle with a
+  color-only draw: no depth write, no alpha blend, alpha 1 to match the attachment clear. A later
+  `Load` camera does not fill. `LoadOp::Clear` is not used for that later rectangle, because it would
+  clear the whole attachment. One full-surface camera stays on that single attachment clear and does
+  not draw the fill. Zero active cameras extract nothing. Depth is `Depth32Float`, compare less. Every
+  pass clears it to 1.0 and discards it, so one camera's depth does not reject the next. Opaque and
+  Mask write depth. Blend tests depth and does not write it. That is the M5 alpha contract. D-07 is
+  unchanged. Globals and instance buffers are uploaded and `queue.submit`ted per camera. A later
+  `write_buffer` does not replace bytes an earlier submission already recorded. Texture, sampler, and
+  mesh-geometry caches stay shared. Mesh vertices are not copied per camera. Lights are chosen per
+  camera because the nearest-16 cap depends on camera position. Ambient and fog stay on the scene.
+  `FrameStats` is the frame total. `PassFrameStats` is one camera. A viewport fill is a clear draw,
+  not a world draw, and not a submitted instance. An entity drawn by two cameras counts twice.
+  `top_surface_camera` returns the last drawn active camera whose viewport contains the window pixel,
+  or `None`. `camera_view_of` resolves one camera by id, including an inactive camera. Callers subtract
+  `viewport_origin` before `ray_from_pixels`. There is no input router.
+* **Not implemented.** Offscreen render targets, camera-to-texture, `RenderTargetStore`,
+  `RenderTargetId`, `CameraOutput`, target dependency order, and target resize or sampling. Those are
+  M6-2C. There is no render graph and no second renderer. D-48, D-26, D-07, and D-06 stay open.
+* **Needed by.** M6. **Blocks.** Shadow passes (M14), editor viewports (M22), and minimap-style
+  effects that sample a texture, until M6-2C.
 
 ### D-25 Custom projections inside `Camera`
 

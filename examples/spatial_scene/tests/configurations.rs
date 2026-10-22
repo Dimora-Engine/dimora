@@ -100,7 +100,7 @@ fn quad_height_px(config: usize, name: &str, orientation: SpriteOrientation) -> 
     set_orientation(&mut g, name, orientation);
     g.step(Duration::from_millis(16));
     let scene = g.extract().unwrap();
-    let [instance] = &scene.cutout_sprites.instances[..] else { panic!("expected exactly one quad") };
+    let [instance] = &scene.sole_pass().cutout_sprites.instances[..] else { panic!("expected exactly one quad") };
     let (view, m) = (view(&g), instance.model);
     let (bottom, top) = (m.transform_point3(Vec3::new(0.5, 0.0, 0.0)), m.transform_point3(Vec3::new(0.5, 1.0, 0.0)));
     let (b, t) = (view.project(bottom).unwrap(), view.project(top).unwrap());

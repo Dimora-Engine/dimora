@@ -104,17 +104,21 @@ is exact only for uniform scale.
 ## Camera and projection
 
 * `Camera` component: `projection: CameraProjection`, `viewport: ViewportRect` (normalized sub-rect
-  of the target), `clear_color`, `active`, `order`. Position and orientation come from the entity's
-  `Transform`.
-* `CameraProjection` is a `#[non_exhaustive]` enum with two variants today (`Orthographic`,
-  `Perspective`). `CameraView::new(camera, global_transform, target_size)` resolves the view
-  matrix (inverse of the camera's world transform), projection matrix, viewport pixels, and basis
+  of the target), `clear_color`, `clear: CameraClear`, `active`, `order`. Position and orientation
+  come from the entity's `Transform`. `CameraClear::Color` is the default. `Load` keeps the color
+  already in a later camera's viewport.
+* `CameraProjection` is a `#[non_exhaustive]` enum: `Orthographic`, `Perspective`, and
+  `Custom(Mat4)` (D-25, M6-1B). `CameraView::new(camera, global_transform, target_size)` resolves the
+  view matrix (inverse of the camera's world transform), projection matrix, viewport pixels, and basis
   vectors. The same `view_proj` is used for CPU projection, picking rays, culling and the GPU.
 * The `Projection` trait (`matrix(aspect)`, default `project()`) is implemented by `Orthographic`,
-  `Perspective` and the enum. **`Camera` cannot hold an arbitrary `impl Projection`**, only the enum,
-  so adding isometric or oblique projections currently means adding an enum variant (see
-  weaknesses).
-* Exactly one camera is rendered per frame: the active camera with the lowest `(order, entity id)`.
+  `Perspective` and the enum. A caller-supplied matrix is `CameraProjection::Custom`, not a trait
+  object.
+* Every active camera renders, in ascending `(order, entity id)` (M6-2B, D-08 partial). `Visibility`
+  does not hide a camera. `RenderScene` stores `passes: Vec<CameraPass>` plus shared ambient and fog.
+  There is no single `view` that stands for the frame. `sole_pass` is the one-camera accessor and
+  panics otherwise. Zero active cameras make `extract_scene` return `None`. Offscreen targets are not
+  implemented (M6-2C).
 
 ## Asset ownership
 
@@ -216,18 +220,24 @@ blend and is not a supported motion mode. With no stored previous anywhere, extr
 one matrix, for every sprite orientation and every camera placement. An unmarked camera matches
 `GlobalTransform`. Depth sorting is unchanged.
 
-Extraction (`extract_scene`): choose the active camera, build `CameraView`, build the frustum, gather
-lights (cap 16, directional first, rest nearest to camera), then per renderable: visibility check,
-asset resolution (missing assets are skipped and counted), orientation-dependent quad matrix for
-sprites, bounding-sphere frustum culling, then sort and batch. Blended sprites are sorted by
-`(RenderOrder.layer, view depth far->near, RenderOrder.order)`; cutout sprites, tiles and meshes are
-unordered except for grouping by texture/mesh. Sprites and tiles share one instanced quad path.
+Extraction (`extract_scene`): collect every active camera in `(order, entity id)` order. Materials,
+textures, and mesh assets are resolved once for the frame. Each camera then builds its `CameraView`,
+frustum, and visible instances. Billboard and upright quads use that camera's basis. Lights above 16
+keep directionals and the positional lights nearest to that camera. Blended sprites and blended meshes
+sort per camera by `(RenderOrder.layer, view depth far->near, RenderOrder.order, extraction order)`.
+Cutout sprites, tiles and opaque meshes are unordered except for grouping by texture, material, and
+mesh. Sprites and tiles share one instanced quad path. A missing asset is counted once on the scene,
+not once per camera.
 
-Backend: one render pass with one depth buffer (Depth32Float): opaque meshes (back-face culled),
-cutout sprites/tiles (alpha-tested, depth write), then alpha-blended sprites (depth test, no write).
-Lighting is a single forward world-space `shade()` shared by sprites, tiles and meshes: ambient plus
-up to 16 directional/point/spot lights, wrap-lit sprites, exponential distance fog. Surface loss and
-resize are handled; transient acquire failures skip the frame.
+Backend: one depth image (`Depth32Float`), cleared to 1.0 and discarded on every camera pass. The
+first pass clears the whole color attachment to that camera's clear color. Later passes load the
+color. A later `CameraClear::Color` fills only its viewport. Opaque meshes (back-face culled), mask
+and cutout sprites and tiles write depth. Blended sprites and meshes test depth and do not write it.
+Each camera is uploaded and submitted before the next camera writes the shared globals or instance
+buffers. Texture, sampler, and mesh-geometry caches stay shared. Lighting is a single forward
+world-space `shade()` shared by sprites, tiles and meshes: ambient plus up to 16 directional, point,
+or spot lights, wrap-lit sprites, exponential distance fog. Surface loss and resize are handled;
+transient acquire failures skip the frame. There is no render graph and no offscreen target.
 
 ## Current extension points
 
@@ -268,11 +278,12 @@ Each is verified by reading the code or by a test run; identifiers refer to the 
    and exposure of `FixedTimestep::alpha()` (M3a-5). Resource access is still `RefCell`: a second borrow
    of the same resource panics, including a second `World::commands` while a writer is alive. Direct
    `spawn` during a query still does not compile; the command queue is the path that does.
-4. **One camera per frame (KI-5).** `Camera.viewport` is honoured, but only one camera renders, so
-   split-screen, minimaps and render-to-texture are not possible, and the editor cannot get a second
-   viewport.
+4. **One camera per frame (KI-5).** Partial. M6-2B renders every active surface camera into one target,
+   each with its own viewport, clear or load, and depth clear. Split-screen and overlapping surface
+   viewports work. Render-to-texture, a minimap that samples a texture, and an editor viewport still
+   need M6-2C.
 5. **Custom projection (KI-11).** Fixed in M6-1B: `CameraProjection::Custom(Mat4)` is ordinary data on the
-   same `Camera`. The GPU still receives one `view_proj`. One camera per frame (KI-5) remains.
+   same `Camera`. Each camera pass still receives one `view_proj`. Projection kind is not a pipeline.
 6. **Textures and materials (KI-6).** No mipmaps, clamp-to-edge only, every texture uploaded as sRGB
    (so non-colour data such as normal maps cannot be represented), `Material` is
    colour + one albedo + a lit flag, meshes can only be opaque.
@@ -419,7 +430,7 @@ entity, and sprite orientation modes are tested under a pitched camera. *Demonst
 custom constructors, with GPU tests. Those constructors are not an engine preset API. *Custom projection (M6-1B, `a38cb30`):*
 `CameraProjection::Custom(Mat4)` renders and picks through the same extraction and `view_proj` uniform.
 The example `custom` constructor (M6-1C, committed locally, not pushed) fills that variant with a local oblique matrix. The pose stays on `Transform`.
-*Not demonstrated:* a 2D-style game. One camera renders per frame (R-2). *Gaps:* R-16, including the three
+*Not demonstrated:* a 2D-style game. Several surface cameras render in one frame (M6-2B); offscreen targets do not (R-2). *Gaps:* R-16, including the three
 verified coplanar conflicts (D-48). `Upright` under an oblique matrix is still unspecified (D-26).
 
 **11. The runtime has no editor state.** Editor and developer tools consume the component registry, commands,
@@ -434,7 +445,7 @@ systems they touch. Each cites evidence from this audit.
 | Id | Risk | Evidence | Cost if found late | Response |
 |---|---|---|---|---|
 | R-1 | **Later transparent primitives still need the shared sequence.** Blended sprites and blended meshes sort and submit together. Particles and skinned characters are not in that list yet. Opaque and mask content stays in the depth-writing passes | `scene.rs` `transparent`; the walk in `scene_renderer.rs` | Moderate for the next transparent primitive if it grows a private list | D-05 is implemented for sprites and meshes (ADR-0015, M5-5C `ab1b6f7`, M5-5D `a7efd6c`). A new blended primitive joins `transparent` instead of a second order |
-| R-2 | **One camera, one target per frame**; `RenderScene` holds a single view | `extract.rs::active_camera`; KI-5 | High: shadows, editor viewports, render-to-texture and minimaps need a list of views | D-08 in M6 turns the scene into a list of camera passes; do not add features that assume one view |
+| R-2 | **One surface target per frame.** `RenderScene.passes` is every active camera (M6-2B). Offscreen targets and camera-to-texture are not implemented | `extract.rs` ordered cameras; `scene.rs` `CameraPass`; KI-5 partial | High for shadows, editor viewports, and render-to-texture until M6-2C | D-08 surface cameras are in. Do not add a second renderer or a render graph for the remaining target work |
 | R-3 | **No transform timeline beyond one previous local.** `Transform` is current simulation state. `Interpolate` stores one previous local for opt-in extract interpolation. There is still no dirty tracking, propagation is still a full pass, and camera-dependent animation still has a one-frame latency rule | `interpolate.rs`, `hierarchy.rs`; KI-9, KI-10, D-02 | Moderate if a later system starts reading the render matrix as simulation | M3a-5 stores the previous local and blends only at extract. Dirty tracking stays out (ADR-0009) until a profile |
 | R-4 | **Asset identity and retention.** Handles are name hashes with no recoverable name, no reference counting, ids change on rename, and the collision guard is per type | `handle.rs`, `manager.rs`; D-16 | High once scene files, sheets or bundles exist | Decide D-16 before any persisted format (sheet descriptors in M8 are the first); keep names in the manager so handles can be serialized by name or id |
 | R-5 | **Mutation model.** Systems may still mutate the world directly. Resources are `RefCell` (a double borrow panics). Commands and events exist and follow ADR-0008 | `commands.rs`, `events.rs`, `resources.rs`; KI-9 | A second mutation path, or holding the command writer across a flush, reintroduces the alias | Built in M3a-3. Direct `spawn` remains for code that holds no query. No observers |

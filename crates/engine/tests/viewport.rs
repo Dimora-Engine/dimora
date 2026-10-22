@@ -17,10 +17,10 @@ fn extraction_uses_the_physical_size_at_every_scale() {
     *game.world.resource_mut::<Viewport>() = Viewport::new(800, 600, 1.5).unwrap();
     let other = game.extract().expect("camera");
 
-    assert_eq!(hidpi.viewport_px, [0.0, 0.0, 800.0, 600.0]);
-    assert_eq!(other.viewport_px, hidpi.viewport_px);
-    assert_eq!(other.view.viewport, hidpi.view.viewport);
-    assert_eq!(other.view.proj, hidpi.view.proj);
+    assert_eq!(hidpi.sole_pass().viewport_px, [0.0, 0.0, 800.0, 600.0]);
+    assert_eq!(other.sole_pass().viewport_px, hidpi.sole_pass().viewport_px);
+    assert_eq!(other.sole_pass().view.viewport, hidpi.sole_pass().view.viewport);
+    assert_eq!(other.sole_pass().view.proj, hidpi.sole_pass().view.proj);
 }
 
 #[test]

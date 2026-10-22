@@ -47,16 +47,16 @@ fn a_scene_sprite_extracts_like_a_directly_spawned_sprite() {
 
     assert_eq!(loaded_scene.stats, spawned_scene.stats);
     assert_eq!(loaded_scene.stats.sprites_visible, 1);
-    assert!(loaded_scene.cutout_sprites.instances.is_empty());
-    assert_eq!(loaded_scene.meshes.len(), spawned_scene.meshes.len());
-    let loaded_sprite = loaded_scene.blended_sprites.instances[0];
-    let spawned_sprite = spawned_scene.blended_sprites.instances[0];
+    assert!(loaded_scene.sole_pass().cutout_sprites.instances.is_empty());
+    assert_eq!(loaded_scene.sole_pass().meshes.len(), spawned_scene.sole_pass().meshes.len());
+    let loaded_sprite = loaded_scene.sole_pass().blended_sprites.instances[0];
+    let spawned_sprite = spawned_scene.sole_pass().blended_sprites.instances[0];
     assert_eq!(loaded_sprite.model, spawned_sprite.model);
     assert_eq!(loaded_sprite.uv, spawned_sprite.uv);
     assert_eq!(loaded_sprite.tint, spawned_sprite.tint);
     assert_eq!(loaded_sprite.lit, spawned_sprite.lit);
     assert_eq!(loaded_sprite.texture, spawned_sprite.texture);
-    assert_eq!(loaded_scene.view.view_proj, spawned_scene.view.view_proj);
+    assert_eq!(loaded_scene.sole_pass().view.view_proj, spawned_scene.sole_pass().view.view_proj);
 }
 
 #[test]

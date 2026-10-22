@@ -47,7 +47,7 @@ fn a_hidden_parent_hides_descendants_and_a_hidden_child_stays_hidden() {
 
     let scene = extract(&mut world, &assets);
     assert_eq!(scene.stats.sprites_visible, 1);
-    assert_eq!(scene.blended_sprites.instances.len(), 1);
+    assert_eq!(scene.sole_pass().blended_sprites.instances.len(), 1);
     assert_eq!(*world.component::<Visibility>(hidden).unwrap(), Visibility::Hidden);
     assert!(world.component::<Visibility>(shown).is_err(), "the shown child has no local visibility");
 }
@@ -155,10 +155,10 @@ fn meshes_tilemaps_and_lights_use_the_same_ancestor_rule() {
 
     let scene = extract(&mut world, &assets);
     assert_eq!(scene.stats.meshes_visible, 1);
-    assert_eq!(scene.meshes.len(), 1);
-    assert!(scene.cutout_sprites.instances.is_empty(), "the hidden tilemap contributes no tiles");
-    assert_eq!(scene.lights.len(), 1);
-    assert!(matches!(scene.lights[0].kind, LightKind::Point { .. }));
+    assert_eq!(scene.sole_pass().meshes.len(), 1);
+    assert!(scene.sole_pass().cutout_sprites.instances.is_empty(), "the hidden tilemap contributes no tiles");
+    assert_eq!(scene.sole_pass().lights.len(), 1);
+    assert!(matches!(scene.sole_pass().lights[0].kind, LightKind::Point { .. }));
 }
 
 #[test]

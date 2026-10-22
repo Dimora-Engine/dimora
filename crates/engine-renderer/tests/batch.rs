@@ -79,11 +79,15 @@ fn material_identity_groups_opaque_sprites_and_does_not_interleave_them() {
         world.spawn(sprite_at("white", material, Color::WHITE, i as f32 * 0.01));
     }
     let scene = extract(&mut world, &assets);
-    assert_eq!(scene.opaque_sprites.instances.len(), 4);
-    assert_eq!(scene.opaque_sprites.batches.len(), 2, "alternating materials become two groups, not four draws");
-    assert!(scene.opaque_sprites.batches.iter().all(|batch| batch.range.end - batch.range.start == 2));
-    let first = scene.opaque_sprites.batches[0].range.clone();
-    let ids: Vec<_> = scene.opaque_sprites.instances[first.start as usize..first.end as usize]
+    assert_eq!(scene.sole_pass().opaque_sprites.instances.len(), 4);
+    assert_eq!(
+        scene.sole_pass().opaque_sprites.batches.len(),
+        2,
+        "alternating materials become two groups, not four draws"
+    );
+    assert!(scene.sole_pass().opaque_sprites.batches.iter().all(|batch| batch.range.end - batch.range.start == 2));
+    let first = scene.sole_pass().opaque_sprites.batches[0].range.clone();
+    let ids: Vec<_> = scene.sole_pass().opaque_sprites.instances[first.start as usize..first.end as usize]
         .iter()
         .map(|instance| instance.material_id)
         .collect();
@@ -123,16 +127,21 @@ fn replacing_a_material_updates_every_sprite_and_keeps_one_batch() {
         world.spawn(sprite_at("white", material, Color::WHITE, 0.0));
     }
     let first = extract(&mut world, &assets);
-    let revision = first.opaque_sprites.instances[0].material_revision;
-    assert_eq!(first.opaque_sprites.batches.len(), 1);
-    assert!(first.opaque_sprites.instances.iter().all(|i| i.tint[0] == 1.0 && i.material_revision == revision));
+    let revision = first.sole_pass().opaque_sprites.instances[0].material_revision;
+    assert_eq!(first.sole_pass().opaque_sprites.batches.len(), 1);
+    assert!(first
+        .sole_pass()
+        .opaque_sprites
+        .instances
+        .iter()
+        .all(|i| i.tint[0] == 1.0 && i.material_revision == revision));
 
     assets.insert("paint", MaterialAsset::unlit(Color::rgb(0.0, 1.0, 0.0))).unwrap();
     let second = extract(&mut world, &assets);
-    assert!(second.opaque_sprites.instances[0].material_revision > revision);
-    assert_eq!(second.opaque_sprites.batches.len(), 1);
-    assert_eq!(second.opaque_sprites.batches[0].range, 0..6);
-    assert!(second.opaque_sprites.instances.iter().all(|i| i.tint[1] == 1.0 && i.tint[0] == 0.0));
+    assert!(second.sole_pass().opaque_sprites.instances[0].material_revision > revision);
+    assert_eq!(second.sole_pass().opaque_sprites.batches.len(), 1);
+    assert_eq!(second.sole_pass().opaque_sprites.batches[0].range, 0..6);
+    assert!(second.sole_pass().opaque_sprites.instances.iter().all(|i| i.tint[1] == 1.0 && i.tint[0] == 0.0));
 }
 
 #[test]
@@ -153,10 +162,15 @@ fn legacy_sprites_batch_without_a_fabricated_material() {
     ));
     world.spawn((Transform::from_xyz(0.0, 0.4, 0.0), Sprite::new("white").with_blend(SpriteBlend::Alpha)));
     let scene = extract(&mut world, &assets);
-    assert!(scene.cutout_sprites.instances.iter().all(|i| i.material_id.is_none() && i.material_revision == 0));
-    assert_eq!(scene.cutout_sprites.batches.len(), 2, "two legacy textures stay two draws");
-    assert_eq!(scene.blended_sprites.batches.len(), 1);
-    assert!(scene.blended_sprites.instances[0].material_id.is_none());
+    assert!(scene
+        .sole_pass()
+        .cutout_sprites
+        .instances
+        .iter()
+        .all(|i| i.material_id.is_none() && i.material_revision == 0));
+    assert_eq!(scene.sole_pass().cutout_sprites.batches.len(), 2, "two legacy textures stay two draws");
+    assert_eq!(scene.sole_pass().blended_sprites.batches.len(), 1);
+    assert!(scene.sole_pass().blended_sprites.instances[0].material_id.is_none());
 }
 
 #[test]
@@ -174,12 +188,15 @@ fn alpha_class_and_culling_choose_different_pipelines() {
     world.spawn(sprite_at("white", both, Color::WHITE, 0.2));
     world.spawn(sprite_at("white", mask, Color::WHITE, 0.3));
     let scene = extract(&mut world, &assets);
-    assert_eq!(scene.opaque_sprites.batches.len(), 2, "double_sided selects another opaque pipeline");
-    let pipelines: Vec<_> = scene.opaque_sprites.batches.iter().map(|batch| batch.pipeline).collect();
+    assert_eq!(scene.sole_pass().opaque_sprites.batches.len(), 2, "double_sided selects another opaque pipeline");
+    let pipelines: Vec<_> = scene.sole_pass().opaque_sprites.batches.iter().map(|batch| batch.pipeline).collect();
     assert!(pipelines.contains(&SpritePipelineKind::OpaqueCulled));
     assert!(pipelines.contains(&SpritePipelineKind::OpaqueDouble));
-    assert_eq!(scene.mask_sprites.batches.len(), 1);
-    assert_eq!(scene.mask_sprites.instances[0].shading, SpriteShading::Mask { cutoff: 0.3, double_sided: false });
+    assert_eq!(scene.sole_pass().mask_sprites.batches.len(), 1);
+    assert_eq!(
+        scene.sole_pass().mask_sprites.instances[0].shading,
+        SpriteShading::Mask { cutoff: 0.3, double_sided: false }
+    );
 }
 
 #[test]
@@ -197,14 +214,15 @@ fn per_instance_tint_and_cutoff_do_not_split_one_material() {
     world.spawn(sprite_at("white", mask, Color::rgb(0.0, 1.0, 0.0), 0.1));
     world.spawn(sprite_at("white", other, Color::WHITE, 0.2));
     let scene = extract(&mut world, &assets);
-    assert_eq!(scene.mask_sprites.batches.len(), 2, "a different cutoff is a different material");
+    assert_eq!(scene.sole_pass().mask_sprites.batches.len(), 2, "a different cutoff is a different material");
     let pair = scene
+        .sole_pass()
         .mask_sprites
         .batches
         .iter()
         .find(|batch| batch.range.end - batch.range.start == 2)
         .expect("the shared material is one run of two");
-    let paired = &scene.mask_sprites.instances[pair.range.start as usize..pair.range.end as usize];
+    let paired = &scene.sole_pass().mask_sprites.instances[pair.range.start as usize..pair.range.end as usize];
     assert_ne!(paired[0].tint, paired[1].tint);
     assert!(paired[0].shares_batch(&paired[1]));
     match paired[0].shading {
@@ -230,8 +248,11 @@ fn texture_identity_splits_a_batch_and_carries_the_sampler() {
     world.spawn(sprite_at("red", material, Color::WHITE, 0.0));
     world.spawn(sprite_at("blue", material, Color::WHITE, 0.0));
     let scene = extract(&mut world, &assets);
-    assert_eq!(scene.opaque_sprites.batches.len(), 2);
-    assert_ne!(scene.opaque_sprites.batches[0].texture, scene.opaque_sprites.batches[1].texture);
+    assert_eq!(scene.sole_pass().opaque_sprites.batches.len(), 2);
+    assert_ne!(
+        scene.sole_pass().opaque_sprites.batches[0].texture,
+        scene.sole_pass().opaque_sprites.batches[1].texture
+    );
 }
 
 #[test]
@@ -246,12 +267,12 @@ fn mesh_geometry_and_legacy_meshes_follow_the_same_run_rule() {
     world.spawn((Transform::from_xyz(0.5, 0.0, 0.0), Mesh::new("card").with_material_asset(material)));
     world.spawn((Transform::from_xyz(0.8, 0.0, 0.0), Mesh::new("card").with_material_asset(material)));
     let scene = extract(&mut world, &assets);
-    let grouped = runs(&scene.meshes);
+    let grouped = runs(&scene.sole_pass().meshes);
     assert_eq!(grouped.len(), 2, "two legacy boxes are one run; the cards are another");
-    assert!(scene.meshes[..2].iter().all(|mesh| mesh.material_id.is_none()));
-    assert_eq!(scene.meshes[0].mesh, scene.meshes[1].mesh);
-    assert!(scene.meshes[0].shares_batch(&scene.meshes[1]));
-    assert!(!scene.meshes[1].shares_batch(&scene.meshes[2]));
+    assert!(scene.sole_pass().meshes[..2].iter().all(|mesh| mesh.material_id.is_none()));
+    assert_eq!(scene.sole_pass().meshes[0].mesh, scene.sole_pass().meshes[1].mesh);
+    assert!(scene.sole_pass().meshes[0].shares_batch(&scene.sole_pass().meshes[1]));
+    assert!(!scene.sole_pass().meshes[1].shares_batch(&scene.sole_pass().meshes[2]));
     assert_eq!(grouped[1].end - grouped[1].start, 2);
 }
 
@@ -271,16 +292,26 @@ fn transparent_runs_merge_only_while_the_sorted_order_is_contiguous() {
     world.spawn(sprite_at("white", glass, Color::WHITE, 1.0));
     world.spawn(sprite_at("white", other, Color::WHITE, 0.5));
     let scene = extract(&mut world, &assets);
-    assert_eq!(scene.transparent.len(), 4, "two far sprites merge; the mesh and the other material split the rest");
-    match &scene.transparent[0] {
+    assert_eq!(
+        scene.sole_pass().transparent.len(),
+        4,
+        "two far sprites merge; the mesh and the other material split the rest"
+    );
+    match &scene.sole_pass().transparent[0] {
         TransparentBatch::Sprites(batch) => assert_eq!(batch.range, 0..2),
         other => panic!("expected the far sprite run, got {other:?}"),
     }
-    assert!(matches!(scene.transparent[1], TransparentBatch::Meshes { .. }));
-    assert!(matches!(scene.transparent[2], TransparentBatch::Sprites(_)));
-    assert!(matches!(scene.transparent[3], TransparentBatch::Sprites(_)));
-    assert_ne!(scene.blended_sprites.instances[2].material_id, scene.blended_sprites.instances[3].material_id);
-    assert_ne!(scene.blended_sprites.instances[0].tint, scene.blended_sprites.instances[1].tint);
+    assert!(matches!(scene.sole_pass().transparent[1], TransparentBatch::Meshes { .. }));
+    assert!(matches!(scene.sole_pass().transparent[2], TransparentBatch::Sprites(_)));
+    assert!(matches!(scene.sole_pass().transparent[3], TransparentBatch::Sprites(_)));
+    assert_ne!(
+        scene.sole_pass().blended_sprites.instances[2].material_id,
+        scene.sole_pass().blended_sprites.instances[3].material_id
+    );
+    assert_ne!(
+        scene.sole_pass().blended_sprites.instances[0].tint,
+        scene.sole_pass().blended_sprites.instances[1].tint
+    );
 }
 
 #[test]
@@ -311,8 +342,8 @@ fn a_transparent_sequence_is_not_regrouped_by_material() {
         Sprite::new("white").with_material(blue).with_size(Vec2::splat(0.3)),
     ));
     let scene = extract(&mut world, &assets);
-    assert_eq!(scene.transparent.len(), 4, "alternating materials stay in depth order");
-    let tints: Vec<_> = scene.blended_sprites.instances.iter().map(|i| i.tint[0]).collect();
+    assert_eq!(scene.sole_pass().transparent.len(), 4, "alternating materials stay in depth order");
+    let tints: Vec<_> = scene.sole_pass().blended_sprites.instances.iter().map(|i| i.tint[0]).collect();
     assert_eq!(tints, vec![1.0, 0.0, 1.0, 0.0]);
 }
 
@@ -333,10 +364,10 @@ fn equal_blend_keys_keep_extraction_order_and_one_batch() {
         RenderOrder { layer: 0, order: 0 },
     ));
     let scene = extract(&mut world, &assets);
-    assert_eq!(scene.blended_sprites.instances.len(), 2);
-    assert_eq!(scene.blended_sprites.batches.len(), 1);
-    assert_eq!(scene.blended_sprites.instances[0].tint[0], 0.2);
-    assert_eq!(scene.blended_sprites.instances[1].tint[0], 0.4);
+    assert_eq!(scene.sole_pass().blended_sprites.instances.len(), 2);
+    assert_eq!(scene.sole_pass().blended_sprites.batches.len(), 1);
+    assert_eq!(scene.sole_pass().blended_sprites.instances[0].tint[0], 0.2);
+    assert_eq!(scene.sole_pass().blended_sprites.instances[1].tint[0], 0.4);
 }
 
 #[test]
@@ -367,13 +398,16 @@ fn one_thousand_opaque_sprites_extract_as_one_batch() {
     }
     let scene = extract(&mut world, &assets);
     assert_eq!(scene.stats.sprites_visible, 1000);
-    assert_eq!(scene.opaque_sprites.instances.len(), 1000);
-    assert_eq!(scene.opaque_sprites.batches.len(), 1);
-    assert_eq!(scene.opaque_sprites.batches[0].range, 0..1000);
-    assert_eq!(scene.opaque_sprites.batches[0].texture, texture);
-    assert!(scene.opaque_sprites.instances.iter().all(|i| i.material_id == Some(material.id())));
-    assert_ne!(scene.opaque_sprites.instances[0].uv, scene.opaque_sprites.instances[1].uv);
-    assert_ne!(scene.opaque_sprites.instances[0].model, scene.opaque_sprites.instances[1].model);
+    assert_eq!(scene.sole_pass().opaque_sprites.instances.len(), 1000);
+    assert_eq!(scene.sole_pass().opaque_sprites.batches.len(), 1);
+    assert_eq!(scene.sole_pass().opaque_sprites.batches[0].range, 0..1000);
+    assert_eq!(scene.sole_pass().opaque_sprites.batches[0].texture, texture);
+    assert!(scene.sole_pass().opaque_sprites.instances.iter().all(|i| i.material_id == Some(material.id())));
+    assert_ne!(scene.sole_pass().opaque_sprites.instances[0].uv, scene.sole_pass().opaque_sprites.instances[1].uv);
+    assert_ne!(
+        scene.sole_pass().opaque_sprites.instances[0].model,
+        scene.sole_pass().opaque_sprites.instances[1].model
+    );
 }
 
 #[test]
@@ -400,8 +434,8 @@ fn projection_does_not_change_the_batch_key() {
             ));
         }
         let scene = extract(&mut world, &assets);
-        assert_eq!(scene.opaque_sprites.batches.len(), 1);
-        assert!(scene.transparent.is_empty());
-        assert_eq!(scene.opaque_sprites.instances.len(), 5);
+        assert_eq!(scene.sole_pass().opaque_sprites.batches.len(), 1);
+        assert!(scene.sole_pass().transparent.is_empty());
+        assert_eq!(scene.sole_pass().opaque_sprites.instances.len(), 5);
     }
 }

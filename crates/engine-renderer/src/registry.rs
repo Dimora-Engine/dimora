@@ -46,6 +46,7 @@ const CAMERA_FIELDS: &[FieldDesc] = &[
     FieldDesc::new("projection", "CameraProjection"),
     FieldDesc::new("viewport", "ViewportRect"),
     FieldDesc::new("clear_color", "Color"),
+    FieldDesc::new("clear", "CameraClear"),
     FieldDesc::new("active", "bool"),
     FieldDesc::new("order", "i32"),
 ];
@@ -143,6 +144,7 @@ fn camera_values(camera: &Camera) -> Vec<String> {
         format!("{:?}", camera.projection),
         format!("{:?}", camera.viewport),
         color(camera.clear_color),
+        format!("{:?}", camera.clear),
         camera.active.to_string(),
         camera.order.to_string(),
     ]

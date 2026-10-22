@@ -1,12 +1,14 @@
 use std::collections::{HashMap, HashSet};
 
-use bytemuck::Pod;
+use bytemuck::{Pod, Zeroable};
 use engine_assets::{
     validate_texture_dimensions, AddressMode, AssetHandle, AssetId, AssetManager, BaseLevelUpload, ColorSpace,
     MeshData, MipFilter, SamplerDesc, TexelRect, Texture, TextureDimensionLimits, TextureEdit, TextureFilter,
     TexturePixelEdits,
 };
-use engine_renderer::{MeshDraw, MeshInstance, RenderScene, SpriteLayer, SpritePipelineKind, TransparentBatch};
+use engine_renderer::{
+    CameraClear, CameraPass, MeshDraw, MeshInstance, RenderScene, SpriteLayer, SpritePipelineKind, TransparentBatch,
+};
 use wgpu::util::DeviceExt;
 
 use crate::mip::{self, MipGenerator};
@@ -28,14 +30,33 @@ const SHADER_COMMON: &str = include_str!("shaders/common.wgsl");
 /// Per-frame counters, handy for HUDs and for asserting batching in tests.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct FrameStats {
+    /// Every `draw` and `draw_indexed`, including viewport color clears.
     pub draw_calls: u32,
+    /// Scene draws only. A viewport clear is not one of these.
+    pub world_draw_calls: u32,
+    /// Viewport color fills for later cameras. The first camera uses the attachment clear and
+    /// does not add one.
+    pub clear_draw_calls: u32,
+    /// Active camera passes submitted this frame.
+    pub camera_passes: u32,
     pub sprite_instances: u32,
     pub mesh_instances: u32,
     /// Instances passed to the draw that submitted the most instances. This is the range given to
-    /// `draw` or `draw_indexed`, not a count of CPU batch objects.
+    /// `draw` or `draw_indexed`, not a count of CPU batch objects. Viewport clears are not included.
     pub largest_draw_instances: u32,
-    /// Sum of the instance ranges passed to draw calls. An indexed mesh draw counts instances, not
-    /// indices. A missing GPU mesh that is skipped is not included.
+    /// Sum of the instance ranges passed to world draw calls. An indexed mesh draw counts
+    /// instances, not indices. A missing GPU mesh that is skipped is not included. A sprite drawn
+    /// by two cameras counts twice. Viewport clears are not included.
+    pub submitted_instances: u32,
+}
+
+/// GPU submission counts for one camera pass. Summed into [`FrameStats`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PassFrameStats {
+    pub world_draw_calls: u32,
+    pub clear_draw_calls: u32,
+    pub sprite_instances: u32,
+    pub mesh_instances: u32,
     pub submitted_instances: u32,
 }
 
@@ -214,6 +235,11 @@ pub struct SceneRenderer {
     format: wgpu::TextureFormat,
     globals: wgpu::Buffer,
     globals_bind_group: wgpu::BindGroup,
+    /// Color-only viewport fill. Later cameras with [`CameraClear::Color`] draw this inside the
+    /// scissor. It does not write depth and does not blend.
+    clear_pipeline: wgpu::RenderPipeline,
+    clear_bind_group: wgpu::BindGroup,
+    clear_uniform: wgpu::Buffer,
     texture_layout: wgpu::BindGroupLayout,
     /// Shared samplers keyed by the effective GPU descriptor, not by entity or asset.
     samplers: HashMap<SamplerKey, wgpu::Sampler>,
@@ -254,6 +280,7 @@ pub struct SceneRenderer {
     blend_mesh_instances: InstanceBuffer,
     depth: Option<(wgpu::TextureView, (u32, u32))>,
     stats: FrameStats,
+    pass_stats: Vec<PassFrameStats>,
     /// Number of `render` calls so far; the clock for idle eviction.
     frame: u64,
     cache_max_idle_frames: u32,
@@ -429,6 +456,68 @@ impl SceneRenderer {
         let mesh_blend_double =
             mesh_pipeline("mesh blend double", "fs_blend", false, Some(wgpu::BlendState::ALPHA_BLENDING), None);
 
+        let clear_uniform = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("viewport clear"),
+            size: core::mem::size_of::<ClearUniform>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let clear_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("viewport clear layout"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+        let clear_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("viewport clear"),
+            layout: &clear_layout,
+            entries: &[wgpu::BindGroupEntry { binding: 0, resource: clear_uniform.as_entire_binding() }],
+        });
+        let clear_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("viewport clear"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/viewport_clear.wgsl").into()),
+        });
+        let clear_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("viewport clear"),
+            layout: Some(&device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("viewport clear layout"),
+                bind_group_layouts: &[Some(&clear_layout)],
+                immediate_size: 0,
+            })),
+            vertex: wgpu::VertexState {
+                module: &clear_shader,
+                entry_point: Some("vs_clear"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &clear_shader,
+                entry_point: Some("fs_clear"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState { format, blend: None, write_mask: wgpu::ColorWrites::ALL })],
+            }),
+            primitive: wgpu::PrimitiveState { cull_mode: None, ..Default::default() },
+            // The pass has a depth attachment. This draw must not change it: the attachment clear
+            // already set 1.0, and a color fill is not a depth writer.
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: Some(false),
+                depth_compare: Some(wgpu::CompareFunction::Always),
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+
         let downlevel = gpu.adapter.get_downlevel_capabilities().flags;
         let anisotropic_filtering = downlevel.contains(wgpu::DownlevelFlags::ANISOTROPIC_FILTERING);
         let npot_mipmaps = downlevel.contains(wgpu::DownlevelFlags::NON_POWER_OF_TWO_MIPMAPPED_TEXTURES);
@@ -475,6 +564,9 @@ impl SceneRenderer {
             format,
             globals,
             globals_bind_group,
+            clear_pipeline,
+            clear_bind_group,
+            clear_uniform,
             white,
             missing,
             texture_layout,
@@ -510,6 +602,7 @@ impl SceneRenderer {
             blend_mesh_instances: InstanceBuffer::new(device, "blended mesh instances"),
             depth: None,
             stats: FrameStats::default(),
+            pass_stats: Vec::new(),
             frame: 0,
             cache_max_idle_frames: DEFAULT_CACHE_MAX_IDLE_FRAMES,
             dimension_limit_override: None,
@@ -524,6 +617,11 @@ impl SceneRenderer {
     /// Counters from the most recent [`SceneRenderer::render`].
     pub fn stats(&self) -> FrameStats {
         self.stats
+    }
+
+    /// Per-camera counters from the most recent [`SceneRenderer::render`], in draw order.
+    pub fn pass_stats(&self) -> &[PassFrameStats] {
+        &self.pass_stats
     }
 
     /// How many textures and meshes are cached on the GPU right now.
@@ -603,6 +701,19 @@ impl SceneRenderer {
     }
 
     /// Records and submits one frame into `target`.
+    ///
+    /// Each camera pass is uploaded and submitted before the next pass writes the shared globals
+    /// or instance buffers. `Queue::write_buffer` copies into a staging belt that is applied on
+    /// the next submit, so two writes to the same buffer before one submit would leave every draw
+    /// in that submit reading the later camera. Submitting between cameras keeps camera A's
+    /// matrices and instances alive until those draws have been recorded against that copy.
+    ///
+    /// The first pass clears the whole color attachment to that camera's clear color, whether the
+    /// policy is [`CameraClear::Color`] or [`CameraClear::Load`]. A surface has no defined
+    /// previous image. Later `Color` cameras fill only their viewport. Later `Load` cameras do
+    /// not. Every pass clears depth to 1.0 and discards it, so one camera's depth does not test
+    /// against the next. One full-surface camera is still a single pass with no viewport-clear
+    /// draw.
     pub fn render(
         &mut self,
         gpu: &GpuContext,
@@ -611,78 +722,109 @@ impl SceneRenderer {
         target: &wgpu::TextureView,
         size: (u32, u32),
     ) {
-        gpu.queue.write_buffer(&self.globals, 0, bytemuck::bytes_of(&GpuGlobals::from_scene(scene)));
-
         self.frame += 1;
-        for layer in [&scene.opaque_sprites, &scene.mask_sprites, &scene.cutout_sprites, &scene.blended_sprites] {
-            for batch in &layer.batches {
-                self.ensure_texture(gpu, assets, batch.texture);
+        for camera in &scene.passes {
+            for layer in [&camera.opaque_sprites, &camera.mask_sprites, &camera.cutout_sprites, &camera.blended_sprites]
+            {
+                for batch in &layer.batches {
+                    self.ensure_texture(gpu, assets, batch.texture);
+                }
             }
-        }
-        for m in scene.meshes.iter().chain(scene.blended_meshes.iter()) {
-            self.ensure_mesh(gpu, assets, m.mesh);
-            if let Some(t) = m.texture {
-                self.ensure_texture(gpu, assets, t);
+            for mesh in camera.meshes.iter().chain(camera.blended_meshes.iter()) {
+                self.ensure_mesh(gpu, assets, mesh.mesh);
+                if let Some(texture) = mesh.texture {
+                    self.ensure_texture(gpu, assets, texture);
+                }
             }
         }
         self.evict_unused(assets);
+        self.ensure_depth(gpu, size);
 
+        let mut stats = FrameStats { camera_passes: scene.passes.len() as u32, ..FrameStats::default() };
+        let mut pass_stats = Vec::with_capacity(scene.passes.len());
+        for (index, camera) in scene.passes.iter().enumerate() {
+            let mut one = self.submit_camera(gpu, scene, camera, index == 0, target, &mut stats);
+            one.sprite_instances = (camera.opaque_sprites.instances.len()
+                + camera.mask_sprites.instances.len()
+                + camera.cutout_sprites.instances.len()
+                + camera.blended_sprites.instances.len()) as u32;
+            one.mesh_instances = (camera.meshes.len() + camera.blended_meshes.len()) as u32;
+            stats.sprite_instances += one.sprite_instances;
+            stats.mesh_instances += one.mesh_instances;
+            pass_stats.push(one);
+        }
+        self.stats = stats;
+        self.pass_stats = pass_stats;
+    }
+
+    /// Uploads this camera's GPU data, records its pass, and submits before the caller may
+    /// overwrite those buffers.
+    fn submit_camera(
+        &mut self,
+        gpu: &GpuContext,
+        scene: &RenderScene,
+        camera: &CameraPass,
+        first: bool,
+        target: &wgpu::TextureView,
+        stats: &mut FrameStats,
+    ) -> PassFrameStats {
         self.resource_stats.instance_buffer_grows +=
-            u64::from(self.opaque_instances.upload(gpu, &sprite_instances(&scene.opaque_sprites)));
+            u64::from(self.opaque_instances.upload(gpu, &sprite_instances(&camera.opaque_sprites)));
         self.resource_stats.instance_buffer_grows +=
-            u64::from(self.mask_instances.upload(gpu, &sprite_instances(&scene.mask_sprites)));
+            u64::from(self.mask_instances.upload(gpu, &sprite_instances(&camera.mask_sprites)));
         self.resource_stats.instance_buffer_grows +=
-            u64::from(self.cutout_instances.upload(gpu, &sprite_instances(&scene.cutout_sprites)));
+            u64::from(self.cutout_instances.upload(gpu, &sprite_instances(&camera.cutout_sprites)));
         self.resource_stats.instance_buffer_grows +=
-            u64::from(self.blend_instances.upload(gpu, &sprite_instances(&scene.blended_sprites)));
-        let mesh_data: Vec<GpuMeshInstance> = scene
+            u64::from(self.blend_instances.upload(gpu, &sprite_instances(&camera.blended_sprites)));
+        let mesh_data: Vec<GpuMeshInstance> = camera
             .meshes
             .iter()
-            .map(|m| GpuMeshInstance {
-                model: m.model.to_cols_array(),
-                color: m.color,
-                flags: [m.lit as u32, m.cutoff.to_bits(), 0, 0],
+            .map(|mesh| GpuMeshInstance {
+                model: mesh.model.to_cols_array(),
+                color: mesh.color,
+                flags: [mesh.lit as u32, mesh.cutoff.to_bits(), 0, 0],
             })
             .collect();
         self.resource_stats.instance_buffer_grows += u64::from(self.mesh_instances.upload(gpu, &mesh_data));
-        let blend_mesh_data: Vec<GpuMeshInstance> = scene
+        let blend_mesh_data: Vec<GpuMeshInstance> = camera
             .blended_meshes
             .iter()
-            .map(|m| GpuMeshInstance {
-                model: m.model.to_cols_array(),
-                color: m.color,
-                flags: [m.lit as u32, m.cutoff.to_bits(), 0, 0],
+            .map(|mesh| GpuMeshInstance {
+                model: mesh.model.to_cols_array(),
+                color: mesh.color,
+                flags: [mesh.lit as u32, mesh.cutoff.to_bits(), 0, 0],
             })
             .collect();
         self.resource_stats.instance_buffer_grows += u64::from(self.blend_mesh_instances.upload(gpu, &blend_mesh_data));
-        self.ensure_depth(gpu, size);
+        let globals = GpuGlobals::from_camera(&camera.view, scene.ambient, scene.fog, &camera.lights);
+        gpu.queue.write_buffer(&self.globals, 0, bytemuck::bytes_of(&globals));
 
-        let sprite_count = scene.opaque_sprites.instances.len()
-            + scene.mask_sprites.instances.len()
-            + scene.cutout_sprites.instances.len()
-            + scene.blended_sprites.instances.len();
-        let mut stats = FrameStats {
-            sprite_instances: sprite_count as u32,
-            mesh_instances: (scene.meshes.len() + scene.blended_meshes.len()) as u32,
-            draw_calls: 0,
-            largest_draw_instances: 0,
-            submitted_instances: 0,
-        };
+        // A later Color camera paints only its rectangle. The attachment clear is the whole
+        // target, so it is used once, on the first pass. Alpha matches that clear: 1.
+        let fill_viewport = !first && camera.clear == CameraClear::Color;
+        if fill_viewport {
+            let uniform =
+                ClearUniform { color: [camera.clear_color.r, camera.clear_color.g, camera.clear_color.b, 1.0] };
+            gpu.queue.write_buffer(&self.clear_uniform, 0, bytemuck::bytes_of(&uniform));
+        }
 
-        let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("frame") });
+        let mut one = PassFrameStats::default();
+        let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("camera") });
         {
+            let size = self.depth.as_ref().map(|depth| depth.1).expect("depth created above");
             let depth_view = &self.depth.as_ref().expect("depth created above").0;
-            let c = scene.clear_color;
+            let color_load = if first {
+                wgpu::LoadOp::Clear(attachment_clear(camera.clear_color.r, camera.clear_color.g, camera.clear_color.b))
+            } else {
+                wgpu::LoadOp::Load
+            };
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("scene"),
+                label: Some("camera"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: target,
                     depth_slice: None,
                     resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color { r: c.r as f64, g: c.g as f64, b: c.b as f64, a: 1.0 }),
-                        store: wgpu::StoreOp::Store,
-                    },
+                    ops: wgpu::Operations { load: color_load, store: wgpu::StoreOp::Store },
                 })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                     view: depth_view,
@@ -693,19 +835,22 @@ impl SceneRenderer {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            pass.set_bind_group(0, &self.globals_bind_group, &[]);
-            let [vx, vy, vw, vh] = scene.viewport_px;
-            let (x, y) = (vx.min(size.0 as f32 - 1.0), vy.min(size.1 as f32 - 1.0));
-            let (w, h) = (vw.min(size.0 as f32 - x).max(1.0), vh.min(size.1 as f32 - y).max(1.0));
+            let (x, y, w, h) = clamp_viewport(camera.viewport_px, size);
             pass.set_viewport(x, y, w, h, 0.0, 1.0);
             pass.set_scissor_rect(x as u32, y as u32, w as u32, h as u32);
+            if fill_viewport {
+                pass.set_pipeline(&self.clear_pipeline);
+                pass.set_bind_group(0, &self.clear_bind_group, &[]);
+                pass.draw(0..3, 0..1);
+                record_clear(stats, &mut one);
+            }
 
-            // Depth writers first. The transparent walk below is the only blended submission.
+            pass.set_bind_group(0, &self.globals_bind_group, &[]);
             pass.set_vertex_buffer(1, self.mesh_instances.buffer.slice(..));
             let mut i = 0;
-            while i < scene.meshes.len() {
-                let end = MeshInstance::run_end(&scene.meshes, i);
-                let draw = scene.meshes[i];
+            while i < camera.meshes.len() {
+                let end = MeshInstance::run_end(&camera.meshes, i);
+                let draw = camera.meshes[i];
                 if let Some(mesh) = self.meshes.get(&draw.mesh.id()) {
                     pass.set_pipeline(self.mesh_pipeline(draw.draw));
                     let texture = draw.texture.and_then(|t| self.textures.get(&t.id())).unwrap_or(&self.white);
@@ -713,18 +858,17 @@ impl SceneRenderer {
                     pass.set_vertex_buffer(0, mesh.vertices.slice(..));
                     pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
                     pass.draw_indexed(0..mesh.index_count, 0, i as u32..end as u32);
-                    record_draw(&mut stats, (end - i) as u32);
+                    record_world(stats, &mut one, (end - i) as u32);
                 }
                 i = end;
             }
-
-            self.draw_sprites(&mut pass, &scene.opaque_sprites, &self.opaque_instances, &mut stats);
-            self.draw_sprites(&mut pass, &scene.mask_sprites, &self.mask_instances, &mut stats);
-            self.draw_sprites(&mut pass, &scene.cutout_sprites, &self.cutout_instances, &mut stats);
-            self.draw_transparent(&mut pass, scene, &mut stats);
+            self.draw_sprites(&mut pass, &camera.opaque_sprites, &self.opaque_instances, stats, &mut one);
+            self.draw_sprites(&mut pass, &camera.mask_sprites, &self.mask_instances, stats, &mut one);
+            self.draw_sprites(&mut pass, &camera.cutout_sprites, &self.cutout_instances, stats, &mut one);
+            self.draw_transparent(&mut pass, camera, stats, &mut one);
         }
         gpu.queue.submit([encoder.finish()]);
-        self.stats = stats;
+        one
     }
 
     fn mesh_pipeline(&self, draw: MeshDraw) -> &wgpu::RenderPipeline {
@@ -740,8 +884,14 @@ impl SceneRenderer {
 
     /// Walks the combined blend sequence. Each item rebinds the pipeline and buffers it needs.
     /// The walk does not sort again, and it does not draw every sprite before every mesh.
-    fn draw_transparent<'a>(&'a self, pass: &mut wgpu::RenderPass<'a>, scene: &'a RenderScene, stats: &mut FrameStats) {
-        for batch in &scene.transparent {
+    fn draw_transparent<'a>(
+        &'a self,
+        pass: &mut wgpu::RenderPass<'a>,
+        camera: &'a CameraPass,
+        stats: &mut FrameStats,
+        one: &mut PassFrameStats,
+    ) {
+        for batch in &camera.transparent {
             match batch {
                 TransparentBatch::Sprites(batch) => {
                     pass.set_pipeline(self.sprite_pipeline(batch.pipeline));
@@ -749,7 +899,7 @@ impl SceneRenderer {
                     pass.set_bind_group(1, &texture.bind_group, &[]);
                     pass.set_vertex_buffer(0, self.blend_instances.buffer.slice(..));
                     pass.draw(0..6, batch.range.clone());
-                    record_draw(stats, batch.range.end - batch.range.start);
+                    record_world(stats, one, batch.range.end - batch.range.start);
                 }
                 TransparentBatch::Meshes { mesh, texture, draw, range } => {
                     let Some(gpu_mesh) = self.meshes.get(&mesh.id()) else { continue };
@@ -760,7 +910,7 @@ impl SceneRenderer {
                     pass.set_vertex_buffer(1, self.blend_mesh_instances.buffer.slice(..));
                     pass.set_index_buffer(gpu_mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
                     pass.draw_indexed(0..gpu_mesh.index_count, 0, range.clone());
-                    record_draw(stats, range.end - range.start);
+                    record_world(stats, one, range.end - range.start);
                 }
             }
         }
@@ -784,6 +934,7 @@ impl SceneRenderer {
         layer: &SpriteLayer,
         instances: &InstanceBuffer,
         stats: &mut FrameStats,
+        one: &mut PassFrameStats,
     ) {
         if layer.batches.is_empty() {
             return;
@@ -794,7 +945,7 @@ impl SceneRenderer {
             let texture = self.textures.get(&batch.texture.id()).unwrap_or(&self.missing);
             pass.set_bind_group(1, &texture.bind_group, &[]);
             pass.draw(0..6, batch.range.clone());
-            record_draw(stats, batch.range.end - batch.range.start);
+            record_world(stats, one, batch.range.end - batch.range.start);
         }
     }
 
@@ -1184,12 +1335,38 @@ impl SceneRenderer {
     }
 }
 
-fn record_draw(stats: &mut FrameStats, instances: u32) {
+fn record_world(stats: &mut FrameStats, pass: &mut PassFrameStats, instances: u32) {
     stats.draw_calls += 1;
+    stats.world_draw_calls += 1;
     stats.submitted_instances += instances;
+    pass.world_draw_calls += 1;
+    pass.submitted_instances += instances;
     if instances > stats.largest_draw_instances {
         stats.largest_draw_instances = instances;
     }
+}
+
+fn record_clear(stats: &mut FrameStats, pass: &mut PassFrameStats) {
+    stats.draw_calls += 1;
+    stats.clear_draw_calls += 1;
+    pass.clear_draw_calls += 1;
+}
+
+fn attachment_clear(r: f32, g: f32, b: f32) -> wgpu::Color {
+    wgpu::Color { r: r as f64, g: g as f64, b: b as f64, a: 1.0 }
+}
+
+fn clamp_viewport(viewport_px: [f32; 4], size: (u32, u32)) -> (f32, f32, f32, f32) {
+    let [vx, vy, vw, vh] = viewport_px;
+    let (x, y) = (vx.min(size.0 as f32 - 1.0), vy.min(size.1 as f32 - 1.0));
+    let (w, h) = (vw.min(size.0 as f32 - x).max(1.0), vh.min(size.1 as f32 - y).max(1.0));
+    (x, y, w, h)
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct ClearUniform {
+    color: [f32; 4],
 }
 
 fn shader(device: &wgpu::Device, label: &str, body: &str) -> wgpu::ShaderModule {

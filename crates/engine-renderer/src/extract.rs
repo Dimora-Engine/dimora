@@ -5,7 +5,7 @@ use engine_core::Color;
 use engine_math::{Mat3, Mat4, Quat, Rect, Vec2, Vec3};
 use engine_world::{Entity, GlobalTransform, Parent, Visibility, World};
 
-use crate::camera::{Camera, CameraView};
+use crate::camera::{Camera, CameraClear, CameraView};
 use crate::components::{
     AmbientLight, Fog, Light, LightKind, Mesh, RenderOrder, Sprite, SpriteBlend, SpriteOrientation, TileMap,
 };
@@ -14,67 +14,317 @@ use crate::interpolate::{render_poses, RenderPoses};
 use crate::missing::{report_absent_texture, resolve, MissingAssetWarnings};
 use crate::scene::*;
 
-/// Snapshots the world into a [`RenderScene`] for the active camera. `target_size` is the render
-/// target in pixels; the camera's own viewport rectangle is resolved against it.
+/// Snapshots the world into a [`RenderScene`] for every active camera. `target_size` is the
+/// render target in pixels; each camera's viewport rectangle is resolved against it.
 ///
-/// Per frame, in order: pick the camera, gather lights, then for every visible renderable resolve
-/// assets, build its world matrix, frustum-cull, and finally sort and batch. The world is only
-/// read; nothing here touches a GPU. Returns `None` if there is no active camera.
+/// Active cameras are sorted by ascending `(Camera.order, entity id)`. Each one is culled,
+/// oriented, and transparency-sorted on its own. Materials and missing-asset warnings are
+/// resolved once for the frame. The world is only read; nothing here touches a GPU. Returns
+/// `None` when no camera is active.
 ///
 /// `transforms` must be up to date: call `engine_world::propagate_transforms` first.
 ///
 /// An entity with [`engine_world::Interpolate`] and a stored previous local is drawn from a
 /// render matrix blended toward its current local. That blend is not written to `Transform` or
-/// `GlobalTransform`. Sprites, meshes, tilemaps, lights, and the active camera share it. With no
-/// stored previous local anywhere, every matrix is that entity's `GlobalTransform`.
+/// `GlobalTransform`. Sprites, meshes, tilemaps, lights, and cameras share it. With no stored
+/// previous local anywhere, every matrix is that entity's `GlobalTransform`.
 ///
 /// A sprite, mesh, tilemap, or light is omitted when it or any ancestor has
 /// [`Visibility::Hidden`]. Absence of `Visibility` means visible. The components are only read.
-/// [`Camera::active`] still decides which camera renders; `Visibility` does not.
+/// [`Camera::active`] decides which cameras render; `Visibility` does not.
 pub fn extract_scene(world: &World, assets: &AssetManager, target_size: Vec2) -> Option<RenderScene> {
     let hidden = AncestorVisibility::read(world);
     let poses = render_poses(world);
-    let (camera, view) = active_camera(world, target_size, &poses)?;
-    let frustum = Frustum::from_view_proj(&view.view_proj);
-    let mut stats = ExtractStats::default();
+    let cameras = ordered_cameras(world, target_size, &poses);
+    if cameras.is_empty() {
+        return None;
+    }
+
+    let mut shared = ExtractStats::default();
+    let mut watch = world.try_resource::<MissingAssetWarnings>().is_some_and(|warnings| !warnings.is_empty());
+    let sprites = prepare_sprites(world, assets, &poses, &hidden, &mut watch, &mut shared);
+    let tiles = prepare_tiles(world, assets, &poses, &hidden, &mut watch, &mut shared);
+    let meshes = prepare_meshes(world, assets, &poses, &hidden, &mut watch, &mut shared);
+    let lights = prepare_lights(world, &poses, &hidden);
 
     let ambient = world.try_resource::<AmbientLight>().map_or(AmbientLight::default(), |a| *a);
     let ambient = [ambient.color.r, ambient.color.g, ambient.color.b].map(|c| c * ambient.intensity);
     let fog = world.try_resource::<Fog>().map_or(Fog::default(), |f| *f);
-    let lights = extract_lights(world, &view, &poses, &hidden);
-    stats.lights = lights.len() as u32;
+    let fog = [fog.color.r, fog.color.g, fog.color.b, fog.density];
 
-    let mut cutout: Vec<SpriteInstance> = Vec::new();
-    let mut opaque: Vec<SpriteInstance> = Vec::new();
-    let mut mask: Vec<SpriteInstance> = Vec::new();
-    // Sprites are visited before meshes, so this counter is the cross-type tie-break. Equal
-    // sprite keys keep extraction order. A sprite and a mesh that tie draw the sprite first.
-    let mut sequence = 0u32;
-    let mut blended: Vec<BlendItem> = Vec::new();
-    let mut watch = world.try_resource::<MissingAssetWarnings>().is_some_and(|warnings| !warnings.is_empty());
+    let passes: Vec<CameraPass> =
+        cameras.iter().map(|camera| build_pass(world, assets, camera, &sprites, &tiles, &meshes, &lights)).collect();
+    let mut stats = ExtractStats { missing_assets: shared.missing_assets, ..ExtractStats::default() };
+    for pass in &passes {
+        stats.sprites_visible += pass.stats.sprites_visible;
+        stats.sprites_culled += pass.stats.sprites_culled;
+        stats.meshes_visible += pass.stats.meshes_visible;
+        stats.meshes_culled += pass.stats.meshes_culled;
+        stats.lights += pass.stats.lights;
+    }
+    Some(RenderScene { passes, ambient, fog, stats })
+}
 
+/// One active camera in draw order. Produced by [`active_surface_cameras`] and stored, by value,
+/// on each [`CameraPass`]. M6-2B renders every one of these to the surface.
+#[derive(Clone, Copy, Debug)]
+pub struct OrderedCamera {
+    pub camera_id: u32,
+    pub order: i32,
+    pub clear: CameraClear,
+    pub clear_color: Color,
+    pub view: CameraView,
+}
+
+/// The topmost surface camera under a window pixel, plus that pixel in viewport-local space.
+///
+/// This chooses a camera. It does not ask which object is visible at the pixel.
+#[derive(Clone, Copy, Debug)]
+pub struct SurfaceHit {
+    pub camera_id: u32,
+    pub order: i32,
+    pub view: CameraView,
+    /// `window_pixel - viewport_origin`, ready for [`CameraView::ray_from_pixels`].
+    pub viewport_pixel: Vec2,
+}
+
+/// Active cameras in draw order: ascending [`Camera::order`], then ascending entity id.
+///
+/// An inactive camera is absent. `Visibility` is not consulted. Every camera in M6-2B targets
+/// the surface. The same function feeds extraction, so tests do not keep a second sort.
+pub fn active_surface_cameras(world: &World, target_size: Vec2) -> Vec<OrderedCamera> {
+    ordered_cameras(world, target_size, &render_poses(world))
+}
+
+/// The last drawn active camera whose viewport contains `window_pixel`.
+///
+/// Overlap uses that later camera. A pixel in no viewport returns `None`. The returned
+/// [`SurfaceHit::viewport_pixel`] is viewport-local.
+pub fn top_surface_camera(world: &World, window_pixel: Vec2, target_size: Vec2) -> Option<SurfaceHit> {
+    active_surface_cameras(world, target_size)
+        .into_iter()
+        .rfind(|camera| camera.view.contains_window_pixel(window_pixel))
+        .map(|camera| SurfaceHit {
+            camera_id: camera.camera_id,
+            order: camera.order,
+            view: camera.view,
+            viewport_pixel: camera.view.window_to_viewport(window_pixel),
+        })
+}
+
+/// The view of one camera entity, whether or not it is the topmost or even active.
+///
+/// `None` when no camera entity has this id. Callers that already know which camera they want
+/// use this, then [`CameraView::window_to_viewport`] and [`CameraView::ray_from_pixels`].
+pub fn camera_view_of(world: &World, camera_id: u32, target_size: Vec2) -> Option<CameraView> {
+    let poses = render_poses(world);
+    world.query::<(&Camera, &GlobalTransform)>().iter().find(|(entity, _)| entity.id() == camera_id).map(
+        |(entity, (camera, global))| {
+            let placed = GlobalTransform { matrix: poses.matrix(entity, global) };
+            CameraView::new(camera, &placed, target_size)
+        },
+    )
+}
+
+fn ordered_cameras(world: &World, target_size: Vec2, poses: &RenderPoses) -> Vec<OrderedCamera> {
+    let mut cameras = Vec::new();
+    for (entity, (camera, global)) in world.query::<(&Camera, &GlobalTransform)>().iter() {
+        if !camera.active {
+            continue;
+        }
+        let placed = GlobalTransform { matrix: poses.matrix(entity, global) };
+        cameras.push(OrderedCamera {
+            camera_id: entity.id(),
+            order: camera.order,
+            clear: camera.clear,
+            clear_color: camera.clear_color,
+            view: CameraView::new(camera, &placed, target_size),
+        });
+    }
+    cameras.sort_by_key(|camera| (camera.order, camera.camera_id));
+    cameras
+}
+
+struct PreparedSprite {
+    matrix: Mat4,
+    orientation: SpriteOrientation,
+    size: Vec2,
+    anchor: Vec2,
+    uv: [f32; 4],
+    appearance: SpriteAppearance,
+    order: RenderOrder,
+}
+
+struct PreparedMesh {
+    instance: MeshInstance,
+    world_center: Vec3,
+    world_radius: f32,
+    order: RenderOrder,
+}
+
+struct PreparedTile {
+    entity: Entity,
+    matrix: Mat4,
+    texture: AssetHandle<Texture>,
+}
+
+fn prepare_sprites(
+    world: &World,
+    assets: &AssetManager,
+    poses: &RenderPoses,
+    hidden: &AncestorVisibility,
+    watch: &mut bool,
+    stats: &mut ExtractStats,
+) -> Vec<PreparedSprite> {
+    let mut prepared = Vec::new();
     for (entity, (sprite, global, order)) in world.query::<(&Sprite, &GlobalTransform, Option<&RenderOrder>)>().iter() {
         if hidden.hides(entity) {
             continue;
         }
-        let Some(asset) = resolve(world, assets, sprite.asset, "sprite", &mut watch, &mut stats) else {
+        let Some(asset) = resolve(world, assets, sprite.asset, "sprite", watch, stats) else {
             continue;
         };
-        let Some(appearance) = sprite_appearance(world, assets, sprite, asset, &mut watch, &mut stats) else {
+        let Some(appearance) = sprite_appearance(world, assets, sprite, asset, watch, stats) else {
             continue;
         };
-        let size = sprite.size.unwrap_or_else(|| asset.world_size());
-        let anchor = sprite.anchor.unwrap_or(asset.pivot);
-        let placement = sprite_placement(&poses.matrix(entity, global), sprite.orientation, &view);
-        let model = quad_matrix(&placement, size, anchor);
+        prepared.push(PreparedSprite {
+            matrix: poses.matrix(entity, global),
+            orientation: sprite.orientation,
+            size: sprite.size.unwrap_or_else(|| asset.world_size()),
+            anchor: sprite.anchor.unwrap_or(asset.pivot),
+            uv: flipped_uv(sub_region(asset.uv, sprite.region), sprite.flip_x, sprite.flip_y),
+            appearance,
+            order: order.copied().unwrap_or_default(),
+        });
+    }
+    prepared
+}
+
+fn prepare_tiles(
+    world: &World,
+    assets: &AssetManager,
+    poses: &RenderPoses,
+    hidden: &AncestorVisibility,
+    watch: &mut bool,
+    stats: &mut ExtractStats,
+) -> Vec<PreparedTile> {
+    let mut prepared = Vec::new();
+    for (entity, (map, global)) in world.query::<(&TileMap, &GlobalTransform)>().iter() {
+        if hidden.hides(entity) {
+            continue;
+        }
+        let Some(_) = resolve(world, assets, map.texture, "tilemap", watch, stats) else {
+            continue;
+        };
+        prepared.push(PreparedTile { entity, matrix: poses.matrix(entity, global), texture: map.texture });
+    }
+    prepared
+}
+
+fn prepare_meshes(
+    world: &World,
+    assets: &AssetManager,
+    poses: &RenderPoses,
+    hidden: &AncestorVisibility,
+    watch: &mut bool,
+    stats: &mut ExtractStats,
+) -> Vec<PreparedMesh> {
+    let mut prepared = Vec::new();
+    for (entity, (mesh, global, order)) in world.query::<(&Mesh, &GlobalTransform, Option<&RenderOrder>)>().iter() {
+        if hidden.hides(entity) {
+            continue;
+        }
+        let Some(data) = resolve(world, assets, mesh.asset, "mesh", watch, stats) else {
+            continue;
+        };
+        let Some(surface) = mesh_surface(world, assets, mesh, watch, stats) else {
+            continue;
+        };
+        let (center, radius) = data.bounding_sphere();
+        let model = poses.matrix(entity, global);
+        let max_scale =
+            model.cols[0].xyz().length().max(model.cols[1].xyz().length()).max(model.cols[2].xyz().length());
+        prepared.push(PreparedMesh {
+            world_center: model.transform_point3(center),
+            world_radius: radius * max_scale,
+            order: order.copied().unwrap_or_default(),
+            instance: MeshInstance {
+                model,
+                mesh: mesh.asset,
+                color: surface.color,
+                texture: surface.texture,
+                lit: surface.lit,
+                draw: surface.draw,
+                cutoff: surface.cutoff,
+                material_id: surface.material_id,
+                material_revision: surface.material_revision,
+            },
+        });
+    }
+    prepared
+}
+
+fn prepare_lights(world: &World, poses: &RenderPoses, hidden: &AncestorVisibility) -> Vec<LightData> {
+    world
+        .query::<(&Light, &GlobalTransform)>()
+        .iter()
+        .filter(|(entity, _)| !hidden.hides(*entity))
+        .map(|(entity, (light, global))| {
+            let c = light.color;
+            let placed = GlobalTransform { matrix: poses.matrix(entity, global) };
+            LightData {
+                kind: light.kind,
+                position: placed.translation(),
+                direction: placed.forward().normalized(),
+                color: [c.r, c.g, c.b].map(|v| v * light.intensity),
+            }
+        })
+        .collect()
+}
+
+fn select_lights(lights: &[LightData], view: &CameraView) -> Vec<LightData> {
+    let mut lights = lights.to_vec();
+    if lights.len() > MAX_LIGHTS {
+        let rank = |light: &LightData| match light.kind {
+            LightKind::Directional => -1.0,
+            _ => light.position.distance_squared(view.position),
+        };
+        lights.sort_by(|a, b| rank(a).total_cmp(&rank(b)));
+        lights.truncate(MAX_LIGHTS);
+    }
+    lights
+}
+
+fn build_pass(
+    world: &World,
+    assets: &AssetManager,
+    camera: &OrderedCamera,
+    sprites: &[PreparedSprite],
+    tiles: &[PreparedTile],
+    meshes: &[PreparedMesh],
+    lights: &[LightData],
+) -> CameraPass {
+    let view = &camera.view;
+    let frustum = Frustum::from_view_proj(&view.view_proj);
+    let mut stats = ExtractStats::default();
+    let mut cutout: Vec<SpriteInstance> = Vec::new();
+    let mut opaque: Vec<SpriteInstance> = Vec::new();
+    let mut mask: Vec<SpriteInstance> = Vec::new();
+    let mut sequence = 0u32;
+    let mut blended: Vec<BlendItem> = Vec::new();
+
+    for sprite in sprites {
+        let placement = sprite_placement(&sprite.matrix, sprite.orientation, view);
+        let model = quad_matrix(&placement, sprite.size, sprite.anchor);
         if !quad_visible(&frustum, &model) {
             stats.sprites_culled += 1;
             continue;
         }
         stats.sprites_visible += 1;
+        let appearance = &sprite.appearance;
         let instance = SpriteInstance {
             model,
-            uv: flipped_uv(sub_region(asset.uv, sprite.region), sprite.flip_x, sprite.flip_y),
+            uv: sprite.uv,
             tint: appearance.tint,
             lit: appearance.lit,
             texture: appearance.texture,
@@ -88,73 +338,46 @@ pub fn extract_scene(world: &World, assets: &AssetManager, target_size: Vec2) ->
             SpriteShading::Mask { .. } => mask.push(instance),
             SpriteShading::LegacyBlend | SpriteShading::Blend { .. } => {
                 let depth = view.view.transform_point3(quad_center(&model)).z;
-                let RenderOrder { layer, order } = order.copied().unwrap_or_default();
-                blended.push(BlendItem { layer, depth, order, sequence, kind: BlendKind::Sprite(instance) });
+                blended.push(BlendItem {
+                    layer: sprite.order.layer,
+                    depth,
+                    order: sprite.order.order,
+                    sequence,
+                    kind: BlendKind::Sprite(instance),
+                });
                 sequence += 1;
             }
         }
     }
 
-    for (entity, (map, global)) in world.query::<(&TileMap, &GlobalTransform)>().iter() {
-        if hidden.hides(entity) {
-            continue;
-        }
-        let Some(texture) = resolve(world, assets, map.texture, "tilemap", &mut watch, &mut stats) else {
-            continue;
-        };
-        extract_tilemap(map, &poses.matrix(entity, global), texture, &frustum, &mut cutout, &mut stats);
+    for tile in tiles {
+        let Some(map) = world.component::<TileMap>(tile.entity).ok() else { continue };
+        let Some(texture) = assets.get(tile.texture) else { continue };
+        extract_tilemap(&map, &tile.matrix, texture, &frustum, &mut cutout, &mut stats);
     }
 
-    let mut meshes = Vec::new();
-    for (entity, (mesh, global, order)) in world.query::<(&Mesh, &GlobalTransform, Option<&RenderOrder>)>().iter() {
-        if hidden.hides(entity) {
-            continue;
-        }
-        let Some(data) = resolve(world, assets, mesh.asset, "mesh", &mut watch, &mut stats) else {
-            continue;
-        };
-        let Some(surface) = mesh_surface(world, assets, mesh, &mut watch, &mut stats) else {
-            continue;
-        };
-        let (center, radius) = data.bounding_sphere();
-        let m = poses.matrix(entity, global);
-        let world_center = m.transform_point3(center);
-        let max_scale = m.cols[0].xyz().length().max(m.cols[1].xyz().length()).max(m.cols[2].xyz().length());
-        if !frustum.intersects_sphere(world_center, radius * max_scale) {
+    let mut drawn_meshes = Vec::new();
+    for mesh in meshes {
+        if !frustum.intersects_sphere(mesh.world_center, mesh.world_radius) {
             stats.meshes_culled += 1;
             continue;
         }
         stats.meshes_visible += 1;
-        let instance = MeshInstance {
-            model: m,
-            mesh: mesh.asset,
-            color: surface.color,
-            texture: surface.texture,
-            lit: surface.lit,
-            draw: surface.draw,
-            cutoff: surface.cutoff,
-            material_id: surface.material_id,
-            material_revision: surface.material_revision,
-        };
-        if matches!(surface.draw, MeshDraw::Blend { .. }) {
-            // Same view-space Z as a sprite quad centre. Larger is farther. The representative is
-            // the bounding-sphere centre after the same matrix culling used, not the entity origin.
-            let depth = view.view.transform_point3(world_center).z;
-            let RenderOrder { layer, order } = order.copied().unwrap_or_default();
-            blended.push(BlendItem { layer, depth, order, sequence, kind: BlendKind::Mesh(instance) });
+        if matches!(mesh.instance.draw, MeshDraw::Blend { .. }) {
+            let depth = view.view.transform_point3(mesh.world_center).z;
+            blended.push(BlendItem {
+                layer: mesh.order.layer,
+                depth,
+                order: mesh.order.order,
+                sequence,
+                kind: BlendKind::Mesh(mesh.instance),
+            });
             sequence += 1;
         } else {
-            meshes.push(instance);
+            drawn_meshes.push(mesh.instance);
         }
     }
-    // Group depth-writing meshes that can share a draw. Material id and revision are part of that
-    // key. Colour stays on the instance. Cutoff is copied from the material, which has one value.
-    // This list is not the transparent sequence.
-    meshes.sort_by_key(|m| (m.mesh.id(), m.texture.map(|t| t.id()), m.draw, m.material_id, m.material_revision));
-
-    // One list. Layer ascending, view depth descending, order ascending, then visit order.
-    // Sorting the two primitive lists apart and concatenating them would draw every mesh on one
-    // side of every sprite.
+    drawn_meshes.sort_by_key(|m| (m.mesh.id(), m.texture.map(|t| t.id()), m.draw, m.material_id, m.material_revision));
     blended.sort_by(|a, b| {
         a.layer
             .cmp(&b.layer)
@@ -163,21 +386,22 @@ pub fn extract_scene(world: &World, assets: &AssetManager, target_size: Vec2) ->
             .then(a.sequence.cmp(&b.sequence))
     });
     let (blended_sprites, blended_meshes, transparent) = pack_transparent(blended);
-    // Opaque and mask sprites do not need ordering for correctness. Group by the batch key so a
-    // compatible run is contiguous. Blended sprites stay in the combined sort order above.
     let group = |i: &SpriteInstance| (i.texture.id(), i.shading.pipeline(), i.material_id, i.material_revision);
     opaque.sort_by_key(group);
     mask.sort_by_key(group);
     cutout.sort_by_key(group);
 
-    Some(RenderScene {
-        view,
+    let lights = select_lights(lights, view);
+    stats.lights = lights.len() as u32;
+    CameraPass {
+        camera_id: camera.camera_id,
+        order: camera.order,
+        view: *view,
+        clear: camera.clear,
         clear_color: camera.clear_color,
         viewport_px: [view.viewport_origin.x, view.viewport_origin.y, view.viewport.x, view.viewport.y],
-        ambient,
-        fog: [fog.color.r, fog.color.g, fog.color.b, fog.density],
         lights,
-        meshes,
+        meshes: drawn_meshes,
         opaque_sprites: SpriteLayer::from_ordered(opaque),
         mask_sprites: SpriteLayer::from_ordered(mask),
         cutout_sprites: SpriteLayer::from_ordered(cutout),
@@ -185,7 +409,7 @@ pub fn extract_scene(world: &World, assets: &AssetManager, target_size: Vec2) ->
         blended_meshes,
         transparent,
         stats,
-    })
+    }
 }
 
 enum BlendKind {
@@ -260,6 +484,7 @@ fn append_mesh(meshes: &mut Vec<MeshInstance>, transparent: &mut Vec<Transparent
     transparent.push(TransparentBatch::Meshes { mesh, texture, draw, range: index..index + 1 });
 }
 
+#[derive(Clone, Copy)]
 struct SpriteAppearance {
     texture: AssetHandle<Texture>,
     tint: [f32; 4],
@@ -330,6 +555,7 @@ fn sprite_shading(material: &MaterialAsset) -> SpriteShading {
     }
 }
 
+#[derive(Clone, Copy)]
 struct MeshSurface {
     color: [f32; 4],
     texture: Option<AssetHandle<Texture>>,
@@ -442,56 +668,6 @@ impl AncestorVisibility {
             }
         }
     }
-}
-
-fn active_camera(world: &World, target_size: Vec2, poses: &RenderPoses) -> Option<(Camera, CameraView)> {
-    let mut best: Option<(Entity, Camera, GlobalTransform)> = None;
-    // `Visibility` is not an activation flag. `Camera.active` and `order` are.
-    for (e, (camera, global)) in world.query::<(&Camera, &GlobalTransform)>().iter() {
-        let better = match &best {
-            None => true,
-            Some((be, bc, _)) => (camera.order, e.id()) < (bc.order, be.id()),
-        };
-        if camera.active && better {
-            let placed = GlobalTransform { matrix: poses.matrix(e, global) };
-            best = Some((e, *camera, placed));
-        }
-    }
-    let (_, camera, placed) = best?;
-    Some((camera, CameraView::new(&camera, &placed, target_size)))
-}
-
-fn extract_lights(
-    world: &World,
-    view: &CameraView,
-    poses: &RenderPoses,
-    hidden: &AncestorVisibility,
-) -> Vec<LightData> {
-    let mut lights: Vec<LightData> = world
-        .query::<(&Light, &GlobalTransform)>()
-        .iter()
-        .filter(|(entity, _)| !hidden.hides(*entity))
-        .map(|(entity, (light, global))| {
-            let c = light.color;
-            let placed = GlobalTransform { matrix: poses.matrix(entity, global) };
-            LightData {
-                kind: light.kind,
-                position: placed.translation(),
-                direction: placed.forward().normalized(),
-                color: [c.r, c.g, c.b].map(|v| v * light.intensity),
-            }
-        })
-        .collect();
-    if lights.len() > MAX_LIGHTS {
-        // Directional lights always survive; positional ones are ranked by distance to the camera.
-        let rank = |l: &LightData| match l.kind {
-            LightKind::Directional => -1.0,
-            _ => l.position.distance_squared(view.position),
-        };
-        lights.sort_by(|a, b| rank(a).total_cmp(&rank(b)));
-        lights.truncate(MAX_LIGHTS);
-    }
-    lights
 }
 
 /// The sprite's placement frame: where its origin is and which way its local X/Y/Z axes point,
