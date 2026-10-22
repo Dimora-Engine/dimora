@@ -87,7 +87,7 @@ the risk register). **Prototype where the answer depends on a measurement; do no
 | D-06 | Pixel-art filtering, texel snapping, MSAA: policies at the level of each technique, **not a default or a foundation** | M6 (after D-25 and D-08) | M6, M8, M9, M13 | Principles accepted (ADR-0004); API ownership and defaults **deferred pending a rendering prototype** |
 | D-07 | Depth convention (reverse-Z) | M6 | M6, M14 shadows | Open |
 | D-08 | Multi-camera and render targets | M6 | M6, M14, M22 | Open |
-| D-25 | Custom projections inside `Camera` | M6 (**first in M6**, [ADR-0004](adr/0004-one-spatial-world-many-camera-configurations.md)) | M6, M13 (oblique tiles) | Open |
+| D-25 | Custom projections inside `Camera` | M6 (**first in M6**, [ADR-0004](adr/0004-one-spatial-world-many-camera-configurations.md)) | M6, M13 (oblique tiles) | Implemented locally in M6-1B (committed locally, not pushed): `CameraProjection::Custom(Mat4)`. D-48 and D-26 stay open |
 | D-48 | Camera configurations: gameplay orientation, coplanar ordering, orientation modes per view | M6 (decide before M7 and M8) | M6, M7, M8, M13, M14 | Principles accepted and `+Y` up / `XZ` ground retained as a **provisional convention** (ADR-0004, 2026-10-13). Prototype evidence recorded 2026-10-14 (three coplanar conflicts; no mechanism chosen). Gameplay-orientation components still deferred to M7 and M8 |
 | D-26 | Sprite orientation modes beyond `Billboard`, `Upright`, `Fixed`; `Upright` semantics for steep and oblique views | M6 | none hard | Candidate initial set kept, not exhaustive (ADR-0004). Observed 2026-10-14: orthographic height is `cos(pitch)` of a billboard, straight-down is edge-on, a 60° perspective view is roughly half. **Not accepted as the final design.** Extensions still open |
 | D-09 | Physics: custom or library | M7 | M7, M9 | Open |
@@ -277,10 +277,18 @@ Decided in [ADR-0015](adr/0015-material-alpha-classes.md). Opaque, Mask, and Ble
 * **Problem.** The `Projection` trait exists but `Camera` stores a closed enum (KI-11), so an oblique
   or isometric projection cannot be supplied.
 * **Options.** Add enum variants (oblique); store a boxed trait object; store a plain matrix override.
-* **Presets (ADR-0004).** Presets use whatever `Camera` ends up holding; how a preset takes a custom projection is
-  decided with this design, not before.
+* **Decision (M6-1A approved, M6-1B implemented 2026-10-22).** `CameraProjection::Custom(Mat4)`, constructed
+  with `CameraProjection::custom`. The matrix is view-to-clip in the existing left-handed, depth `[0, 1]`
+  convention. It is not rebuilt from aspect. `with_clip_range` does not edit it. Non-finite elements are
+  `ProjectionError::NonFinite`. Singular matrices render; picking returns `None` when the inverse fails.
+  No trait object, no shader branch, no preset. A degenerate frustum plane fails open. A negative scale can
+  preserve divided NDC and the corrected CPU frustum without preserving GPU homogeneous clipping. Reverse-Z
+  is not converted (D-07). `Upright` under oblique shear stays unspecified (D-26). Coplanar order is unchanged (D-48).
+* **Presets (ADR-0004).** The six example constructors are unchanged. How a preset would fill a custom matrix
+  is still deferred with the engine preset API.
 * **Needed by.** M6; earlier only if tilemaps (M13) need oblique projection.
-* **Blocks.** Custom projections; M13 if it chooses oblique tiles.
+* **Blocks.** Nothing further for supplying a matrix. M13 oblique tiles can call `custom`. An oblique builder
+  is not part of this decision.
 
 ### D-26 Additional sprite orientations
 

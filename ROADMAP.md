@@ -555,8 +555,10 @@ baseline. Camera projection stays separate from gameplay orientation and visual 
 **Prerequisites.** M5.
 
 **Tasks.**
-- Custom projections first: let `Camera` hold more than the two enum variants so oblique and custom
-  projections are possible without a second code path (D-25).
+- **Custom projections (D-25). Implemented in M6-1B, committed locally, not pushed.** `CameraProjection::Custom(Mat4)`
+  stores a caller-supplied view-to-clip matrix on the existing `Camera`. Extraction, culling, picking
+  and the wgpu uniform use that matrix. It is not rebuilt when the viewport changes. No second renderer
+  and no engine preset. M6 is not complete.
 - Render every active camera in `order`, each with its own viewport and clear/load behaviour (D-08).
 - Camera-to-texture render targets.
 - **Camera-configuration test scene. Done and verified (2026-10-14).** `spatial_scene` is one world (sprites
@@ -564,7 +566,8 @@ baseline. Camera projection stays separate from gameplay orientation and visual 
   viewed through six example-local constructors: perspective, orthographic, isometric (orthographic, yawed and
   pitched), top-down, steep and side. Each returns a `Camera` and a `Transform` and stays editable; isometric
   is not a projection type; the scene prescribes no visual style. Evidence is in TASKS.md. **Not done, and
-  not an engine feature:** an engine-level preset API, and the custom projection (D-25).
+  not an engine feature:** an engine-level preset API. The custom matrix (D-25) is implemented and is not
+  one of these six constructors.
 - Camera configurations decision (D-48), mechanisms only: the owner has decided the principles (ADR-0004,
   2026-10-13: gameplay orientation is data and not derived only from the camera or sprite; spatial depth,
   transparency sorting, render layers or queues and explicit order stay distinct; no occlusion framework until
@@ -606,10 +609,14 @@ baseline. Camera projection stays separate from gameplay orientation and visual 
 
 **Met by the test scene, and only that part (2026-10-14).** The six example configurations render one world.
 GPU tests hold in all of them for mesh/sprite occlusion both ways, and for projecting a point and picking
-back through that pixel. The configuration table is in `docs/SPATIAL_RENDERING.md`. This change does not edit
-extraction or the wgpu backend. **Not met:** custom projection; two viewports; camera-to-texture; chunking;
-benchmarks; picture-in-picture. The blended-sprite-versus-mesh assertion was not repeated per configuration.
-The constructors are example-local, so the engine-preset criterion is not met either.
+back through that pixel. The configuration table is in `docs/SPATIAL_RENDERING.md`. **Custom projection
+(2026-10-22, M6-1B, committed locally, not pushed).** Game code can store a view-to-clip matrix on `Camera`. CPU tests cover
+construction, aspect policy, picking and culling. GPU tests cover perspective-equivalent and
+orthographic-equivalent pixels, an oblique matrix, depth, blend order, camera transforms, viewport resize,
+1,000-sprite batching and frustum culling. The example does not gain a seventh constructor, so the
+"scene renders under a custom projection" row is still unmet. **Not met:** two viewports; camera-to-texture;
+chunking; benchmarks; picture-in-picture; an engine preset API. The blended-sprite-versus-mesh assertion
+was not repeated per example configuration. The constructors are example-local.
 
 **Tests/examples.** `spatial_scene` has `--camera <name>`. Picture-in-picture is still to do. The GPU tests
 for the scene are `examples/spatial_scene/tests/configurations.rs`.

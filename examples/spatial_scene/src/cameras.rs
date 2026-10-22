@@ -139,6 +139,23 @@ mod tests {
     }
 
     #[test]
+    fn existing_camera_presets_remain_compatible() {
+        for (name, make) in NAMED {
+            let (mut camera, mut transform) = make();
+            let before = camera.projection;
+            assert!(!matches!(before, CameraProjection::Custom(_)), "{name} is still a built-in projection");
+            camera.viewport = ViewportRect::new(0.1, 0.2, 0.4, 0.5);
+            camera.clear_color = Color::BLACK;
+            transform.position += Vec3::X;
+            assert_eq!(camera.projection, before, "{name}: editing the camera does not rewrite the projection");
+            let matrix = before.matrix(16.0 / 9.0);
+            camera.projection = CameraProjection::custom(matrix).unwrap();
+            assert!(camera.projection.matrix(1.0).approx_eq(&matrix, 0.0), "{name}");
+            assert!(!camera.projection.is_perspective());
+        }
+    }
+
+    #[test]
     fn isometric_is_an_orthographic_camera_and_not_a_projection_of_its_own() {
         let (camera, t) = isometric();
         assert!(!camera.projection.is_perspective());

@@ -107,7 +107,7 @@ Dimora's defining principle is the unified spatial world, not a look. It must su
 | Isometric | Orthographic camera rotated by its transform; custom axes through a custom projection | **Demonstrated** by an example-local constructor in `spatial_scene`. Not an engine preset, and not a projection type |
 | Top-down | Camera looking along the world's down axis | **Demonstrated.** `Upright` sprites are edge-on; that is observed, not settled (D-26). Coplanar ordering is still open (D-48) |
 | Side-scrolling | Camera looking along the depth axis | **Demonstrated as a camera placement.** Not demonstrated as a 2D-style game |
-| Custom | A `Projection` supplied by game code | The trait exists; `Camera` holds a closed enum, so **not yet usable** (KI-11, D-25) |
+| Custom | A view-to-clip matrix supplied by game code | **Implemented** as `CameraProjection::Custom` (M6-1B, D-25). Not an engine preset. The matrix stays fixed across resize |
 
 Three things are kept separate, and none may be implemented as another: **camera projection** (how the world
 becomes pixels), **gameplay orientation** (which way is up, where the ground plane is, what "facing" means),

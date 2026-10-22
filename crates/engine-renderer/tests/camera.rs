@@ -10,7 +10,7 @@
 use core::f32::consts::{FRAC_PI_2, FRAC_PI_4};
 
 use engine_assets::{AssetManager, MeshData, SpriteAsset, Texture};
-use engine_math::{Mat4, Quat, Transform, Vec2, Vec3};
+use engine_math::{Mat4, Quat, Transform, Vec2, Vec3, Vec4};
 use engine_renderer::*;
 use engine_world::{propagate_transforms, GlobalTransform, World};
 
@@ -448,4 +448,327 @@ fn nearer_things_get_smaller_depth_values_regardless_of_kind() {
     );
     assert!(in_front < mesh && mesh < behind);
     assert_eq!(scene.cutout_sprites.instances.len(), 2);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Custom projection
+// ---------------------------------------------------------------------------------------------
+
+fn finite_custom(matrix: Mat4) -> CameraProjection {
+    CameraProjection::custom(matrix).unwrap()
+}
+
+fn oblique_shear(aspect: f32, shear_x: f32) -> Mat4 {
+    let ortho = CameraProjection::orthographic(10.0).matrix(aspect);
+    let shear = Mat4::from_cols(
+        Vec4::new(1.0, 0.0, 0.0, 0.0),
+        Vec4::new(0.0, 1.0, 0.0, 0.0),
+        Vec4::new(shear_x, 0.0, 1.0, 0.0),
+        Vec4::new(0.0, 0.0, 0.0, 1.0),
+    );
+    ortho * shear
+}
+
+fn assert_on_ray(view: &CameraView, point: Vec3) {
+    let screen = view.project(point).expect("point projects");
+    let (origin, direction) = view.ray_from_pixels(screen.pixels).expect("invertible");
+    let along = (point - origin).dot(direction);
+    let closest = origin + direction * along;
+    assert!(closest.approx_eq(point, 1e-3), "ray misses {point:?} by {:?}", closest - point);
+    assert!(along.is_finite() && direction.length() > 0.0);
+}
+
+#[test]
+fn custom_matrix_is_returned_unchanged() {
+    let matrix = oblique_shear(1.7, 0.35);
+    let projection = finite_custom(matrix);
+    assert!(projection.matrix(0.25).approx_eq(&matrix, 0.0));
+    assert!(projection.matrix(4.0).approx_eq(&matrix, 0.0));
+}
+
+#[test]
+fn custom_projection_ignores_aspect() {
+    let matrix = CameraProjection::perspective(50.0).matrix(1.0);
+    let narrow = CameraView::new(
+        &Camera::new(finite_custom(matrix)),
+        &GlobalTransform { matrix: Mat4::IDENTITY },
+        Vec2::new(200.0, 800.0),
+    );
+    let wide = CameraView::new(
+        &Camera::new(finite_custom(matrix)),
+        &GlobalTransform { matrix: Mat4::IDENTITY },
+        Vec2::new(800.0, 200.0),
+    );
+    assert!(narrow.proj.approx_eq(&matrix, 0.0));
+    assert!(wide.proj.approx_eq(&narrow.proj, 0.0));
+    assert!((narrow.aspect() - 0.25).abs() < 1e-5);
+    assert!((wide.aspect() - 4.0).abs() < 1e-5);
+}
+
+#[test]
+fn perspective_matrix_still_tracks_aspect() {
+    let camera = Camera::perspective(60.0);
+    let square = view_of(camera, Transform::IDENTITY);
+    let wide = CameraView::new(&camera, &GlobalTransform { matrix: Mat4::IDENTITY }, Vec2::new(800.0, 200.0));
+    let expected_square = camera.projection.matrix(2.0);
+    let expected_wide = camera.projection.matrix(4.0);
+    assert!(square.proj.approx_eq(&expected_square, 1e-6));
+    assert!(wide.proj.approx_eq(&expected_wide, 1e-6));
+    assert!(!square.proj.approx_eq(&wide.proj, 1e-3));
+}
+
+#[test]
+fn orthographic_matrix_still_tracks_aspect() {
+    let camera = Camera::orthographic(10.0);
+    let square = CameraView::new(&camera, &GlobalTransform { matrix: Mat4::IDENTITY }, Vec2::new(400.0, 400.0));
+    let wide = view_of(camera, Transform::IDENTITY);
+    assert!(square.proj.approx_eq(&camera.projection.matrix(1.0), 1e-6));
+    assert!(wide.proj.approx_eq(&camera.projection.matrix(2.0), 1e-6));
+    assert!(!square.proj.approx_eq(&wide.proj, 1e-3));
+}
+
+#[test]
+fn custom_rejects_nan_and_infinity() {
+    for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+        let mut matrix = Mat4::IDENTITY;
+        matrix.cols[2].z = bad;
+        assert_eq!(CameraProjection::custom(matrix), Err(ProjectionError::NonFinite));
+        matrix = oblique_shear(1.0, 0.2);
+        matrix.cols[3].x = bad;
+        assert_eq!(CameraProjection::custom(matrix), Err(ProjectionError::NonFinite));
+    }
+    assert!(CameraProjection::custom(oblique_shear(2.0, -0.4)).is_ok());
+    assert!(CameraProjection::custom(Mat4::orthographic_lh(-1.0, 4.0, -2.0, 2.0, 0.1, 50.0)).is_ok());
+}
+
+#[test]
+fn with_clip_range_leaves_custom_unchanged() {
+    let matrix = CameraProjection::perspective(40.0).matrix(1.25);
+    let projection = finite_custom(matrix);
+    let clipped = projection.with_clip_range(2.0, 30.0);
+    assert_eq!(projection, clipped);
+    assert!(clipped.matrix(3.0).approx_eq(&matrix, 0.0));
+    let builtin = CameraProjection::perspective(40.0).with_clip_range(2.0, 30.0);
+    match builtin {
+        CameraProjection::Perspective(p) => assert_eq!((p.near, p.far), (2.0, 30.0)),
+        other => panic!("built-in clip range still edits the descriptor, got {other:?}"),
+    }
+}
+
+#[test]
+fn repeated_custom_projection_is_deterministic() {
+    let camera = Camera::new(finite_custom(oblique_shear(2.0, 0.15)));
+    let transform = Transform::looking_at(Vec3::new(1.0, 2.0, -8.0), Vec3::new(0.0, 1.0, 4.0), Vec3::Y);
+    let first = view_of(camera, transform);
+    let second = view_of(camera, transform);
+    assert!(first.view.approx_eq(&second.view, 0.0));
+    assert!(first.proj.approx_eq(&second.proj, 0.0));
+    assert!(first.view_proj.approx_eq(&second.view_proj, 0.0));
+}
+
+#[test]
+fn custom_equivalent_perspective_matches_builtin_clip() {
+    let builtin = Camera::perspective(60.0);
+    let custom = Camera::new(finite_custom(builtin.projection.matrix(VIEWPORT.x / VIEWPORT.y)));
+    let transform = Transform::from_xyz(1.0, -2.0, -6.0);
+    let left = view_of(builtin, transform);
+    let right = view_of(custom, transform);
+    assert!(left.proj.approx_eq(&right.proj, 1e-6));
+    assert!(left.view.approx_eq(&right.view, 1e-6));
+    let point = Vec3::new(2.0, 1.5, 9.0);
+    let a = left.project(point).unwrap();
+    let b = right.project(point).unwrap();
+    assert!(a.pixels.approx_eq(b.pixels, 1e-3));
+    assert!(a.ndc.approx_eq(b.ndc, 1e-5));
+    assert!((a.depth - b.depth).abs() < 1e-5);
+    assert!((a.view_depth - b.view_depth).abs() < 1e-4);
+    assert_on_ray(&right, point);
+    let (origin, direction) = right.ray_from_pixels(b.pixels).unwrap();
+    let (builtin_origin, builtin_direction) = left.ray_from_pixels(a.pixels).unwrap();
+    assert!(origin.approx_eq(builtin_origin, 1e-3));
+    assert!(direction.approx_eq(builtin_direction, 1e-4));
+}
+
+#[test]
+fn custom_equivalent_orthographic_matches_builtin_clip() {
+    let builtin = Camera::orthographic(10.0);
+    let custom = Camera::new(finite_custom(builtin.projection.matrix(VIEWPORT.x / VIEWPORT.y)));
+    let left = view_of_default(builtin);
+    let right = view_of_default(custom);
+    let point = Vec3::new(-3.0, 2.0, 40.0);
+    let a = left.project(point).unwrap();
+    let b = right.project(point).unwrap();
+    assert!(a.pixels.approx_eq(b.pixels, 1e-3));
+    assert!((a.depth - b.depth).abs() < 1e-5);
+    assert!((a.view_depth - point.z).abs() < 1e-4);
+    assert_on_ray(&right, point);
+    let (_, direction) = right.ray_from_pixels(b.pixels).unwrap();
+    let (_, builtin_direction) = left.ray_from_pixels(a.pixels).unwrap();
+    assert!(direction.approx_eq(builtin_direction, 1e-4));
+    assert!(direction.approx_eq(Vec3::Z, 1e-4), "orthographic rays stay parallel to view forward");
+}
+
+#[test]
+fn oblique_shear_moves_a_known_point() {
+    let plain = view_of_default(Camera::orthographic(10.0));
+    let sheared = view_of_default(Camera::new(finite_custom(oblique_shear(2.0, 0.1))));
+    let point = Vec3::new(0.0, 0.0, 10.0);
+    let shifted = plain.project(Vec3::new(1.0, 0.0, 10.0)).unwrap();
+    let oblique = sheared.project(point).unwrap();
+    let unshifted = plain.project(point).unwrap();
+    assert!(oblique.ndc.approx_eq(shifted.ndc, 1e-4), "x' = x + 0.1 z");
+    assert!((oblique.ndc.x - unshifted.ndc.x).abs() > 0.05);
+    assert!((oblique.view_depth - 10.0).abs() < 1e-4, "view depth ignores the projection");
+    assert!(oblique.depth > 0.0 && oblique.depth < 1.0);
+}
+
+#[test]
+fn view_stays_transform_inverse_with_custom_projection() {
+    let transform = Transform::looking_at(Vec3::new(3.0, 2.0, -10.0), Vec3::new(0.0, 0.0, 5.0), Vec3::Y);
+    let view = view_of(Camera::new(finite_custom(oblique_shear(2.0, 0.2))), transform);
+    assert!((view.view * transform.to_matrix()).approx_eq(&Mat4::IDENTITY, 1e-4));
+    assert!(view.proj.approx_eq(&oblique_shear(2.0, 0.2), 1e-6));
+    assert!(view.view_proj.approx_eq(&(view.proj * view.view), 1e-5));
+    assert!(!view.view.approx_eq(&view.proj, 1e-2));
+}
+
+#[test]
+fn singular_custom_matrix_ray_returns_none() {
+    let singular = Mat4::from_cols(
+        Vec4::new(1.0, 0.0, 0.0, 0.0),
+        Vec4::new(2.0, 0.0, 0.0, 0.0),
+        Vec4::new(3.0, 0.0, 0.0, 0.0),
+        Vec4::new(4.0, 5.0, 6.0, 0.0),
+    );
+    assert!(singular.inverse().is_none());
+    let view = view_of_default(Camera::new(finite_custom(singular)));
+    assert!(view.ray_from_pixels(Vec2::new(10.0, 20.0)).is_none());
+    let _ = view.project(Vec3::new(0.0, 0.0, 5.0));
+    let mut world = World::new();
+    world.spawn((Camera::new(finite_custom(singular)), Transform::IDENTITY));
+    propagate_transforms(&mut world);
+    let scene = extract_scene(&world, &AssetManager::in_memory(), VIEWPORT).expect("a singular matrix still extracts");
+    assert!(scene.view.proj.approx_eq(&singular, 0.0));
+}
+
+#[test]
+fn projected_point_is_on_custom_perspective_ray() {
+    let view = view_of(
+        Camera::new(finite_custom(CameraProjection::perspective(70.0).matrix(2.0))),
+        Transform::from_xyz(-2.0, 1.0, -12.0),
+    );
+    assert_on_ray(&view, Vec3::new(4.0, -1.0, 6.0));
+}
+
+#[test]
+fn projected_point_is_on_custom_orthographic_ray() {
+    let view = view_of(
+        Camera::new(finite_custom(CameraProjection::orthographic(16.0).matrix(2.0))),
+        Transform::from_xyz(0.0, 3.0, -8.0),
+    );
+    assert_on_ray(&view, Vec3::new(-2.0, 4.0, 15.0));
+}
+
+#[test]
+fn projected_point_is_on_oblique_custom_ray() {
+    let view = view_of(
+        Camera::new(finite_custom(oblique_shear(2.0, 0.25))),
+        Transform::looking_at(Vec3::new(2.0, 4.0, -15.0), Vec3::new(0.0, 1.0, 0.0), Vec3::Y),
+    );
+    let point = Vec3::new(1.0, 2.0, 3.0);
+    assert_on_ray(&view, point);
+    let plain = view_of(
+        Camera::orthographic(10.0),
+        Transform::looking_at(Vec3::new(2.0, 4.0, -15.0), Vec3::new(0.0, 1.0, 0.0), Vec3::Y),
+    );
+    let oblique = view.project(point).unwrap();
+    let built_in = plain.project(point).unwrap();
+    assert!(
+        (oblique.pixels.x - built_in.pixels.x).abs() > 1.0,
+        "the oblique ray is not the orthographic ray: {:?} vs {:?}",
+        oblique.pixels,
+        built_in.pixels
+    );
+}
+
+#[test]
+fn translated_custom_camera_picking() {
+    let camera = Camera::new(finite_custom(CameraProjection::orthographic(10.0).matrix(2.0)));
+    let view = view_of(camera, Transform::from_xyz(5.0, -2.0, 3.0));
+    assert_on_ray(&view, Vec3::new(6.0, -1.0, 20.0));
+    assert!(view.view.transform_point3(Vec3::new(5.0, -2.0, 3.0)).approx_eq(Vec3::ZERO, 1e-4));
+}
+
+#[test]
+fn rotated_custom_camera_picking() {
+    let camera = Camera::new(finite_custom(CameraProjection::perspective(55.0).matrix(2.0)));
+    let transform = Transform::IDENTITY.with_rotation(Quat::from_rotation_y(FRAC_PI_2));
+    let view = view_of(camera, transform);
+    assert!(view.forward.approx_eq(Vec3::X, 1e-5));
+    assert_on_ray(&view, Vec3::new(12.0, 1.0, -2.0));
+}
+
+#[test]
+fn parent_transform_changes_view_not_projection() {
+    let matrix = oblique_shear(2.0, -0.2);
+    let local = Transform::from_xyz(0.0, 1.0, -5.0);
+    let parent = Transform::from_xyz(4.0, -2.0, 3.0).with_rotation(Quat::from_rotation_y(0.4));
+    let mut world = World::new();
+    let parent_entity = world.spawn((parent,));
+    let camera = Camera::new(finite_custom(matrix));
+    let child = world.spawn_child(parent_entity, (camera, local));
+    propagate_transforms(&mut world);
+    let global = *world.component::<GlobalTransform>(child).unwrap();
+    let view = CameraView::new(&camera, &global, VIEWPORT);
+    let composed = parent.to_matrix() * local.to_matrix();
+    assert!((view.view * composed).approx_eq(&Mat4::IDENTITY, 1e-4));
+    assert!(view.proj.approx_eq(&matrix, 1e-6));
+    let point = parent.position + Vec3::new(0.0, 2.0, 8.0);
+    assert_on_ray(&view, point);
+}
+
+#[test]
+fn custom_projection_viewport_resize_policy() {
+    let matrix = CameraProjection::perspective(60.0).matrix(2.0);
+    let camera = Camera::new(finite_custom(matrix));
+    let placed = GlobalTransform { matrix: Mat4::IDENTITY };
+    let wide = CameraView::new(&camera, &placed, Vec2::new(800.0, 400.0));
+    let square = CameraView::new(&camera, &placed, Vec2::new(400.0, 400.0));
+    assert!(wide.proj.approx_eq(&matrix, 0.0));
+    assert!(square.proj.approx_eq(&wide.proj, 0.0));
+    let point = Vec3::new(1.0, 0.0, 8.0);
+    let wide_px = wide.project(point).unwrap();
+    let square_px = square.project(point).unwrap();
+    assert!(wide_px.ndc.approx_eq(square_px.ndc, 1e-5), "NDC stays with the fixed matrix");
+    assert!((wide_px.pixels.x - square_px.pixels.x).abs() > 1.0, "pixels follow the new viewport");
+    assert_on_ray(&square, point);
+    let perspective = Camera::perspective(60.0);
+    let perspective_wide = CameraView::new(&perspective, &placed, Vec2::new(800.0, 400.0));
+    let perspective_square = CameraView::new(&perspective, &placed, Vec2::new(400.0, 400.0));
+    assert!(!perspective_wide.proj.approx_eq(&perspective_square.proj, 1e-3));
+}
+
+#[test]
+fn custom_projection_subviewport_picking() {
+    let matrix = CameraProjection::orthographic(8.0).matrix(1.0);
+    let camera = Camera::new(finite_custom(matrix)).with_viewport(ViewportRect::new(0.25, 0.1, 0.5, 0.8));
+    let view = CameraView::new(&camera, &GlobalTransform { matrix: Mat4::IDENTITY }, Vec2::new(800.0, 500.0));
+    assert!(view.proj.approx_eq(&matrix, 0.0));
+    assert!(view.viewport_origin.x > 0.0 && view.viewport.x < 800.0);
+    assert_on_ray(&view, Vec3::new(1.0, -0.5, 6.0));
+}
+
+#[test]
+fn extract_keeps_the_custom_view_projection() {
+    let matrix = CameraProjection::orthographic(12.0).matrix(2.0);
+    let camera = Camera::new(finite_custom(matrix));
+    let transform = Transform::from_xyz(0.0, 0.0, -3.0);
+    let mut world = World::new();
+    world.spawn((camera, transform));
+    propagate_transforms(&mut world);
+    let scene = extract_scene(&world, &AssetManager::in_memory(), VIEWPORT).unwrap();
+    let expected = view_of(camera, transform);
+    assert!(scene.view.proj.approx_eq(&matrix, 0.0));
+    assert!(scene.view.view_proj.approx_eq(&expected.view_proj, 1e-5));
+    assert!(!camera.projection.is_perspective());
 }

@@ -201,6 +201,8 @@ fn controls_system(world: &mut World) {
         scene::select_config(&mut scene, current);
     }
     if toggle_projection {
+        // `is_perspective` names the Perspective variant only. This key swaps the two built-in
+        // descriptors. A custom matrix is not orthographic; pressing the key replaces it.
         scene.projection = if scene.projection.is_perspective() {
             CameraProjection::orthographic(ORTHO_HEIGHT).with_clip_range(1.0, 4000.0)
         } else {
@@ -244,7 +246,12 @@ fn hud_system(world: &mut World) {
 
     let viewport = world.resource::<Viewport>().physical_size_pixels();
     let cam = *world.component::<Camera>(camera).unwrap();
-    let perspective = cam.projection.is_perspective();
+    let projection_name = match cam.projection {
+        CameraProjection::Perspective(_) => "perspective",
+        CameraProjection::Orthographic(_) => "orthographic",
+        CameraProjection::Custom(_) => "custom",
+        _ => "projection",
+    };
     let view = CameraView::new(&cam, &GlobalTransform { matrix: rig.transform().to_matrix() }, viewport);
     let readout: Vec<String> = figures
         .iter()
@@ -259,7 +266,7 @@ fn hud_system(world: &mut World) {
     let diagnostics = *world.resource::<Diagnostics>();
     let title = format!(
         "spatial_scene | env {environment:?} | {name} ({}) | cam ({:.0}, {:.0}, {:.0}) | {:?} | {} | {} draws | gpu cache {} tex {} mesh | {} ents, {} fixed, {:.2} ms cpu",
-        if perspective { "perspective" } else { "orthographic" },
+        projection_name,
         rig.position.x,
         rig.position.y,
         rig.position.z,

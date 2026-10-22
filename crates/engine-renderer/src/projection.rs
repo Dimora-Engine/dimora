@@ -5,6 +5,9 @@
 //! consequence rather than a feature: under [`Perspective`] a camera move shifts near objects more
 //! than far ones, under [`Orthographic`] it shifts them all equally, and no object carries a
 //! "parallax factor".
+//!
+//! [`CameraProjection::Custom`] stores a caller-supplied view-to-clip matrix. It is not rebuilt
+//! when the viewport changes. [`Perspective`] and [`Orthographic`] still are.
 
 use engine_math::{Mat4, Vec2, Vec3, Vec4};
 
@@ -102,13 +105,49 @@ impl Projection for Perspective {
     }
 }
 
-/// The projection a [`crate::Camera`] uses. Non-exhaustive: isometric, oblique, side-scroller,
-/// top-down and custom variants are expected to be added without breaking callers.
+/// The projection a [`crate::Camera`] uses.
+///
+/// Isometric, top-down and side view are placements of [`Orthographic`] or [`Perspective`], not
+/// extra variants. [`Custom`](Self::Custom) is a view-to-clip matrix supplied by game code.
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[non_exhaustive]
 pub enum CameraProjection {
     Orthographic(Orthographic),
     Perspective(Perspective),
+    /// A view-to-clip matrix in Dimora's clip convention. The camera's position and orientation
+    /// stay on the entity `Transform`; this value is only `proj` in `view_proj = proj * view`.
+    ///
+    /// The matrix is fixed until game code replaces it. [`Projection::matrix`] ignores `aspect`
+    /// and returns this value unchanged, including when the window or [`crate::ViewportRect`]
+    /// changes. Pixel mapping (`project`, `ray_from_pixels`) still uses the current viewport
+    /// rectangle. [`Perspective`] and [`Orthographic`] keep recomputing from that aspect.
+    /// [`Self::with_clip_range`] does not edit this matrix: near and far are already inside it.
+    /// Replace the matrix to change clipping.
+    ///
+    /// Convention, matching [`Mat4::perspective_lh`](engine_math::Mat4::perspective_lh) and
+    /// [`Mat4::orthographic_lh`](engine_math::Mat4::orthographic_lh):
+    ///
+    /// * Left-handed view space, +Y up, +Z forward (into the scene).
+    /// * Column vectors, `M * v`, projection applied after the view matrix.
+    /// * NDC x and y in `[-1, 1]`, NDC +Y up, viewport origin at the top-left.
+    /// * NDC depth in `[0, 1]`: 0 at the near plane, 1 at the far plane.
+    /// * The depth buffer compares with less-than. Opaque and mask writes use that value.
+    ///
+    /// A matrix that uses OpenGL depth (`[-1, 1]`) or reverse-Z is not converted. It still draws,
+    /// and occlusion follows whatever depth it writes. A finite matrix is accepted even when it
+    /// is singular, oblique, off-centre, or unlike either built-in projection. Rendering does not
+    /// need an inverse. [`crate::CameraView::ray_from_pixels`] returns `None` when the inverse
+    /// cannot be computed. There is no panic on that path.
+    ///
+    /// Multiplying the matrix by a negative scalar leaves divided NDC unchanged and can make the
+    /// CPU frustum agree after its `w` sign correction. The GPU still clips before that divide.
+    /// A reversed clip `w` is not treated as the same picture as the positive matrix.
+    ///
+    /// Transparent ordering stays camera-space depth from the view matrix (larger Z is farther).
+    /// It does not use this matrix's clip Z or window Z, so a projection that scrambles view-space
+    /// depth relative to occlusion will not get a different sort. `Upright` sprites follow the
+    /// camera basis, not the shear in this matrix (D-26). Coplanar ties stay ties (D-48).
+    Custom(Mat4),
 }
 
 impl CameraProjection {
@@ -118,24 +157,67 @@ impl CameraProjection {
     pub fn perspective(fov_y_degrees: f32) -> Self {
         Self::Perspective(Perspective { fov_y: fov_y_degrees.to_radians(), ..Default::default() })
     }
-    /// Sets the near/far clip distances (view-space units in front of the camera).
+    /// Stores `matrix` as a view-to-clip projection.
+    ///
+    /// Refuses NaN and infinity. A singular or oblique matrix is accepted; see
+    /// [`CameraProjection::Custom`].
+    pub fn custom(matrix: Mat4) -> Result<Self, ProjectionError> {
+        if matrix.cols.iter().any(|column| !column_is_finite(*column)) {
+            return Err(ProjectionError::NonFinite);
+        }
+        Ok(Self::Custom(matrix))
+    }
+
+    /// Sets the near/far clip distances on [`Orthographic`](Self::Orthographic) and
+    /// [`Perspective`](Self::Perspective), in view-space units in front of the camera.
+    ///
+    /// [`Custom`](Self::Custom) is returned unchanged. Those distances live in the stored matrix.
     pub fn with_clip_range(mut self, near: f32, far: f32) -> Self {
         match &mut self {
             Self::Orthographic(p) => (p.near, p.far) = (near, far),
             Self::Perspective(p) => (p.near, p.far) = (near, far),
+            Self::Custom(_) => {}
         }
         self
     }
+
+    /// `true` only for the built-in [`Perspective`](Self::Perspective) variant.
+    ///
+    /// [`Custom`](Self::Custom) is not perspective and not orthographic. An arbitrary matrix does
+    /// not have a reliable class, so this method does not guess. Picking, culling, sprite facing
+    /// and extraction use the resolved view and projection matrices, not this flag.
     pub fn is_perspective(&self) -> bool {
         matches!(self, Self::Perspective(_))
     }
 }
+
+fn column_is_finite(column: Vec4) -> bool {
+    column.x.is_finite() && column.y.is_finite() && column.z.is_finite() && column.w.is_finite()
+}
+
+/// Why [`CameraProjection::custom`] refused a matrix.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProjectionError {
+    /// At least one element was NaN or infinite.
+    NonFinite,
+}
+
+impl core::fmt::Display for ProjectionError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            ProjectionError::NonFinite => write!(f, "custom projection matrix contains NaN or infinity"),
+        }
+    }
+}
+
+impl std::error::Error for ProjectionError {}
 
 impl Projection for CameraProjection {
     fn matrix(&self, aspect: f32) -> Mat4 {
         match self {
             Self::Orthographic(p) => p.matrix(aspect),
             Self::Perspective(p) => p.matrix(aspect),
+            Self::Custom(matrix) => *matrix,
         }
     }
 }

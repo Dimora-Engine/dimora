@@ -271,7 +271,8 @@ Each is verified by reading the code or by a test run; identifiers refer to the 
 4. **One camera per frame (KI-5).** `Camera.viewport` is honoured, but only one camera renders, so
    split-screen, minimaps and render-to-texture are not possible, and the editor cannot get a second
    viewport.
-5. **Closed projection set (KI-11).** `Camera` takes the enum, not the trait.
+5. **Custom projection (KI-11).** Fixed in M6-1B: `CameraProjection::Custom(Mat4)` is ordinary data on the
+   same `Camera`. The GPU still receives one `view_proj`. One camera per frame (KI-5) remains.
 6. **Textures and materials (KI-6).** No mipmaps, clamp-to-edge only, every texture uploaded as sRGB
    (so non-colour data such as normal maps cannot be represented), `Material` is
    colour + one albedo + a lit flag, meshes can only be opaque.
@@ -411,13 +412,14 @@ orientation, filtering, snapping, fog) live at the object, material, camera, ren
 belongs, with no universal style type. Gameplay orientation is data, never derived only from the camera or the
 sprite. Keep three things
 separate: *projection* (how the world becomes pixels), *gameplay orientation* (up axis, ground plane,
-facing), *visual style* (snapping, fog, mood). *Today:* the camera maths takes any `Transform` and either of
-two projections, the tilemap is a quad grid in its entity's local XY plane that is laid flat by rotating the
+facing), *visual style* (snapping, fog, mood). *Today:* the camera maths takes any `Transform` and a perspective, orthographic, or custom view-to-clip
+matrix. The tilemap is a quad grid in its entity's local XY plane that is laid flat by rotating the
 entity, and sprite orientation modes are tested under a pitched camera. *Demonstrated (2026-10-14):* the same
 `spatial_scene` world through example-local perspective, orthographic, isometric, top-down, steep and side
-constructors, with GPU tests. Those constructors are not an engine preset API. *Not demonstrated:* a 2D-style
-game, or a custom projection; `Camera` holds a closed projection enum (KI-11); one camera renders per frame
-(R-2). *Gaps:* R-16, including the three verified coplanar conflicts.
+constructors, with GPU tests. Those constructors are not an engine preset API. *Custom projection (M6-1B):*
+`CameraProjection::Custom(Mat4)` renders and picks through the same extraction and `view_proj` uniform.
+*Not demonstrated:* a 2D-style game. One camera renders per frame (R-2). *Gaps:* R-16, including the three
+verified coplanar conflicts (D-48). `Upright` under an oblique matrix is still unspecified (D-26).
 
 **11. The runtime has no editor state.** Editor and developer tools consume the component registry, commands,
 events and diagnostics and live in separate crates or binaries (ADR-0003). The runtime contains no editor

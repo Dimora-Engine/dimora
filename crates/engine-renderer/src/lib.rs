@@ -28,7 +28,7 @@ pub use components::{
 pub use extract::extract_scene;
 pub use frustum::Frustum;
 pub use missing::{MissingAssetWarnings, MISSING_ASSET_WARNING_CAPACITY};
-pub use projection::{CameraProjection, Orthographic, Perspective, Projection, ScreenPosition};
+pub use projection::{CameraProjection, Orthographic, Perspective, Projection, ProjectionError, ScreenPosition};
 pub use registry::register_render_components;
 pub use scene::{
     ExtractStats, LightData, MeshDraw, MeshInstance, RenderScene, SpriteBatch, SpriteInstance, SpriteLayer,

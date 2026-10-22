@@ -104,6 +104,10 @@ impl CameraView {
     ///
     /// The chain is world -> view (inverse of the camera's transform) -> clip (the projection) ->
     /// NDC (perspective divide) -> viewport pixels.
+    ///
+    /// [`CameraProjection::Perspective`] and [`CameraProjection::Orthographic`] rebuild `proj`
+    /// from this viewport's pixel aspect. [`CameraProjection::Custom`] keeps the stored view-to-clip
+    /// matrix; a resize changes pixel mapping only.
     pub fn new(camera: &Camera, transform: &GlobalTransform, target_size: Vec2) -> Self {
         let t = transform.to_transform();
         let (position, forward, up) = (t.position, t.forward(), t.up());
@@ -124,8 +128,11 @@ impl CameraView {
         ScreenPosition::from_clip(clip, self.view.transform_point3(world_position).z, self.viewport)
     }
 
-    /// World-space ray through a pixel (origin top-left): `(origin, unit direction)`. Used for
-    /// picking; works for any projection because it unprojects through the inverse matrix.
+    /// World-space ray through a pixel (origin top-left of this viewport): `(origin, unit direction)`.
+    ///
+    /// The ray is the unprojection of NDC depth 0 and 1 through `view_proj`. `None` when that
+    /// matrix has no reliable inverse, including a singular custom projection. Rendering does not
+    /// require the inverse and does not substitute a ray.
     pub fn ray_from_pixels(&self, pixels: Vec2) -> Option<(Vec3, Vec3)> {
         let inv = self.view_proj.inverse()?;
         let ndc = Vec2::new(pixels.x / self.viewport.x * 2.0 - 1.0, 1.0 - pixels.y / self.viewport.y * 2.0);

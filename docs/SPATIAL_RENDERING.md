@@ -133,7 +133,7 @@ A camera entity has exactly three parts:
 
 ```text
 Transform     where it is and where it looks (the view is the inverse of its world matrix)
-Camera.projection  Orthographic | Perspective   (CameraProjection is non_exhaustive)
+Camera.projection  Orthographic | Perspective | Custom(Mat4)
 Camera.viewport    ViewportRect: the part of the render target it draws into
 ```
 
@@ -143,10 +143,20 @@ aspect ratio comes from the viewport rectangle, not the window, so a camera in h
 not stretched. The same `view_proj` drives CPU projection (`CameraView::project`, picking
 rays, culling) and the GPU, so the two cannot disagree.
 
-The `Projection` trait describes the extension point: anything expressible as a view-to-clip matrix
-(isometric, oblique, side-scroller) would work with culling, picking and the GPU unchanged. Today
-`Camera` stores the closed `CameraProjection` enum rather than an arbitrary `impl Projection`, so a
-new projection currently needs a new enum variant (KI-11 in TASKS.md).
+`CameraProjection::Custom` stores that view-to-clip matrix. `matrix(aspect)` returns it unchanged, so a
+viewport resize changes pixel mapping and does not rebuild the matrix. Perspective and orthographic still
+recompute from the viewport aspect. `with_clip_range` edits only those two descriptors. The matrix must use
+the engine convention: left-handed, +Y up, +Z forward, column vectors, NDC xy in `[-1, 1]` with +Y up, NDC
+depth `[0, 1]` (0 near, 1 far), viewport origin top-left, depth compare less-than. OpenGL depth and reverse-Z
+are not converted. A finite singular matrix is accepted; rendering does not need an inverse, and
+`CameraView::ray_from_pixels` returns `None` when the inverse fails. Transparent objects still sort by
+camera-space depth from the view matrix, then `RenderOrder`, then extraction order. An oblique matrix can
+shear the picture while `Billboard` and `Upright` keep using the camera basis (D-26 is unchanged). Coplanar
+ties stay ties (D-48). Frustum planes come from the same `view_proj` formulas. A plane whose normal is
+negligible beside that plane's own coefficients is dropped and does not cull. Scaling the matrix by a
+negative constant can leave divided NDC and those CPU planes unchanged, because both the clip numerator
+and `w` change sign and the frustum corrects the inward direction. The GPU clips in homogeneous space
+before that divide, so the same scale is not a guarantee of the same rendered image.
 
 ### Orthographic
 
@@ -357,7 +367,7 @@ Switching among them changes only those two values. Extraction and the wgpu back
 | `top-down` | Orthographic, height 1000 | Pitch 90°, looking along −Y, +Z toward the top of the image | Billboards face the camera. Flat decals are visible | `Upright` and vertical `Fixed` quads are edge-on |
 | `steep` | Perspective, 50° | Pitch 1.05 rad (about 60°), same focus | The same occlusion and picking | `Upright` is roughly half a billboard; that ratio is not a settled design |
 | `side` | Orthographic, height 400 | Level, looking along +Z | The same occlusion and picking | Flat ground decals are edge-on. Not a 2D-style game |
-| custom | Not available | | | `Camera` holds a closed enum (KI-11, D-25) |
+| custom | `CameraProjection::Custom(Mat4)`, any `Transform` | Caller-supplied. Not one of the six constructors | GPU: equivalent perspective and orthographic pixels, an oblique matrix projects where `CameraView::project` says, opaque and mask depth, blend order, parented camera, resize leaves the matrix fixed, 1,000 sprites one draw, off-centre and oblique culling, a dropped far plane does not hide a far sprite | The matrix is not aspect-corrected. Reverse-Z is not converted. `Upright` does not follow the shear (D-26). Coplanar order is unchanged (D-48). No engine preset fills this matrix |
 
 ## The example: `spatial_scene`
 
