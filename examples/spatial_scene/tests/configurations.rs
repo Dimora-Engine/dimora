@@ -52,7 +52,10 @@ fn a_configuration_is_a_camera_and_a_transform_over_one_projection_set() {
         perspective += camera.projection.is_perspective() as u32;
         assert!(camera.active && transform.scale == Vec3::ONE, "{name}: an ordinary camera with an ordinary transform");
     }
-    assert_eq!(perspective, 2, "perspective and steep are perspective; the other four are orthographic");
+    assert_eq!(perspective, 2, "perspective and steep are perspective; four are orthographic; custom is neither");
+    let (custom, _) = NAMED[cameras::by_name("custom").unwrap()].1();
+    assert!(matches!(custom.projection, CameraProjection::Custom(_)));
+    assert!(!custom.projection.is_perspective());
 }
 
 #[test]
@@ -154,7 +157,16 @@ fn probe(config: usize, mesh_is_nearer: bool) -> Option<([u8; 4], [u8; 4])> {
     g.step(Duration::from_millis(16));
     let img = render(&mut g)?;
     let beside = pixel_of(&g, sprite_at + t.right() * 30.0).unwrap();
-    Some((px(&img, W as i32 / 2, H as i32 / 2), px(&img, beside.0, beside.1)))
+    // The six built-in placements put the view axis at the framebuffer centre. The oblique
+    // matrix shifts that axis, so the custom case reads the projected point instead.
+    let centre = if matches!(g.world.component::<Camera>(camera).unwrap().projection, CameraProjection::Custom(_)) {
+        let at = if mesh_is_nearer { mesh_at } else { sprite_at };
+        let (x, y) = pixel_of(&g, at).unwrap();
+        (x, y)
+    } else {
+        (W as i32 / 2, H as i32 / 2)
+    };
+    Some((px(&img, centre.0, centre.1), px(&img, beside.0, beside.1)))
 }
 
 #[test]
@@ -328,8 +340,9 @@ fn render_order_layer_always_decides_between_overlapping_blended_sprites() {
 fn render_order_order_only_breaks_ties_at_equal_view_depth() {
     // The pair is at equal world depth (same Z). Whether their *view* depths tie depends on the camera: with
     // the camera yawed (isometric) they differ and `order` is not consulted. Where they tie exactly
-    // (perspective, orthographic, side) `order` decides. Under `steep` the depths agree only up to rounding.
-    for name in ["perspective", "orthographic", "side", "isometric"] {
+    // (perspective, orthographic, side, and custom, which keeps the orthographic pose) `order` decides.
+    // Under `steep` the depths agree only up to rounding.
+    for name in ["perspective", "orthographic", "side", "isometric", "custom"] {
         let i = cameras::by_name(name).unwrap();
         let Some(natural) = ghost_overlap(i, None) else { return };
         let a_first = ghost_overlap(i, Some((RenderOrder::new(0, 1), RenderOrder::new(0, 0)))).unwrap();
@@ -363,4 +376,128 @@ fn the_walker_is_drawn_where_its_transform_says_it_is() {
     }
     assert!((seen[0].0 - seen[1].0).abs() > 40, "it crossed the screen: {seen:?}");
     assert!(seen.iter().all(|&(_, n)| n > 100), "{seen:?}");
+}
+
+// ---- example-local custom projection ----------------------------------------------------------------
+
+#[test]
+fn cycling_appends_custom_and_wraps_to_perspective() {
+    let g = game(0);
+    let mut scene = g.world.resource_mut::<scene::Scene>();
+    let side = cameras::by_name("side").unwrap();
+    scene::select_config(&mut scene, side + 1);
+    assert_eq!(scene.config_name(), "custom");
+    assert!(matches!(scene.projection, CameraProjection::Custom(_)));
+    let kept = scene::swap_builtin_projection(scene.projection);
+    assert!(matches!(kept, CameraProjection::Custom(_)), "P does not replace the oblique matrix");
+    let next = scene.config + 1;
+    scene::select_config(&mut scene, next);
+    assert_eq!((scene.config, scene.config_name()), (0, "perspective"));
+    assert!(scene.projection.is_perspective());
+    drop(scene);
+    let ortho = cameras::orthographic().0.projection;
+    assert!(scene::swap_builtin_projection(ortho).is_perspective());
+}
+
+#[test]
+fn the_custom_configuration_shears_a_known_point_and_keeps_pose_on_the_transform() {
+    let custom_i = cameras::by_name("custom").unwrap();
+    let ortho_i = cameras::by_name("orthographic").unwrap();
+    let custom = game(custom_i);
+    let ortho = game(ortho_i);
+    let point = position(&custom, "figure C") + Vec3::Y * 48.0;
+    assert!(position(&ortho, "figure C").approx_eq(position(&custom, "figure C"), 1e-3));
+
+    let cv = view(&custom);
+    let ov = view(&ortho);
+    let projected = cv.project(point).expect("figure C is in front of the custom camera");
+    let ordinary = ov.project(point).expect("figure C is in front of the orthographic camera");
+    assert!(projected.is_visible() && ordinary.is_visible());
+    let shift = (projected.pixels - ordinary.pixels).length();
+    assert!(shift > 20.0, "oblique shift is {shift} px");
+
+    let (origin, dir) = cv.ray_from_pixels(projected.pixels).expect("the oblique matrix is invertible");
+    let along = (point - origin).dot(dir);
+    let miss = (origin + dir * along - point).length();
+    assert!(miss < 0.5, "the showcase ray misses figure C by {miss}");
+
+    let near = cv.project(position(&custom, "figure A") + Vec3::Y * 48.0).unwrap();
+    let far = cv.project(position(&custom, "figure D") + Vec3::Y * 48.0).unwrap();
+    assert!(near.is_visible() && far.is_visible());
+    assert!(near.view_depth < far.view_depth && near.depth < far.depth);
+    assert!((0.0..=1.0).contains(&near.depth) && (0.0..=1.0).contains(&far.depth));
+
+    assert!(cv.position.approx_eq(ov.position, 1e-3));
+    assert!(cv.forward.approx_eq(ov.forward, 1e-4));
+    assert!(!cv.proj.approx_eq(&ov.proj, 1e-4));
+
+    let (camera, transform) = cameras::custom();
+    let home = GlobalTransform { matrix: transform.to_matrix() };
+    let wide = CameraView::new(&camera, &home, Vec2::new(320.0, 180.0));
+    let square = CameraView::new(&camera, &home, Vec2::new(400.0, 400.0));
+    assert!(wide.proj.approx_eq(&square.proj, 0.0), "the custom matrix stays fixed when the viewport aspect changes");
+    let sample = Vec3::new(34.0, 48.0, 300.0);
+    let (a, b) = (wide.project(sample).unwrap(), square.project(sample).unwrap());
+    assert!((a.ndc.x - b.ndc.x).abs() < 1e-4 && (a.ndc.y - b.ndc.y).abs() < 1e-4);
+    assert!((a.pixels.x / 320.0 - b.pixels.x / 400.0).abs() < 1e-3);
+
+    let moved = GlobalTransform { matrix: transform.with_position(transform.position + Vec3::X * 40.0).to_matrix() };
+    let shifted = CameraView::new(&camera, &moved, Vec2::new(320.0, 180.0));
+    assert!(shifted.proj.approx_eq(&wide.proj, 0.0));
+    assert!(!shifted.view.approx_eq(&wide.view, 1e-3), "moving the camera changes the view, not the projection");
+
+    let ortho_cam = cameras::orthographic().0;
+    let oa = CameraView::new(&ortho_cam, &home, Vec2::new(320.0, 180.0));
+    let ob = CameraView::new(&ortho_cam, &home, Vec2::new(400.0, 400.0));
+    assert!(!oa.proj.approx_eq(&ob.proj, 1e-3), "orthographic still tracks aspect");
+
+    let frustum = engine::renderer::Frustum::from_view_proj(&cv.view_proj);
+    for label in ["figure A", "figure C", "pillar", "cube"] {
+        assert!(frustum.intersects_sphere(position(&custom, label), 1.0), "{label} is inside the custom frustum");
+    }
+    assert!(!frustum.intersects_sphere(Vec3::new(8000.0, 60.0, 300.0), 10.0), "a point far to the side is culled");
+}
+
+#[test]
+fn the_custom_camera_renders_sheared_scene_content() {
+    let i = cameras::by_name("custom").unwrap();
+    let mut g = game(i);
+    let Some(img) = render(&mut g) else { return };
+    let extracted = g.extract().unwrap();
+    assert!(extracted.stats.sprites_visible > 0 && extracted.stats.meshes_visible > 0, "{:?}", extracted.stats);
+
+    let pillar = position(&g, "pillar");
+    let (cx, cy) = pixel_of(&g, pillar).expect("pillar projects");
+    let pillar_px = px(&img, cx, cy);
+    assert!(
+        pillar_px[3] == 255 && pillar_px[0] > pillar_px[2] + 30,
+        "opaque pillar at the projected centre ({cx},{cy}): {pillar_px:?}"
+    );
+
+    let ortho = game(cameras::by_name("orthographic").unwrap());
+    let (ox, oy) = pixel_of(&ortho, pillar).unwrap();
+    assert!((cx - ox).abs() + (cy - oy).abs() > 15, "custom ({cx},{cy}) vs orthographic ({ox},{oy})");
+    let elsewhere = px(&img, ox, oy);
+    let colour_delta: i32 = (0..3).map(|c| (pillar_px[c] as i32 - elsewhere[c] as i32).abs()).sum();
+    assert!(colour_delta > 40, "the orthographic pixel is not the pillar: {elsewhere:?} vs {pillar_px:?}");
+
+    let body = position(&g, "figure A") + Vec3::Y * 46.0;
+    let (fx, fy) = pixel_of(&g, body).unwrap();
+    let cutout = (-3..=3).any(|dy| {
+        (-3..=3).any(|dx| {
+            let p = px(&img, fx + dx, fy + dy);
+            p[3] == 255 && p[0] > 150 && p[0] > p[2] + 25
+        })
+    });
+    assert!(cutout, "cutout figure A is visible around its projected body ({fx},{fy})");
+
+    let mut ghosts = game(i);
+    isolate(&mut ghosts, &["ghost"]);
+    let at = position(&ghosts, "ghost") + view(&ghosts).up * 46.0;
+    let Some(ghost_img) = render(&mut ghosts) else { return };
+    let (gx, gy) = pixel_of(&ghosts, at).unwrap();
+    let blended = px(&ghost_img, gx, gy);
+    let sky = px(&ghost_img, 1, 1);
+    assert_ne!(blended, sky, "the blended ghost changes the clear colour");
+    assert!(blended[2] > blended[0], "the pale ghost stays blue over the sky: {blended:?}, sky {sky:?}");
 }

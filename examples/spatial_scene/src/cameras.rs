@@ -3,7 +3,8 @@
 //! Each one is a plain function returning the same `Camera` component and a `Transform` that the caller may
 //! edit afterwards. They live in the example on purpose: the engine does not have camera presets yet, and
 //! their signatures and defaults are a deferred decision (ADR-0004, D-25). Isometric is an orthographic
-//! camera that is yawed and pitched, not a projection of its own.
+//! camera that is yawed and pitched, not a projection of its own. `custom` is an example-local oblique
+//! matrix on [`CameraProjection::Custom`]. It is not an engine preset and not an oblique builder.
 
 use engine::prelude::*;
 
@@ -20,17 +21,34 @@ pub const ISOMETRIC_PITCH: f32 = 0.615_479_7;
 pub type CameraConfig = fn() -> (Camera, Transform);
 
 /// Name and constructor of every configuration, in the order the example cycles through them.
-pub const NAMED: [(&str, CameraConfig); 6] = [
+/// `custom` is last. After it, cycling wraps to `perspective`.
+pub const NAMED: [(&str, CameraConfig); 7] = [
     ("perspective", perspective),
     ("orthographic", orthographic),
     ("isometric", isometric),
     ("top-down", top_down),
     ("steep", steep),
     ("side", side),
+    ("custom", custom),
 ];
 
 pub fn by_name(name: &str) -> Option<usize> {
     NAMED.iter().position(|(n, _)| *n == name)
+}
+
+/// Index chosen by `--camera NAME` and `--ortho`, using the example's existing precedence:
+/// an explicit name wins, `--ortho` selects orthographic, and neither selects index 0.
+///
+/// An unknown name is an error. It is not read as `custom`.
+pub fn config_from_args(camera: Option<&str>, ortho: bool) -> Result<usize, String> {
+    match (camera, ortho) {
+        (Some(name), _) => by_name(name).ok_or_else(|| {
+            let known: Vec<&str> = NAMED.iter().map(|(n, _)| *n).collect();
+            format!("unknown camera `{name}`; known: {}", known.join(", "))
+        }),
+        (None, true) => Ok(by_name("orthographic").expect("listed")),
+        (None, false) => Ok(0),
+    }
 }
 
 fn camera(projection: CameraProjection) -> Camera {
@@ -76,6 +94,49 @@ pub fn steep() -> (Camera, Transform) {
 /// Orthographic, level, looking along +Z: the side-scrolling placement.
 pub fn side() -> (Camera, Transform) {
     (camera(CameraProjection::orthographic(ORTHO_HEIGHT)), framed(0.0, 0.0, 1000.0))
+}
+
+/// Aspect stored in [`custom`]. [`CameraProjection::Custom`] ignores later viewport aspect.
+/// The example window (1280×720) and the configuration tests (320×180) are both 16:9.
+pub const CUSTOM_ASPECT: f32 = 16.0 / 9.0;
+
+/// View-space cabinet shear for [`custom`]: `x' = x + z * shear.x`, `y' = y + z * shear.y`.
+///
+/// The values move a mid-scene point by tens of pixels in the test viewport and leave the home
+/// figures inside a frame of height [`ORTHO_HEIGHT`].
+pub const OBLIQUE_SHEAR: Vec2 = Vec2::new(0.14, 0.04);
+
+/// Oblique view-to-clip matrix used only by this example.
+///
+/// Column vectors, applied as `clip = proj * view * world`:
+///
+/// 1. The camera [`Transform`] is the view. This matrix does not contain the world pose.
+/// 2. A view-space shear maps `(x, y, z, 1)` to `(x + z * shear.x, y + z * shear.y, z, 1)`.
+///    View `z` is unchanged, so depth order stays the ordinary near-to-far order.
+/// 3. [`Mat4::orthographic_lh`] then maps that sheared view into clip space: height
+///    [`ORTHO_HEIGHT`], near 1, far 4000, aspect [`CUSTOM_ASPECT`]. Those clip distances are
+///    inside the matrix. [`CameraProjection::with_clip_range`] does not edit `Custom`.
+///
+/// Left-handed, +Y up, +Z forward, NDC depth `[0, 1]`, less-than depth. This is not a public
+/// oblique constructor.
+fn oblique_orthographic(shear: Vec2) -> Mat4 {
+    let half_height = ORTHO_HEIGHT * 0.5;
+    let half_width = half_height * CUSTOM_ASPECT;
+    let ortho = Mat4::orthographic_lh(-half_width, half_width, -half_height, half_height, 1.0, 4000.0);
+    let shear = Mat4::from_cols(
+        Vec4::new(1.0, 0.0, 0.0, 0.0),
+        Vec4::new(0.0, 1.0, 0.0, 0.0),
+        Vec4::new(shear.x, shear.y, 1.0, 0.0),
+        Vec4::new(0.0, 0.0, 0.0, 1.0),
+    );
+    ortho * shear
+}
+
+/// The same placement as [`orthographic`], with the example's oblique projection.
+pub fn custom() -> (Camera, Transform) {
+    let projection =
+        CameraProjection::custom(oblique_orthographic(OBLIQUE_SHEAR)).expect("showcase oblique matrix is finite");
+    (camera(projection), home_transform())
 }
 
 /// Free-fly pose used by the example: a position and two angles. Every configuration above is expressible as
@@ -141,6 +202,9 @@ mod tests {
     #[test]
     fn existing_camera_presets_remain_compatible() {
         for (name, make) in NAMED {
+            if name == "custom" {
+                continue;
+            }
             let (mut camera, mut transform) = make();
             let before = camera.projection;
             assert!(!matches!(before, CameraProjection::Custom(_)), "{name} is still a built-in projection");
@@ -153,6 +217,34 @@ mod tests {
             assert!(camera.projection.matrix(1.0).approx_eq(&matrix, 0.0), "{name}");
             assert!(!camera.projection.is_perspective());
         }
+        let (camera, transform) = custom();
+        let matrix = camera.projection.matrix(CUSTOM_ASPECT);
+        assert!(matches!(camera.projection, CameraProjection::Custom(_)));
+        assert!(matrix.to_cols_array().iter().all(|v| v.is_finite()));
+        let ordinary = CameraProjection::orthographic(ORTHO_HEIGHT).with_clip_range(1.0, 4000.0).matrix(CUSTOM_ASPECT);
+        assert!(!matrix.approx_eq(&ordinary, 1e-5), "the oblique matrix is not the plain orthographic matrix");
+        let perspective = CameraProjection::perspective(FOV_DEGREES).with_clip_range(1.0, 4000.0).matrix(CUSTOM_ASPECT);
+        assert!(!matrix.approx_eq(&perspective, 1e-4));
+        assert!(!camera.projection.is_perspective());
+        assert!(
+            custom().0.projection.matrix(1.0).approx_eq(&matrix, 0.0),
+            "construction is deterministic and aspect-independent"
+        );
+        assert!(transform.position.approx_eq(home_transform().position, 1e-4));
+        assert_eq!(config_from_args(Some("custom"), false).unwrap(), by_name("custom").unwrap());
+    }
+
+    #[test]
+    fn cli_names_keep_their_indices_and_an_unknown_name_is_rejected() {
+        for (i, (name, _)) in NAMED.iter().enumerate() {
+            assert_eq!(config_from_args(Some(name), false).unwrap(), i, "{name}");
+        }
+        assert_eq!(config_from_args(None, true).unwrap(), by_name("orthographic").unwrap());
+        assert_eq!(config_from_args(None, false).unwrap(), 0);
+        assert_eq!(config_from_args(Some("orthographic"), true).unwrap(), by_name("orthographic").unwrap());
+        let err = config_from_args(Some("nonsense"), false).unwrap_err();
+        assert!(err.contains("unknown camera `nonsense`"), "{err}");
+        assert_ne!(by_name("nonsense"), by_name("custom"));
     }
 
     #[test]

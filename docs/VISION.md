@@ -95,7 +95,7 @@ Primary use cases, in the order the roadmap proves them:
 
 ## Camera configurations and visual styles
 
-*Confirmed direction (owner, 2026-10-13); mechanism decisions (presets as constructors, style as per-level policy, gameplay orientation as data, coplanar ordering amended) accepted 2026-10-13 and recorded in [ADR-0004](adr/0004-one-spatial-world-many-camera-configurations.md). The test scene demonstrates six configurations with example-local constructors (2026-10-14). An engine preset API, style policies beyond per-sprite orientation and per-texture filtering, gameplay-orientation data and a coplanar mechanism are not implemented.*
+*Confirmed direction (owner, 2026-10-13); mechanism decisions (presets as constructors, style as per-level policy, gameplay orientation as data, coplanar ordering amended) accepted 2026-10-13 and recorded in [ADR-0004](adr/0004-one-spatial-world-many-camera-configurations.md). The test scene demonstrates seven configurations with example-local constructors (2026-10-14, plus `custom` in M6-1C). An engine preset API, an oblique builder, style policies beyond per-sprite orientation and per-texture filtering, gameplay-orientation data and a coplanar mechanism are not implemented.*
 
 Dimora's defining principle is the unified spatial world, not a look. It must support these views as
 **intended capabilities**, not as a promise to build every one in the next milestone:
@@ -107,7 +107,7 @@ Dimora's defining principle is the unified spatial world, not a look. It must su
 | Isometric | Orthographic camera rotated by its transform; custom axes through a custom projection | **Demonstrated** by an example-local constructor in `spatial_scene`. Not an engine preset, and not a projection type |
 | Top-down | Camera looking along the world's down axis | **Demonstrated.** `Upright` sprites are edge-on; that is observed, not settled (D-26). Coplanar ordering is still open (D-48) |
 | Side-scrolling | Camera looking along the depth axis | **Demonstrated as a camera placement.** Not demonstrated as a 2D-style game |
-| Custom | A view-to-clip matrix supplied by game code | **Implemented** as `CameraProjection::Custom` (M6-1B, D-25). Not an engine preset. The matrix stays fixed across resize |
+| Custom | A view-to-clip matrix supplied by game code | **Implemented** as `CameraProjection::Custom` (M6-1B, `a38cb30`, D-25). `spatial_scene` demonstrates one oblique example constructor (M6-1C, committed locally, not pushed). Not an engine preset and not an oblique builder. The matrix stays fixed across resize |
 
 Three things are kept separate, and none may be implemented as another: **camera projection** (how the world
 becomes pixels), **gameplay orientation** (which way is up, where the ground plane is, what "facing" means),

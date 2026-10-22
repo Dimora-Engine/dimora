@@ -402,8 +402,8 @@ takes. That is the existing storage leak, not a new `hecs` type. The render-pose
 | **Internal** | `hecs` types (`Entity`, `EntityRef`, `Query`, `QueryBorrow`, `World.entities`, `DynamicBundle` on spawn and command insert), schedule internals, `wgpu`/`winit` re-exports, `SceneRenderer` internals, extraction helpers including the render-pose walk | Free to change; not named in docs or examples as supported |
 
 **10. One world, many camera configurations** ([ADR-0004](adr/0004-one-spatial-world-many-camera-configurations.md);
-confirmed owner direction; mechanism decisions accepted or amended 2026-10-13. The test scene demonstrates six
-views with example-local constructors; an engine preset API and a coplanar mechanism are not implemented). A camera is a
+confirmed owner direction; mechanism decisions accepted or amended 2026-10-13. The test scene demonstrates seven
+views with example-local constructors; an engine preset API, an oblique builder, and a coplanar mechanism are not implemented). A camera is a
 `Transform` plus a projection; perspective, orthographic, isometric (orthographic, rotated), top-down,
 side-scrolling and custom views are configurations of that one model with no per-view renderer, extraction path
 or world representation. Presets for common views are constructors that return a `Camera` and a `Transform` and
@@ -415,9 +415,10 @@ separate: *projection* (how the world becomes pixels), *gameplay orientation* (u
 facing), *visual style* (snapping, fog, mood). *Today:* the camera maths takes any `Transform` and a perspective, orthographic, or custom view-to-clip
 matrix. The tilemap is a quad grid in its entity's local XY plane that is laid flat by rotating the
 entity, and sprite orientation modes are tested under a pitched camera. *Demonstrated (2026-10-14):* the same
-`spatial_scene` world through example-local perspective, orthographic, isometric, top-down, steep and side
-constructors, with GPU tests. Those constructors are not an engine preset API. *Custom projection (M6-1B):*
+`spatial_scene` world through example-local perspective, orthographic, isometric, top-down, steep, side, and
+custom constructors, with GPU tests. Those constructors are not an engine preset API. *Custom projection (M6-1B, `a38cb30`):*
 `CameraProjection::Custom(Mat4)` renders and picks through the same extraction and `view_proj` uniform.
+The example `custom` constructor (M6-1C, committed locally, not pushed) fills that variant with a local oblique matrix. The pose stays on `Transform`.
 *Not demonstrated:* a 2D-style game. One camera renders per frame (R-2). *Gaps:* R-16, including the three
 verified coplanar conflicts (D-48). `Upright` under an oblique matrix is still unspecified (D-26).
 

@@ -499,6 +499,22 @@ pub fn camera_system(world: &mut World) {
     world.component_mut::<Camera>(camera).unwrap().projection = projection;
 }
 
+/// Swaps the two built-in projections. `P` uses this.
+///
+/// A [`CameraProjection::Custom`] matrix is returned unchanged. The key is a shortcut between
+/// perspective and orthographic, not a replacement for the example's oblique matrix. `C` still
+/// cycles every configuration, including `custom`.
+pub fn swap_builtin_projection(projection: CameraProjection) -> CameraProjection {
+    if matches!(projection, CameraProjection::Custom(_)) {
+        return projection;
+    }
+    if projection.is_perspective() {
+        CameraProjection::orthographic(ORTHO_HEIGHT).with_clip_range(1.0, 4000.0)
+    } else {
+        CameraProjection::perspective(FOV_DEGREES).with_clip_range(1.0, 4000.0)
+    }
+}
+
 /// Switches the scene's camera to configuration `index` (wrapping), keeping the same world.
 pub fn select_config(scene: &mut Scene, index: usize) {
     scene.config = index % NAMED.len();

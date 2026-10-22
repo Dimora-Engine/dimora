@@ -4,7 +4,8 @@
 //! two stay when [`scene::request_environment_switch`] replaces A with B, or B with A. [`prefab::spawn_lamp`]
 //! is the documented code-defined prefab: a function of `&mut World` that returns one root entity.
 //! A camera configuration ([`cameras`]) is only a `Camera` and a `Transform`: there is no isometric mode
-//! and no per-view code path anywhere in extraction or the backend.
+//! and no per-view code path anywhere in extraction or the backend. `custom` stores an example-local
+//! oblique matrix on `CameraProjection::Custom`. The engine has no oblique preset.
 
 pub mod art;
 pub mod cameras;

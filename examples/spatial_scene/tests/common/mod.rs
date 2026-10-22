@@ -176,7 +176,7 @@ pub fn set_orientation(game: &mut Game, name: &str, orientation: SpriteOrientati
     game.world.component_mut::<Sprite>(e).unwrap().orientation = orientation;
 }
 
-/// The five configurations in which the decal bench is visible (in `side` every flat decal is edge-on).
+/// Configurations in which the decal bench is visible (`side` leaves every flat decal edge-on).
 pub fn looking_down() -> impl Iterator<Item = (usize, &'static str)> {
     config_names().filter(|(_, n)| *n != "side")
 }

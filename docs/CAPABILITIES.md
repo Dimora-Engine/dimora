@@ -57,7 +57,7 @@ without it.
 | 6 | Input and action mapping | Working for M3b | Fixed-step latch and `Actions` (Phases 1–2). Physical pointer stays physical; logical conversion is on `Viewport` (`9c99edf`). A grabbed cursor takes `mouse_delta` from device motion; a free cursor uses position changes; focus loss releases held input and the grab (ADR-0013). Gamepad, text, and a rebinding UI are deferred | M3 |
 | 7 | Errors, logging, diagnostics, config | Partial | `log` 0.4 and `Diagnostics` (ADR-0012, M3a-4). No runtime config. No profiler, no history | M20, M24 |
 | **Rendering** | | | | |
-| 8 | Cameras and projection | Working; custom matrix implemented (M6-1B) | Ortho, perspective, and `CameraProjection::Custom(Mat4)`. Viewport, picking rays. `spatial_scene` still demonstrates isometric, top-down, steep and side through example-local constructors (not an engine preset API). One camera/frame. D-48 and D-26 stay open | M6 |
+| 8 | Cameras and projection | Working; custom matrix implemented (M6-1B, `a38cb30`) | Ortho, perspective, and `CameraProjection::Custom(Mat4)`. Viewport, picking rays. `spatial_scene` demonstrates isometric, top-down, steep, side, and an example `custom` oblique matrix (M6-1C, committed locally, not pushed). Not an engine preset API and not an oblique builder. One camera/frame. D-48 and D-26 stay open | M6 |
 | 9 | Spatial sprites | Working | Orientation modes, region, tint, cutout/alpha; material batching (`a7efd6c`); CPU shelf packer (`bf4d9bb`); GPU atlas samples (`1666695`). M5 is accepted locally | M5 |
 | 10 | Depth, transparency, ordering | Working for sprites and meshes | One depth buffer. Blended sprites and blended meshes share one sequence (`ab1b6f7`). Object-level sort remains. Three coplanar conflicts stay unsolved (D-48, M6) | M6, M14 |
 | 11 | Meshes and materials | Working for the M5 asset | `MaterialAsset` (`e0c29ef`). Procedural plane, cube, cuboid, sphere, and cylinder (`92286ce`). Normal slot is stored and not shaded. No loader. `cone` still asserts | M12, M14 |
@@ -320,16 +320,16 @@ Missing from the original category list and now tracked: **save games** (34), **
   | Top-down | **Demonstrated** (orthographic, looking along −Y). `Upright` quads are edge-on; that behaviour is observed, not accepted as the final design (D-26) |
   | Steep (about 60°) | **Demonstrated** (perspective). `Upright` is foreshortened to roughly half a billboard. Same caveat (D-26) |
   | Side view | **Demonstrated** (orthographic, looking along +Z). Not a 2D-style game: no gameplay movement plane |
-  | Custom projection | **Implemented** (M6-1B, committed locally, not pushed). `CameraProjection::Custom(Mat4)` on the existing camera. CPU and GPU tests for an equivalent perspective matrix, an equivalent orthographic matrix, an oblique matrix, picking, depth, and culling. Not an example preset. The matrix is not aspect-corrected on resize |
+  | Custom projection | **Implemented** as a public matrix (M6-1B, `a38cb30`, not pushed) and **demonstrated** by the example `custom` constructor (M6-1C, committed locally, not pushed). `CameraProjection::Custom(Mat4)` on the existing camera. The example matrix is a view-space shear in front of an orthographic projection; the pose stays on `Transform`. `--camera custom` selects it. Not an engine preset and not an oblique builder. The matrix is not aspect-corrected on resize. A negative scale is not claimed to match GPU clipping |
 
-  The six rows above share one world, one extraction path and one wgpu backend. What each one guarantees is
+  These configurations share one world, one extraction path and one wgpu backend. What each one guarantees is
   tabulated in [SPATIAL_RENDERING.md](SPATIAL_RENDERING.md). Constructors live in
   `examples/spatial_scene/src/cameras.rs` and return a `Camera` plus a `Transform`. **There is no engine-level
   preset API.** Signatures and default angles stay deferred (ADR-0004). D-25 chose the matrix, not a preset.
 * **Presets and style policy (ADR-0004; accepted 2026-10-13).** Camera presets will be constructors
   over the one camera model and stay editable; style policies sit at the object, material, camera, renderer or
   scene level with no universal style type. Today: sprite orientation is per `Sprite`, filtering per `Texture`.
-  The example's six constructors are **not** that API: nothing in an engine crate builds a preset, and there is
+  The example's seven constructors are **not** that API: nothing in an engine crate builds a preset, and there is
   no camera-level or renderer-level style policy.
 * **Required.** Multiple cameras with viewports, camera-to-texture, and the same behaviour of picking,
   culling, depth and lighting in every configuration. Custom matrices are implemented (D-25, M6-1B).
@@ -338,9 +338,9 @@ Missing from the original category list and now tracked: **save games** (34), **
 * **Integration.** UI world anchors, picking, audio listener, directional frames (D-31) and the editor
   viewport all read the active camera's view.
 * **Performance.** Per-camera extraction multiplies CPU cost; cull per camera.
-* **Tests/examples.** `examples/spatial_scene/tests/configurations.rs` (16 tests, 2026-10-14): the same world
-  under all six configurations, project-then-pick, mesh/sprite occlusion both ways, orientation, and the three
-  coplanar conflicts. Two viewports in one target, and picture-in-picture, are still to do.
+* **Tests/examples.** `examples/spatial_scene/tests/configurations.rs` (19 tests, 2026-10-22): the same world
+  under all seven configurations, project-then-pick, mesh/sprite occlusion both ways, orientation, the three
+  coplanar conflicts, and the example `custom` shear, picking, and GPU pixels. Two viewports in one target, and picture-in-picture, are still to do.
 * **Not initially.** Cameras as render graph nodes, stereo, post-processing.
 
 ### 9. Spatial sprites
@@ -370,7 +370,7 @@ Missing from the original category list and now tracked: **save games** (34), **
   `(0, 0)`. Sprite depth is the quad centre. Mesh depth is the camera-space Z of the world-space
   bounding-sphere centre. Sprites are visited before meshes, so an equal key draws the sprite first.
   By decision (ADR-0004, amended 2026-10-13) spatial depth, transparency sorting, render layers or queues and explicit order are distinct concepts. A deliberate-ordering mechanism for coplanar opaque and cutout content is **not implemented and not chosen**. The M6 scene verified three limits, each pinned by a test in `configurations.rs` (D-48): equal-height cutout decals follow spawn order (`equal_height_cutout_decals_are_decided_by_draw_order_not_by_space`); a cutout decal coplanar with a slab is shown or hidden depending on the camera (`known_conflict_a_decal_coplanar_with_a_mesh_is_hidden_or_shown_by_rounding`); a blended decal at the same height as a cutout one is likewise camera-dependent (`known_conflict_a_blended_decal_at_the_same_height_as_a_cutout_one_depends_on_the_camera`). GPU tests: nearer mesh occludes a
-  sprite, farther does not, under all six example configurations; a blended mesh, a blended sprite, and
+  sprite, farther does not, under all seven example configurations; a blended mesh, a blended sprite, and
   another blended mesh composite in depth order; the opposite arrangement puts the sprite in front.
   Limits: the mesh centre does not order intersections, cyclic overlaps, or a mesh that spans another
   object's depth (KI-14). Unassigned meshes stay opaque.

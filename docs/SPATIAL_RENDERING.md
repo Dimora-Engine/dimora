@@ -357,7 +357,9 @@ large blended box still sorts by the centre of its bounding sphere.
 
 Each row is one function in `examples/spatial_scene/src/cameras.rs`. It returns a `Camera` and a `Transform`,
 and the example edits both afterwards. They are not an engine API, and isometric is not a projection variant.
-Switching among them changes only those two values. Extraction and the wgpu backend have no branch on the name.
+`custom` is an example matrix on the public `CameraProjection::Custom` variant. It is not an engine preset
+and not an oblique builder. Switching among them changes only those two values. Extraction and the wgpu
+backend have no branch on the name.
 
 | Name | Projection | Placement | Holds in the tests | Does not |
 |---|---|---|---|---|
@@ -367,7 +369,7 @@ Switching among them changes only those two values. Extraction and the wgpu back
 | `top-down` | Orthographic, height 1000 | Pitch 90°, looking along −Y, +Z toward the top of the image | Billboards face the camera. Flat decals are visible | `Upright` and vertical `Fixed` quads are edge-on |
 | `steep` | Perspective, 50° | Pitch 1.05 rad (about 60°), same focus | The same occlusion and picking | `Upright` is roughly half a billboard; that ratio is not a settled design |
 | `side` | Orthographic, height 400 | Level, looking along +Z | The same occlusion and picking | Flat ground decals are edge-on. Not a 2D-style game |
-| custom | `CameraProjection::Custom(Mat4)`, any `Transform` | Caller-supplied. Not one of the six constructors | GPU: equivalent perspective and orthographic pixels, an oblique matrix projects where `CameraView::project` says, opaque and mask depth, blend order, parented camera, resize leaves the matrix fixed, 1,000 sprites one draw, off-centre and oblique culling, a dropped far plane does not hide a far sprite | The matrix is not aspect-corrected. Reverse-Z is not converted. `Upright` does not follow the shear (D-26). Coplanar order is unchanged (D-48). No engine preset fills this matrix |
+| `custom` | Example `CameraProjection::Custom`: orthographic height 400, near 1, far 4000, aspect 16/9, after a view-space shear of `(0.14, 0.04)` | The same home transform as `perspective` and `orthographic` | Occlusion both ways; project-then-pick. At 320×180, figure C moves about 48 px from its orthographic pixel. The pillar's GPU pixel is the projected centre and is not the orthographic pixel. A cutout figure and a blended ghost stay visible. The frustum keeps those scene objects and culls a point at x = 8000. Resize keeps the matrix | Not an engine preset and not an oblique builder. Aspect is baked. `Upright` does not follow the shear (D-26). Coplanar order is unchanged (D-48). A negative scale of a custom matrix is not a claim of the same GPU image. Reverse-Z is not converted |
 
 ## The example: `spatial_scene`
 
@@ -378,8 +380,8 @@ cargo run --release -p spatial_scene -- --screenshot out.png [--camera NAME | --
     [--orientation billboard|upright|fixed] [--frames N]
 ```
 
-`NAME` is `perspective`, `orthographic`, `isometric`, `top-down`, `steep` or `side`. `--ortho` is the
-orthographic configuration. `--frames N` renders N frames and exits with an error if the GPU cache grew.
+`NAME` is `perspective`, `orthographic`, `isometric`, `top-down`, `steep`, `side`, or `custom`. An unknown
+name is an error. `--ortho` is the orthographic configuration. `--frames N` renders N frames and exits with an error if the GPU cache grew.
 The default environment is A. `--environment b` publishes the yard before the first step.
 
 Environment A is a checkerboard of mesh slabs on the `XZ` plane (`+Y` up), four cutout figures at Z = 0,
@@ -402,8 +404,10 @@ same object built through `SceneBuilder`, for a managed scene. Neither is spawne
 so the screenshot baselines stay the original scene. There is no prefab asset and no prefab editor.
 
 Controls: `W/S` move in depth, `A/D` strafe, `Space/Shift` move up/down, arrows rotate, `C` selects the next
-configuration, `P` toggles perspective/orthographic on the current pose, `O` cycles the figures' sprite
-orientation, `R` returns to the current configuration, `Tab` switches environment, `Esc` quits.
+configuration (`custom` is last, then `perspective`), `P` toggles perspective/orthographic and leaves a
+custom matrix unchanged, `O` cycles the figures' sprite orientation, `R` returns to the current configuration,
+`Tab` switches environment, `Esc` quits. The window title names the active configuration and, for the
+projection, `perspective`, `orthographic`, or `custom`. It does not infer that from `is_perspective`.
 
 <img src="spatial_scene_m6_perspective.png" alt="The same scene in perspective">
 

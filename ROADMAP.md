@@ -230,7 +230,7 @@ Each row is a capability nobody builds yet whose *shape* constrains work in the 
 | Scene and asset serialization | M19 | Components must stay plain data (no GPU objects, no cached derived values); asset references must be restorable to a stable identity; entity references need remapping | ARCHITECTURE.md requirement 8; D-16, D-18, D-47 |
 | Hot reload | M17 | A reload takes effect at a stage boundary; consumers resolve assets per use instead of caching derived data in components | Requirement 6; D-16 |
 | Scripting | M18 | Commands, events and a component registry must exist first; scripts get a small versioned surface, not `hecs` or renderer types | Requirements 7 and 9; D-40 to D-45 |
-| Multiple cameras, render targets and a custom projection | M6 | Six views are demonstrated by example-local constructors in `spatial_scene` (2026-10-14). `RenderScene` still holds one view and `Camera` a closed projection enum; do not add features that assume one view, one projection or one ground plane | R-2, R-16; D-08, D-25, D-48; ADR-0004 |
+| Multiple cameras, render targets and a custom projection | M6 | Seven example views, including `custom`, are demonstrated in `spatial_scene`. `CameraProjection::Custom(Mat4)` is implemented (D-25, `a38cb30`). `RenderScene` still holds one view. One camera renders per frame. Do not add features that assume one view, one projection or one ground plane | R-2, R-16; D-08, D-25, D-48; ADR-0004 |
 | Blended meshes, particles, skinned characters | M5, M12, M15 | They need a transparency class in the render model before they exist | R-1; D-05 |
 | Fixed-step interpolation | M3a | **Done (M3a-5, committed locally, not pushed).** Opt-in, extraction-only, never writes `Transform` or `GlobalTransform` (ADR-0007) | R-3 |
 | UI in screen and world space | M10 | Window scale factor, sub-rectangle texture update and an overlay pass; M3b and M5 carry the prerequisites | R-12, KI-24, KI-25; D-24, D-37 to D-39 |
@@ -555,19 +555,21 @@ baseline. Camera projection stays separate from gameplay orientation and visual 
 **Prerequisites.** M5.
 
 **Tasks.**
-- **Custom projections (D-25). Implemented in M6-1B, committed locally, not pushed.** `CameraProjection::Custom(Mat4)`
+- **Custom projections (D-25). Implemented in M6-1B, commit `a38cb30`, not pushed.** `CameraProjection::Custom(Mat4)`
   stores a caller-supplied view-to-clip matrix on the existing `Camera`. Extraction, culling, picking
   and the wgpu uniform use that matrix. It is not rebuilt when the viewport changes. No second renderer
   and no engine preset. M6 is not complete.
+- **Example custom camera (M6-1C, committed locally, not pushed).** `spatial_scene` adds `custom` after the original six
+  constructors. It is an example-local oblique matrix on `CameraProjection::Custom`, selected with
+  `--camera custom` and the `C` key. It is not an engine preset and not an oblique builder.
 - Render every active camera in `order`, each with its own viewport and clear/load behaviour (D-08).
 - Camera-to-texture render targets.
-- **Camera-configuration test scene. Done and verified (2026-10-14).** `spatial_scene` is one world (sprites
+- **Camera-configuration test scene. Done and verified (2026-10-14), with a seventh constructor in M6-1C (committed locally, not pushed).** `spatial_scene` is one world (sprites
   at several depths, overlapping and coplanar decals, cutout foliage, meshes, a ground, a moving sprite)
-  viewed through six example-local constructors: perspective, orthographic, isometric (orthographic, yawed and
-  pitched), top-down, steep and side. Each returns a `Camera` and a `Transform` and stays editable; isometric
-  is not a projection type; the scene prescribes no visual style. Evidence is in TASKS.md. **Not done, and
-  not an engine feature:** an engine-level preset API. The custom matrix (D-25) is implemented and is not
-  one of these six constructors.
+  viewed through seven example-local constructors: perspective, orthographic, isometric (orthographic, yawed and
+  pitched), top-down, steep, side, and custom. Each returns a `Camera` and a `Transform` and stays editable; isometric
+  is not a projection type; custom is an oblique matrix, not an engine preset; the scene prescribes no visual style. Evidence is in TASKS.md. **Not done, and
+  not an engine feature:** an engine-level preset API or a public oblique builder.
 - Camera configurations decision (D-48), mechanisms only: the owner has decided the principles (ADR-0004,
   2026-10-13: gameplay orientation is data and not derived only from the camera or sprite; spatial depth,
   transparency sorting, render layers or queues and explicit order stay distinct; no occlusion framework until
@@ -607,16 +609,19 @@ baseline. Camera projection stays separate from gameplay orientation and visual 
   configuration-specific branch in extraction or in the wgpu backend.
 - A custom projection supplied by game code renders and picks correctly (GPU test and picking test).
 
-**Met by the test scene, and only that part (2026-10-14).** The six example configurations render one world.
-GPU tests hold in all of them for mesh/sprite occlusion both ways, and for projecting a point and picking
+**Met by the test scene (2026-10-14), and by the seventh constructor (2026-10-22, M6-1C, committed locally, not pushed).** The original six example configurations render one world.
+GPU tests hold in all of them, and in `custom`, for mesh/sprite occlusion both ways, and for projecting a point and picking
 back through that pixel. The configuration table is in `docs/SPATIAL_RENDERING.md`. **Custom projection
-(2026-10-22, M6-1B, committed locally, not pushed).** Game code can store a view-to-clip matrix on `Camera`. CPU tests cover
+(2026-10-22, M6-1B, commit `a38cb30`, not pushed).** Game code can store a view-to-clip matrix on `Camera`. CPU tests cover
 construction, aspect policy, picking and culling. GPU tests cover perspective-equivalent and
 orthographic-equivalent pixels, an oblique matrix, depth, blend order, camera transforms, viewport resize,
-1,000-sprite batching and frustum culling. The example does not gain a seventh constructor, so the
-"scene renders under a custom projection" row is still unmet. **Not met:** two viewports; camera-to-texture;
-chunking; benchmarks; picture-in-picture; an engine preset API. The blended-sprite-versus-mesh assertion
-was not repeated per example configuration. The constructors are example-local.
+1,000-sprite batching and frustum culling. A negative scale can match divided NDC and CPU culling without
+matching GPU homogeneous clipping. **Example camera (M6-1C).** `spatial_scene` renders the same world
+through `custom`: an example-local sheared orthographic matrix, pose on `Transform`, `--camera custom`,
+and `C` / `P` behaviour that does not discard that matrix. That meets the scene-under-a-custom-projection
+part of the configuration bullet. **Not met:** two viewports; camera-to-texture; D-08; D-48; chunking;
+benchmarks; picture-in-picture; an engine preset API; a public oblique builder. M6 is not complete.
+The blended-sprite-versus-mesh assertion was not repeated per example configuration. The constructors are example-local.
 
 **Tests/examples.** `spatial_scene` has `--camera <name>`. Picture-in-picture is still to do. The GPU tests
 for the scene are `examples/spatial_scene/tests/configurations.rs`.

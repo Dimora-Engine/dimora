@@ -16,8 +16,9 @@
 //! * Environment A is unlit, so what you see there is the spatial projection. Environment B is a
 //!   smaller yard in the same view: a lit mesh, unlit sprites, and one point light.
 //!
-//! Configurations (`--camera NAME`, key `C`): perspective, orthographic, isometric, top-down, steep, side.
-//! Each is a `Camera` plus a `Transform` over the same world and the same renderer.
+//! Configurations (`--camera NAME`, key `C`): perspective, orthographic, isometric, top-down, steep, side,
+//! custom. `custom` is an example-local oblique matrix. It is not an engine preset. Each configuration is a
+//! `Camera` plus a `Transform` over the same world and the same renderer.
 //!
 //! Controls. These keys are gameplay actions. The mouse wheel stays raw input.
 //! ```text
@@ -25,8 +26,8 @@
 //! A / D        strafe (horizontal)
 //! Space/Shift  move up / down (vertical)
 //! Arrow keys   rotate the camera (yaw / pitch)
-//! C            next camera configuration
-//! P            toggle perspective / orthographic projection
+//! C            next camera configuration (`custom` is last, then perspective)
+//! P            toggle perspective / orthographic; a custom projection is left unchanged
 //! O            cycle the figures' sprite orientation: billboard, upright, fixed
 //! R            reset to the current configuration
 //! Tab          switch between environment A and environment B
@@ -49,7 +50,7 @@
 
 use engine::prelude::*;
 use spatial_scene::art;
-use spatial_scene::cameras::{self, FOV_DEGREES, NAMED, ORTHO_HEIGHT};
+use spatial_scene::cameras;
 use spatial_scene::scene::{self, Scene, FIGURE_SIZE};
 use std::time::Duration;
 
@@ -65,14 +66,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .and_then(|(w, h)| Some((w?, h?)))
         .unwrap_or((1280, 720));
 
-    let config = match (value("--camera"), flag("--ortho")) {
-        (Some(name), _) => cameras::by_name(&name).ok_or_else(|| {
-            let known: Vec<&str> = NAMED.iter().map(|(n, _)| *n).collect();
-            format!("unknown camera `{name}`; known: {}", known.join(", "))
-        })?,
-        (None, true) => cameras::by_name("orthographic").expect("listed"),
-        (None, false) => 0,
-    };
+    let config = cameras::config_from_args(value("--camera").as_deref(), flag("--ortho"))?;
 
     let mut game = Game::new(GameConfig::default().with_title("Dimora - spatial_scene").with_size(width, height));
     art::register(&mut game.assets());
@@ -201,13 +195,7 @@ fn controls_system(world: &mut World) {
         scene::select_config(&mut scene, current);
     }
     if toggle_projection {
-        // `is_perspective` names the Perspective variant only. This key swaps the two built-in
-        // descriptors. A custom matrix is not orthographic; pressing the key replaces it.
-        scene.projection = if scene.projection.is_perspective() {
-            CameraProjection::orthographic(ORTHO_HEIGHT).with_clip_range(1.0, 4000.0)
-        } else {
-            CameraProjection::perspective(FOV_DEGREES).with_clip_range(1.0, 4000.0)
-        };
+        scene.projection = scene::swap_builtin_projection(scene.projection);
     }
     if cycle {
         scene.figure_orientation = match scene.figure_orientation {
