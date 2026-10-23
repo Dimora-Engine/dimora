@@ -109,7 +109,7 @@ M5-5A registers `MaterialAsset` through the existing `AssetManager`. A replaceme
 * The blended-mesh depth point is the camera-space Z of the world-space bounding-sphere centre. GPU readback covers ordinary non-intersecting order. The approximation limits above stay limits.
 * M14 samples the normal slot. M15 particles pick one of the three classes.
 * Screenshot baselines against `6dbabb8` stay in force. This ADR does not move them.
-* Not decided: PBR, material graphs, custom shaders, alpha-to-coverage, order-independent transparency, a coplanar mechanism (D-48), reverse-Z (D-07).
+* Not decided here: PBR, material graphs, custom shaders, alpha-to-coverage, order-independent transparency, and a coplanar mechanism (D-48). Reverse-Z is settled separately in [ADR-0019](0019-reverse-z.md).
 
 ## Evidence and revisit conditions
 

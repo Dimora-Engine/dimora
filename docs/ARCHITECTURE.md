@@ -91,7 +91,7 @@ Fixed and used everywhere, including shaders (full table in SPATIAL_RENDERING.md
 
 * Left-handed; `+X` right, `+Y` up, `+Z` forward/deeper. A camera with identity rotation looks
   down `+Z`; positive yaw turns towards `+X`.
-* Column-major matrices, column vectors (`clip = proj * view * model * v`); NDC depth `[0, 1]`, 1 at the near plane and 0 at the far plane (D-07 candidate, not accepted).
+* Column-major matrices, column vectors (`clip = proj * view * model * v`); NDC depth `[0, 1]`, 1 at the near plane and 0 at the far plane (D-07, ADR-0019, settled). Compare `Greater`, clear 0. Verified on Apple M5, Metal.
 * `Transform { position, rotation: Quat, scale: Vec3 }`; parent/child composition by matrix
   product in `propagate_transforms`, producing `GlobalTransform { matrix }`.
 * Sprites carry an anchor (default bottom-centre) and a world size; `pixels_per_unit` converts texels

@@ -61,7 +61,7 @@ configurable per game, and a movement plane is a gameplay choice, not the ground
 | Camera forward | The camera entity's local `+Z`. Identity rotation looks down `+Z`; positive yaw (rotation about `+Y`) turns it towards `+X`; positive pitch (about `+X`) tilts it down |
 | Rotations | Right-hand rule about the given axis (`Quat::from_rotation_x/y/z`) |
 | View space | Camera at the origin, `+X` right, `+Y` up, `+Z` into the screen. View depth is the `Z` of a point in this space |
-| Clip / NDC | wgpu/D3D style: x and y in `[-1, 1]` (`+Y` up), depth in `[0, 1]` (`1` near plane, `0` far plane). D-07 candidate, not accepted |
+| Clip / NDC | wgpu/D3D style: x and y in `[-1, 1]` (`+Y` up), depth in `[0, 1]` (`1` near plane, `0` far plane). D-07 settled in ADR-0019. Compare `Greater`, clear 0. A stored custom matrix is not converted |
 | Screen pixels | Origin at the **top-left** of the camera's viewport, `+X` right, `+Y` down |
 | Matrices | Column-major, column vectors: `clip = proj * view * model * v` |
 | Mesh winding | Triangles are wound so `(c - a) x (b - a)` is the outward normal; the pipeline uses `FrontFace::Ccw` + back-face culling |

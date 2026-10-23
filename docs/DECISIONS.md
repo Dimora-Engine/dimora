@@ -85,8 +85,8 @@ the risk register). **Prototype where the answer depends on a measurement; do no
 | D-27 | Units and pixels per unit | M5 | M5, M8, M9, M13 | Decided, [ADR-0016](adr/0016-per-sprite-pixels-per-unit.md) (2026-10-16). Per-sprite `pixels_per_unit`, default 16. Not a code change |
 | D-05 | Materials, alpha modes, blended meshes | M5 | M5, M14 | Decided, [ADR-0015](adr/0015-material-alpha-classes.md) (2026-10-16). Three classes, one blended sort, and the bounding-sphere-centre depth for a blended mesh. CPU `MaterialAsset` is `e0c29ef`. M5-5B is `3b3cd4a`. M5-5C is `ab1b6f7`. M5-5D is `a7efd6c`. Procedural meshes are [ADR-0018](adr/0018-procedural-mesh-generators.md) (M5-6, `92286ce`). M5 is accepted locally |
 | D-06 | Pixel-art filtering, texel snapping, MSAA: policies at the level of each technique, **not a default or a foundation** | M6 (after D-25 and D-08) | M6, M8, M9, M13 | Principles accepted (ADR-0004); API ownership and defaults **deferred pending a rendering prototype** |
-| D-07 | Depth convention (reverse-Z) | M6 | M6, M14 shadows | Open |
-| D-08 | Multi-camera and render targets | M6 | M6, M14, M22 | Implemented locally. M6-2B is `6a47882` (surface cameras). M6-2C is committed locally and not pushed (offscreen targets and camera-to-texture). No render graph. M6 is not complete. D-48, D-07, D-06, and D-26 stay open |
+| D-07 | Depth convention (reverse-Z) | M6 | M6, M14 shadows | Decided, [ADR-0019](adr/0019-reverse-z.md) (2026-10-23). Finite reverse-Z, compare `Greater`, clear 0. Verified on Apple M5, Metal. Vulkan, DirectX, OpenGL, and lavapipe are not verified |
+| D-08 | Multi-camera and render targets | M6 | M6, M14, M22 | Implemented locally. M6-2B is `6a47882` (surface cameras). M6-2C is committed locally and not pushed (offscreen targets and camera-to-texture). No render graph. M6 is not complete. D-48, D-06, and D-26 stay open. D-07 is decided |
 | D-25 | Custom projections inside `Camera` | M6 (**first in M6**, [ADR-0004](adr/0004-one-spatial-world-many-camera-configurations.md)) | M6, M13 (oblique tiles) | Implemented in M6-1B (`a38cb30`, not pushed): `CameraProjection::Custom(Mat4)`. The example `custom` camera is M6-1C (committed locally, not pushed) and is not an engine preset. D-48 and D-26 stay open |
 | D-48 | Camera configurations: gameplay orientation, coplanar ordering, orientation modes per view | M6 (decide before M7 and M8) | M6, M7, M8, M13, M14 | Principles accepted and `+Y` up / `XZ` ground retained as a **provisional convention** (ADR-0004, 2026-10-13). Prototype evidence recorded 2026-10-14 (three coplanar conflicts; no mechanism chosen). Gameplay-orientation components still deferred to M7 and M8 |
 | D-26 | Sprite orientation modes beyond `Billboard`, `Upright`, `Fixed`; `Upright` semantics for steep and oblique views | M6 | none hard | Candidate initial set kept, not exhaustive (ADR-0004). Observed 2026-10-14: orthographic height is `cos(pitch)` of a billboard, straight-down is edge-on, a 60° perspective view is roughly half. **Not accepted as the final design.** Extensions still open |
@@ -262,9 +262,8 @@ Decided in [ADR-0015](adr/0015-material-alpha-classes.md). Opaque, Mask, and Ble
 * **Problem.** Depth is standard 0..1 with `Depth32Float`. Large perspective ranges lose precision
   far away. Shadow maps (M14) will want a consistent choice.
 * **Options.** Keep standard Z; adopt finite reverse-Z in the projection helpers.
-* **Evidence (not a decision).** The M6-3B checkpoint on `spike/m6-3b-d48-coplanar` (`a176502`), Apple M5, Metal, separated a 1/1024 gap at perspective distance 200 with a real reverse-Z matrix. The 0-near formula quantized that gap away. A shader `clip.w - clip.z` complement did not keep it. `feat/d07-reverse-z` implements the matrix, greater-than compare, and clear to 0. Proposed [ADR-0019](adr/0019-reverse-z.md). D-07 is not accepted. D-48 is not part of this candidate.
-* **Leaning.** The candidate is ready for the owner to accept or reject. It is not decided.
-* **Needed by.** M6. **Blocks.** M14 until D-07 is accepted or rejected.
+* **Decision (2026-10-23, [ADR-0019](adr/0019-reverse-z.md)).** Finite reverse-Z in `perspective_lh` and `orthographic_lh`. NDC 1 at the near plane, 0 at the far plane, `CompareFunction::Greater`, clear 0. No shader complement. `CameraProjection::Custom` is stored as given and is not converted. The M6-3B checkpoint on `spike/m6-3b-d48-coplanar` (`a176502`), Apple M5, Metal, separated a 1/1024 gap at perspective distance 200. The 0-near formula quantized that gap away. Screenshot ties are explained in the ADR. Vulkan, DirectX, OpenGL, and lavapipe are not verified.
+* **Needed by.** M6. **Blocks.** Nothing further inside D-07. M14 uses this mapping when shadow maps are built. D-48 stays open.
 
 ### D-08 Multi-camera and render targets
 
@@ -284,8 +283,8 @@ Decided in [ADR-0015](adr/0015-material-alpha-classes.md). Opaque, Mask, and Ble
   `Load` camera does not fill. `LoadOp::Clear` is not used for that later rectangle, because it would
   clear the whole attachment. One full-surface camera stays on that single attachment clear and does
   not draw the fill. Zero active cameras extract nothing. Depth is `Depth32Float`. M6-2B compared less and
-  cleared every pass to 1.0. The D-07 candidate (Proposed ADR-0019, not accepted) compares greater and
-  clears every pass to 0.0. Either clear is discarded, so one camera's depth does not reject the next.
+  cleared every pass to 1.0. D-07 ([ADR-0019](adr/0019-reverse-z.md), settled 2026-10-23) compares greater and
+  clears every pass to 0.0. The clear is discarded, so one camera's depth does not reject the next.
   Opaque and Mask write depth. Blend tests depth and does not write it. That is the M5 alpha contract.
   Globals and instance buffers are uploaded and `queue.submit`ted per camera. A later
   `write_buffer` does not replace bytes an earlier submission already recorded. Texture, sampler, and
@@ -316,7 +315,7 @@ Decided in [ADR-0015](adr/0015-material-alpha-classes.md). Opaque, Mask, and Ble
   nearest, clamp sampler. Each axis is capped at 8192, and a tighter device limit still refuses the
   image. These GPU tests were run on Apple M5, Metal.
 * **Not in this decision.** A render graph, automatic dependency scheduling, previous-frame feedback,
-  HDR, MSAA, other color formats, and sampling the depth image. D-48, D-26, D-07, and D-06 stay open.
+  HDR, MSAA, other color formats, and sampling the depth image. D-48, D-26, and D-06 stay open. D-07 is decided separately.
   M6 is not complete. Editor viewport UI remains M22. Shadow passes remain M14.
 * **Needed by.** M6. **Blocks.** Nothing further inside D-08. Shadow passes (M14) and the editor
   viewport (M22) can sample a target. They are not built here.
@@ -332,7 +331,7 @@ Decided in [ADR-0015](adr/0015-material-alpha-classes.md). Opaque, Mask, and Ble
   `ProjectionError::NonFinite`. Singular matrices render; picking returns `None` when the inverse fails.
   No trait object, no shader branch, no preset. A degenerate frustum plane fails open. A negative scale can
   preserve divided NDC and the corrected CPU frustum without preserving GPU homogeneous clipping. A custom
-  matrix is stored as given. The D-07 candidate does not convert a 0-near or OpenGL matrix; rebuild it
+  matrix is stored as given. Settled D-07 does not convert a 0-near or OpenGL matrix; rebuild it
   with `perspective_lh` or `orthographic_lh`. `Upright` under oblique shear stays unspecified (D-26).
   Coplanar order is unchanged (D-48).
 * **Presets (ADR-0004).** The original six example constructors are unchanged. M6-1C adds a seventh example
@@ -536,7 +535,7 @@ detail and the proposed boundaries are in [ARCHITECTURE.md](ARCHITECTURE.md#prop
 ### D-14 Shadow technique
 
 * **Options.** Shadow maps (directional first); blob shadows for sprites; projected planar shadows.
-  Interaction with blended sprites and the depth convention (D-07) must be settled, and casters now
+  The depth convention is settled (D-07). Interaction with blended sprites is still open, and casters now
   include animated sprite frames and skinned meshes.
 * **Needed by.** M14. **Blocks.** M14.
 

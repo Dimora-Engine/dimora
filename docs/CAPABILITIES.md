@@ -108,7 +108,7 @@ Missing from the original category list and now tracked: **save games** (34), **
 * **Purpose.** One numeric and spatial vocabulary for every system.
 * **Now.** `Vec2/3/4`, `Quat`, `Mat3/4`, `Rect`, `Transform` (TRS), `f32`, column-major, left-handed, +Y up,
   +Z away from the default camera, NDC depth 0..1 with 1 at the near plane and 0 at the far plane
-  (D-07 candidate, not accepted). 23 tests. Conventions are specified in
+  (D-07, [ADR-0019](adr/0019-reverse-z.md), settled 2026-10-23, Apple M5 / Metal). 23 tests. Conventions are specified in
   [SPATIAL_RENDERING.md](SPATIAL_RENDERING.md).
 * **Required.** Exact composition, inverse, look-at, decomposition; documented handedness conversion at
   import boundaries.
@@ -313,9 +313,9 @@ Missing from the original category list and now tracked: **save games** (34), **
   `with_clip_range` does not edit `Custom`. Perspective and orthographic still follow viewport aspect.
   A degenerate frustum plane is ignored (fail open). A negative scale of a finite matrix can keep CPU
   culling and divided NDC aligned with the positive matrix; it is not claimed to match GPU clipping,
-  which happens before the divide. The D-07 candidate uses NDC depth `[0, 1]`, 1 at near and 0 at far,
+  which happens before the divide. Settled D-07 uses NDC depth `[0, 1]`, 1 at near and 0 at far,
   compare greater, clear 0. A custom matrix is not converted; a stored 0-near matrix occludes backwards
-  until it is rebuilt. D-07 is not accepted. Transparent sort stays camera-space Z. `Upright` does not follow
+  until it is rebuilt. Transparent sort stays camera-space Z. `Upright` does not follow
   oblique shear (D-26). Coplanar ties stay ties (D-48).
 * **Camera configurations (ADR-0004; intended capabilities, status stated plainly).**
 
@@ -377,7 +377,7 @@ Missing from the original category list and now tracked: **save games** (34), **
 * **Not initially.** Sprite meshes (non-quad), 9-slice (UI), per-sprite shaders.
 
 ### 10. Depth, transparency, occlusion, render ordering
-* **Now.** One `Depth32Float` buffer. The D-07 candidate (Proposed ADR-0019, not accepted) is finite reverse-Z: 1 at the near plane, 0 at the far plane, compare `Greater`, clear 0. Order inside the single pass: opaque meshes,
+* **Now.** One `Depth32Float` buffer. Settled D-07 ([ADR-0019](adr/0019-reverse-z.md)) is finite reverse-Z: 1 at the near plane, 0 at the far plane, compare `Greater`, clear 0. Verified on Apple M5, Metal. Other backends are not verified. Order inside the single pass: opaque meshes,
   material opaque sprites, material mask sprites, legacy cutout sprites and tiles (depth write), then
   one transparent sequence of blended sprites and blended meshes (depth test, no write). The GPU walks
   that sequence. `RenderOrder { layer, order }` overrides order inside it only. A missing component is
@@ -391,7 +391,6 @@ Missing from the original category list and now tracked: **save games** (34), **
 * **Required.** One documented rule for opaque, cutout and blended content from sprites, meshes, tiles,
   particles and skinned characters; defined behaviour when blended objects intersect.
 * **Planned.** Particles and skinned characters join the same transparent sequence when they exist.
-  Accepting or rejecting the reverse-Z candidate is D-07. It is not accepted.
   **Depends on.** M5-5B (`3b3cd4a`), M5-5C (`ab1b6f7`), and M5-5D (`a7efd6c`). The three coplanar conflicts stay M6/D-48.
 * **Integration.** Shadows, particles and skinned meshes all pick a class; UI is outside this model.
 * **Tests/examples.** `blend.rs` reads back a blended mesh behind a sprite and another in front, and the sprite-in-front arrangement.
