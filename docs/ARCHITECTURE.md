@@ -299,7 +299,8 @@ Each is verified by reading the code or by a test run; identifiers refer to the 
    blended quads can mis-order; meshes cannot be blended.
 10. **Per-frame CPU cost.** Extraction walks all renderables each frame; tilemaps are expanded
     tile-by-tile each frame (an 80x120 map is ~9,600 tile checks per frame); instance buffers are
-    rewritten fully. Fine for the demos, unmeasured at scale (KI-19).
+    rewritten fully. A release baseline of that full scan is in [PERFORMANCE.md](PERFORMANCE.md).
+    Chunking is not implemented. GPU frame time is not part of that baseline (KI-19).
 11. **Verification gaps (KI-1..3).** Mostly closed by T1: the toolchain is pinned, the MSRV is 1.90, and
     `scripts/check.sh` with `DIMORA_REQUIRE_GPU=1` turns a missing GPU adapter into a failure. Also done: a CI workflow
     runs the check on Windows, macOS and Linux and the MSRV job passes on all three (TASKS.md "CI results"). Still open: it uses

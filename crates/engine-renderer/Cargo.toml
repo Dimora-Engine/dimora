@@ -14,5 +14,9 @@ engine-world.workspace = true
 engine-assets.workspace = true
 log.workspace = true
 
+[[bin]]
+name = "tilemap_extract_bench"
+path = "src/bin/tilemap_extract_bench.rs"
+
 [dev-dependencies]
 log.workspace = true

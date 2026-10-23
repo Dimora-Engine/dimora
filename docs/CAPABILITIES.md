@@ -64,10 +64,10 @@ without it.
 | 12 | Textures, atlases | Working for M5 sampling | PNG; colour space, sampler, and mips; proved rectangle upload and whole-chain mip rebuild (`84d5ab1`); CPU shelf packer (`bf4d9bb`); GPU atlas samples (`1666695`). Localized mip texels are not implemented | M10 |
 | 13 | Lighting and fog | Working, forward only | Ambient/directional/point/spot (16), fog; 1 GPU test; no shadows, normal maps | M14 |
 | 14 | Shadows | Absent | | M14 |
-| 15 | Tilemaps | Working, basic | Expanded to quads every frame; no chunking, collision, loader | M13 |
+| 15 | Tilemaps | Working, basic | Expanded to quads every frame; no chunking, collision, loader. Full-scan cost is recorded in [PERFORMANCE.md](PERFORMANCE.md) | M13 |
 | 16 | Particles | Absent | | M15 |
 | 17 | Parallax | Working (emergent) | Falls out of perspective projection; tested; no per-layer factor by design | done |
-| 18 | Renderer resources and performance | Partial | Texture/mesh GPU caches with removal and idle eviction (T2); instance buffers only grow; performance unmeasured | M6 |
+| 18 | Renderer resources and performance | Partial | Texture/mesh GPU caches with removal and idle eviction (T2); instance buffers only grow. Tilemap extraction baseline is in [PERFORMANCE.md](PERFORMANCE.md). GPU frame time is unmeasured | M6 |
 | **Characters and animation** | | | | |
 | 19 | Sprite-sheet animation | Absent | Only `Sprite.region/size/anchor` building blocks (KI-21) | M8 |
 | 20 | Skeletal 2D animation | Partial (data model) | Bones as entities, linear clips, one player; 4 tests; no blending, events, IK | M11 |
@@ -462,7 +462,8 @@ Missing from the original category list and now tracked: **save games** (34), **
 
 ### 15. Tilemaps
 * **Now.** `TileMap` component expanded to cutout quads on every extraction (80x120 in the demo); one
-  extraction test. No chunking, flip flags, layers, animation, collision, loader.
+  extraction test. No chunking, flip flags, layers, animation, collision, loader. The full-grid
+  extraction cost for 64² through 1000² is recorded in [PERFORMANCE.md](PERFORMANCE.md).
 * **Planned.** M13: chunked storage, layers, collision layer. **Depends on.** M6, M7, M5.
 * **Integration.** Tiles live in world space (a map is an entity with a `Transform`), so physics and
   queries use world coordinates and a map can be rotated or stacked at depth.
@@ -481,11 +482,12 @@ Missing from the original category list and now tracked: **save games** (34), **
 ### 18. Renderer resources, limits and performance
 * **Now.** GPU texture and mesh caches keyed by asset id and revision; evicted when the asset is removed
   or idle for N frames (default 120) with counts exposed (`CacheStats`); instance buffers grow and never
-  shrink; surface loss and resize handled; frame stats. **No performance measurements on real hardware**;
-  device limits are not queried for instance buffers. Texture creation calls
+  shrink; surface loss and resize handled; frame stats. Tilemap CPU extraction is measured on Apple M5
+  ([PERFORMANCE.md](PERFORMANCE.md)). GPU frame time is not measured.
+  Device limits are not queried for instance buffers. Texture creation calls
   `validate_texture_dimensions` with `max_texture_dimension_2d` before allocation. A test can tighten
   that limit without allocating a huge texture. No GPU timing.
-* **Planned.** Baseline and `docs/PERFORMANCE.md` (M6). **Depends on.** D-07, D-08.
+* **Planned.** Broader benchmarks beyond the tilemap extraction baseline (M6). **Depends on.** D-07, D-08.
 * **Tests/examples.** Cache-count tests exist; benchmark binary (M6).
 * **Unresolved.** Device-lost recovery is not implemented. Instance-buffer limits are not queried.
 
