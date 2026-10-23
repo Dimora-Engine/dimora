@@ -2,7 +2,7 @@
 
 * **Status:** Settled
 * **Date:** 2026-10-23
-* **Backlog id:** The coplanar-ordering part of D-48. Gameplay orientation and D-26 stay open. This file is ADR-0020. [ADR-0019](0019-reverse-z.md) is reverse-Z and is not overwritten.
+* **Backlog id:** The coplanar-ordering part of D-48. Gameplay orientation stays open. D-26 is [ADR-0021](0021-sprite-orientation.md). This file is ADR-0020. [ADR-0019](0019-reverse-z.md) is reverse-Z and is not overwritten.
 * **Decided by:** Cal, 2026-10-23, after the production checks below.
 * **Affects:** sprite extraction, the sprite vertex shader, one camera-uniform field, the component registry. Not mesh drawing, not tile drawing, not blend sort.
 
@@ -103,7 +103,7 @@ The spike's standard-Z perspective cells still failed at distance 40 and beyond 
 
 **Blend versus blend.** Two blended sprites at the same view Z still follow `RenderOrder`. A higher priority does not put a blend in front of another blend. A blend farther than the pull stays hidden behind a cutout. A coplanar blend that opts in can pass the depth test and composite over a cutout. That is the depth test, not a new sort.
 
-**Cameras.** The same higher-priority winner was read back for perspective, orthographic, a side view, a steep view, isometric, top-down with a fixed quad laid in the XZ plane, and a sheared custom orthographic matrix. Distances 5, 40, and 200, and orthographic cameras at `z` of −6, −30, and −80, kept the winner. Two viewports and an offscreen target each keep their own depth. `Upright` from straight above is still edge-on (D-26). This component does not change that.
+**Cameras.** The same higher-priority winner was read back for perspective, orthographic, a side view, a steep view, isometric, top-down with a fixed quad laid in the XZ plane, and a sheared custom orthographic matrix. Distances 5, 40, and 200, and orthographic cameras at `z` of −6, −30, and −80, kept the winner. Two viewports and an offscreen target each keep their own depth. `Upright` from straight above is still edge-on (ADR-0021). This component does not change that.
 
 **Backends.** Apple M5, Metal, integrated GPU, 2026-10-23. Vulkan, DirectX, OpenGL, and lavapipe were not run. A disagreement on one of those reopens the shader's inverse and the compare, not the decision that the pull is opt-in and depth-only.
 

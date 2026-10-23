@@ -89,4 +89,4 @@ Perspective differs in 84 of 921600 pixels (0.0091%). 77 are the sRGB colours of
 
 Draw calls, camera passes, instance counts, and GPU cache counts on those four frames match the pre-change capture. Reverse-Z did not add a pass or split a sprite batch. No timestamp query was enabled, so this is not a claim that the GPU got faster.
 
-Verified on Apple M5, Metal, only. Vulkan, DirectX, OpenGL, and lavapipe are not verified. A disagreement on one of those backends reopens the compare and clear, not the decision to keep one convention. A stored 0-near matrix is still not converted. The coplanar mechanism is [ADR-0020](0020-coplanar-priority.md). Gameplay orientation and D-26 stay open.
+Verified on Apple M5, Metal, only. Vulkan, DirectX, OpenGL, and lavapipe are not verified. A disagreement on one of those backends reopens the compare and clear, not the decision to keep one convention. A stored 0-near matrix is still not converted. The coplanar mechanism is [ADR-0020](0020-coplanar-priority.md). Gameplay orientation stays open. D-26 is [ADR-0021](0021-sprite-orientation.md).

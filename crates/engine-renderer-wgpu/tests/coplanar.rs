@@ -107,8 +107,8 @@ fn coincident(
 ) -> [u8; 4] {
     let mut world = scene_world();
     thickness(&mut world, CANDIDATE_COPLANAR_THICKNESS);
-    // A fixed quad lives in local XY. Laying it in XZ is what a top-down camera can see.
-    let sprite_pose = if orientation == SpriteOrientation::Fixed {
+    // A fixed quad lives in local XY. A vertical camera only sees it after it is laid in XZ.
+    let sprite_pose = if orientation == SpriteOrientation::Fixed && pose.forward().dot(Vec3::Y).abs() > 0.9 {
         Transform::from_rotation(Quat::from_rotation_x(core::f32::consts::FRAC_PI_2))
     } else {
         Transform::IDENTITY
@@ -167,6 +167,35 @@ fn coincident_cutouts_keep_the_higher_priority_in_every_visible_configuration() 
             Camera::orthographic(10.0),
             Transform::looking_at(Vec3::new(0.0, 10.0, 0.0), Vec3::ZERO, Vec3::Z),
             SpriteOrientation::Fixed,
+            4.0,
+        ),
+        (
+            "top-down billboard",
+            Camera::orthographic(10.0),
+            Transform::looking_at(Vec3::new(0.0, 10.0, 0.0), Vec3::ZERO, Vec3::Z),
+            SpriteOrientation::Billboard,
+            4.0,
+        ),
+        ("front fixed", Camera::orthographic(10.0), Transform::from_xyz(0.0, 0.0, -8.0), SpriteOrientation::Fixed, 4.0),
+        (
+            "front upright",
+            Camera::orthographic(10.0),
+            Transform::from_xyz(0.0, 0.0, -8.0),
+            SpriteOrientation::Upright,
+            4.0,
+        ),
+        (
+            "perspective upright",
+            Camera::perspective(45.0),
+            Transform::from_xyz(0.0, 0.0, -8.0),
+            SpriteOrientation::Upright,
+            4.0,
+        ),
+        (
+            "side upright",
+            Camera::orthographic(10.0),
+            Transform::looking_at(Vec3::new(-8.0, 0.0, 0.0), Vec3::ZERO, Vec3::Y),
+            SpriteOrientation::Upright,
             4.0,
         ),
     ];

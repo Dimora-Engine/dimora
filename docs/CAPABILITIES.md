@@ -57,7 +57,7 @@ without it.
 | 6 | Input and action mapping | Working for M3b | Fixed-step latch and `Actions` (Phases 1–2). Physical pointer stays physical; logical conversion is on `Viewport` (`9c99edf`). A grabbed cursor takes `mouse_delta` from device motion; a free cursor uses position changes; focus loss releases held input and the grab (ADR-0013). Gamepad, text, and a rebinding UI are deferred | M3 |
 | 7 | Errors, logging, diagnostics, config | Partial | `log` 0.4 and `Diagnostics` (ADR-0012, M3a-4). No runtime config. No profiler, no history | M20, M24 |
 | **Rendering** | | | | |
-| 8 | Cameras and projection | Working; custom matrix implemented (M6-1B, `a38cb30`) | Ortho, perspective, and `CameraProjection::Custom(Mat4)`. Viewport, picking rays. `spatial_scene` demonstrates isometric, top-down, steep, side, and an example `custom` oblique matrix (M6-1C, committed locally, not pushed). Not an engine preset API and not an oblique builder. Several cameras per frame (D-08). Coplanar priority is ADR-0020. D-26 stays open | M6 |
+| 8 | Cameras and projection | Working; custom matrix implemented (M6-1B, `a38cb30`) | Ortho, perspective, and `CameraProjection::Custom(Mat4)`. Viewport, picking rays. `spatial_scene` demonstrates isometric, top-down, steep, side, and an example `custom` oblique matrix (M6-1C, committed locally, not pushed). Not an engine preset API and not an oblique builder. Several cameras per frame (D-08). Coplanar priority is ADR-0020. Sprite orientation is ADR-0021 | M6 |
 | 9 | Spatial sprites | Working | Orientation modes, region, tint, cutout/alpha; material batching (`a7efd6c`); CPU shelf packer (`bf4d9bb`); GPU atlas samples (`1666695`). M5 is accepted locally | M5 |
 | 10 | Depth, transparency, ordering | Working for sprites and meshes | One depth buffer. Reverse-Z (ADR-0019). Blended sprites and blended meshes share one sequence (`ab1b6f7`). Object-level sort remains. Opt-in `CoplanarPriority` (ADR-0020). Content that does not opt in, including the three `spatial_scene` conflicts, still ties | M6, M14 |
 | 11 | Meshes and materials | Working for the M5 asset | `MaterialAsset` (`e0c29ef`). Procedural plane, cube, cuboid, sphere, and cylinder (`92286ce`). Normal slot is stored and not shaded. No loader. `cone` still asserts | M12, M14 |
@@ -316,15 +316,15 @@ Missing from the original category list and now tracked: **save games** (34), **
   which happens before the divide. Settled D-07 uses NDC depth `[0, 1]`, 1 at near and 0 at far,
   compare greater, clear 0. A custom matrix is not converted; a stored 0-near matrix occludes backwards
   until it is rebuilt. Transparent sort stays camera-space Z. `Upright` does not follow
-  oblique shear (D-26). A coplanar tie stays a tie unless a sprite opts into `CoplanarPriority` (ADR-0020).
+  oblique shear (ADR-0021). A coplanar tie stays a tie unless a sprite opts into `CoplanarPriority` (ADR-0020).
 * **Camera configurations (ADR-0004; intended capabilities, status stated plainly).**
 
   | Configuration | Status today |
   |---|---|
   | Perspective, orthographic | Implemented and tested (camera maths, GPU tests, `spatial_scene`) |
   | Isometric (orthographic, rotated) | **Demonstrated** by an example-local constructor: orthographic, yaw 45°, pitch `atan(1/sqrt(2))`. Not a projection type and not an engine preset |
-  | Top-down | **Demonstrated** (orthographic, looking along −Y). `Upright` quads are edge-on; that behaviour is observed, not accepted as the final design (D-26) |
-  | Steep (about 60°) | **Demonstrated** (perspective). `Upright` is foreshortened to roughly half a billboard. Same caveat (D-26) |
+  | Top-down | **Demonstrated** (orthographic, looking along −Y). `Upright` quads are edge-on. That is the design (ADR-0021). `Billboard` stays face-on |
+  | Steep (about 60°) | **Demonstrated** (perspective). `Upright` is foreshortened to roughly half a billboard (ADR-0021) |
   | Side view | **Demonstrated** (orthographic, looking along +Z). Not a 2D-style game: no gameplay movement plane |
   | Custom projection | **Implemented** as a public matrix (M6-1B, `a38cb30`, not pushed) and **demonstrated** by the example `custom` constructor (M6-1C, committed locally, not pushed). `CameraProjection::Custom(Mat4)` on the existing camera. The example matrix is a view-space shear in front of an orthographic projection; the pose stays on `Transform`. `--camera custom` selects it. Not an engine preset and not an oblique builder. The matrix is not aspect-corrected on resize. A negative scale is not claimed to match GPU clipping |
 
@@ -340,9 +340,9 @@ Missing from the original category list and now tracked: **save games** (34), **
 * **Required.** The same behaviour of picking, culling, depth and lighting in every configuration.
   Multiple surface cameras and offscreen targets are implemented (D-08, locally). Custom matrices are
   implemented (D-25, M6-1B). Reverse-Z is settled (D-07, ADR-0019). Coplanar sprite priority is settled
-  (ADR-0020). **Planned.** The rest of M6: gameplay orientation, D-26, chunking, debug draw, and benchmarks.
-  The configuration test scene is done (below). **Depends on.** D-26 and gameplay orientation before M7 and M8;
-  D-06 is opt-in and not a dependency of other views. D-08 and D-25 are implemented locally.
+  (ADR-0020). Sprite orientation is [ADR-0021](adr/0021-sprite-orientation.md). **Planned.** The rest of M6: gameplay orientation, chunking, debug draw, and benchmarks.
+  The configuration test scene is done (below). **Depends on.** Gameplay orientation before M7 and M8.
+  D-26 is settled. D-06 is opt-in and not a dependency of other views. D-08 and D-25 are implemented locally.
 * **Integration.** UI world anchors, picking, audio listener, directional frames (D-31) and the editor
   viewport all read the active camera's view.
 * **Performance.** Per-camera extraction multiplies CPU cost; cull per camera.
@@ -370,11 +370,11 @@ Missing from the original category list and now tracked: **save games** (34), **
 * **Integration.** Sprites are bones' children, tiles' sibling path, particles' target path.
 * **Performance.** One instanced quad path; CPU extraction per frame.
 * **Tests/examples.** Existing; add table tests for sheet slicing (M8).
-* **Unresolved.** KI-21 (natural size ignores region). D-26: `Upright` is observed, not settled. In the test
-  scene an orthographic `Upright` quad is `cos(pitch)` as tall as a billboard, a straight-down view makes it
-  edge-on, and a perspective view at about 60° leaves it roughly half as tall. That is what extraction does
-  today. It is not accepted as the final meaning for steep or oblique views. The three modes stay a candidate
-  set, not an exhaustive one.
+* **Unresolved.** KI-21 (natural size ignores region). D-26 is settled in [ADR-0021](adr/0021-sprite-orientation.md):
+  `Billboard`, `Upright`, and `Fixed`, with no fourth mode. An orthographic `Upright` quad is `cos(pitch)` as tall
+  as a billboard, a straight-down view makes it edge-on, and a perspective view at about 60° leaves it roughly
+  half as tall. `Billboard` stays readable from above. Ground art is `Fixed` plus a transform. A child does not
+  inherit a parent's rendered basis. The visual-root frame for a 2D skeleton is an M11 requirement and is not built.
 * **Not initially.** Sprite meshes (non-quad), 9-slice (UI), per-sprite shaders.
 
 ### 10. Depth, transparency, occlusion, render ordering

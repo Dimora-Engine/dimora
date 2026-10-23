@@ -67,7 +67,7 @@ the risk register). **Prototype where the answer depends on a measurement; do no
 | **3. Before M6** | D-25 projection and D-08 multi-camera and targets first, D-48 camera configurations, D-07 depth, then D-06 pixel policy (opt-in, lowest of these) | Shape of `RenderScene` and the pass list; R-2 | Prototype two cameras into one target |
 | **4. Before M9** | D-28, D-29 (vocabulary), D-30, D-31, D-11 (record) | Define the character and scene API that M10 to M18 depend on | Built against M8's sprite-sheet implementation and the second consumer |
 | **5. Only at their milestone, after a spike** | D-40 scripting runtime, D-09 physics library, D-24 UI model, D-12, D-14, D-15, D-33, D-35, D-36 | They need measurements or a working neighbour; deciding early would be invention | Each milestone's first task is the spike |
-| **6. Defer, low impact** | D-19 bundle format, D-20 editor technology, D-26 orientations, D-23 platform/crates.io part | Nothing depends on them until late | Revisit when their milestone is next |
+| **6. Defer, low impact** | D-19 bundle format, D-20 editor technology, D-23 platform/crates.io part | Nothing depends on them until late | Revisit when their milestone is next |
 
 ## Summary
 
@@ -86,10 +86,10 @@ the risk register). **Prototype where the answer depends on a measurement; do no
 | D-05 | Materials, alpha modes, blended meshes | M5 | M5, M14 | Decided, [ADR-0015](adr/0015-material-alpha-classes.md) (2026-10-16). Three classes, one blended sort, and the bounding-sphere-centre depth for a blended mesh. CPU `MaterialAsset` is `e0c29ef`. M5-5B is `3b3cd4a`. M5-5C is `ab1b6f7`. M5-5D is `a7efd6c`. Procedural meshes are [ADR-0018](adr/0018-procedural-mesh-generators.md) (M5-6, `92286ce`). M5 is accepted locally |
 | D-06 | Pixel-art filtering, texel snapping, MSAA: policies at the level of each technique, **not a default or a foundation** | M6 (after D-25 and D-08) | M6, M8, M9, M13 | Principles accepted (ADR-0004); API ownership and defaults **deferred pending a rendering prototype** |
 | D-07 | Depth convention (reverse-Z) | M6 | M6, M14 shadows | Decided, [ADR-0019](adr/0019-reverse-z.md) (2026-10-23). Finite reverse-Z, compare `Greater`, clear 0. Verified on Apple M5, Metal. Vulkan, DirectX, OpenGL, and lavapipe are not verified |
-| D-08 | Multi-camera and render targets | M6 | M6, M14, M22 | Implemented locally. M6-2B is `6a47882` (surface cameras). M6-2C is committed locally and not pushed (offscreen targets and camera-to-texture). No render graph. M6 is not complete. D-07 is decided. Coplanar ordering is [ADR-0020](adr/0020-coplanar-priority.md). Gameplay orientation, D-06, and D-26 stay open |
-| D-25 | Custom projections inside `Camera` | M6 (**first in M6**, [ADR-0004](adr/0004-one-spatial-world-many-camera-configurations.md)) | M6, M13 (oblique tiles) | Implemented in M6-1B (`a38cb30`, not pushed): `CameraProjection::Custom(Mat4)`. The example `custom` camera is M6-1C (committed locally, not pushed) and is not an engine preset. Coplanar ordering is [ADR-0020](adr/0020-coplanar-priority.md). D-26 stays open |
-| D-48 | Camera configurations: gameplay orientation, coplanar ordering, orientation modes per view | M6 (decide before M7 and M8) | M6, M7, M8, M13, M14 | Coplanar ordering decided, [ADR-0020](adr/0020-coplanar-priority.md) (2026-10-23): opt-in `CoplanarPriority`, depth-only, fallback thickness `1/256`. Verified on Apple M5, Metal. Gameplay-orientation components still deferred to M7 and M8. D-26 stays open. `+Y` up / `XZ` ground stays a provisional convention (ADR-0004) |
-| D-26 | Sprite orientation modes beyond `Billboard`, `Upright`, `Fixed`; `Upright` semantics for steep and oblique views | M6 | none hard | Candidate initial set kept, not exhaustive (ADR-0004). Observed 2026-10-14: orthographic height is `cos(pitch)` of a billboard, straight-down is edge-on, a 60° perspective view is roughly half. **Not accepted as the final design.** Extensions still open |
+| D-08 | Multi-camera and render targets | M6 | M6, M14, M22 | Implemented locally. M6-2B is `6a47882` (surface cameras). M6-2C is committed locally and not pushed (offscreen targets and camera-to-texture). No render graph. M6 is not complete. D-07 is decided. Coplanar ordering is [ADR-0020](adr/0020-coplanar-priority.md). Gameplay orientation and D-06 stay open. D-26 is [ADR-0021](adr/0021-sprite-orientation.md) |
+| D-25 | Custom projections inside `Camera` | M6 (**first in M6**, [ADR-0004](adr/0004-one-spatial-world-many-camera-configurations.md)) | M6, M13 (oblique tiles) | Implemented in M6-1B (`a38cb30`, not pushed): `CameraProjection::Custom(Mat4)`. The example `custom` camera is M6-1C (committed locally, not pushed) and is not an engine preset. Coplanar ordering is [ADR-0020](adr/0020-coplanar-priority.md). D-26 is [ADR-0021](adr/0021-sprite-orientation.md) |
+| D-48 | Camera configurations: gameplay orientation, coplanar ordering, orientation modes per view | M6 (decide before M7 and M8) | M6, M7, M8, M13, M14 | Coplanar ordering decided, [ADR-0020](adr/0020-coplanar-priority.md) (2026-10-23): opt-in `CoplanarPriority`, depth-only, fallback thickness `1/256`. Verified on Apple M5, Metal. Gameplay-orientation components still deferred to M7 and M8. D-26 is [ADR-0021](adr/0021-sprite-orientation.md). `+Y` up / `XZ` ground stays a provisional convention (ADR-0004) |
+| D-26 | Sprite orientation modes beyond `Billboard`, `Upright`, `Fixed`; `Upright` semantics for steep and oblique views | M6 | none hard | Decided, [ADR-0021](adr/0021-sprite-orientation.md) (2026-10-23). Keep `Billboard`, `Upright`, and `Fixed`. Top-down `Upright` stays edge-on. No fourth mode. Extraction is unchanged |
 | D-09 | Physics: custom or library | M7 | M7, M9 | Open |
 | D-28 | Character gameplay versus visuals | M8 (provisional), M9 | M9, M10, M11, M12, M18 | Open |
 | D-29 | Shared animation control vocabulary and state machine | M8 (vocabulary), M11 | M8, M9, M11, M12 | Open |
@@ -263,7 +263,7 @@ Decided in [ADR-0015](adr/0015-material-alpha-classes.md). Opaque, Mask, and Ble
   far away. Shadow maps (M14) will want a consistent choice.
 * **Options.** Keep standard Z; adopt finite reverse-Z in the projection helpers.
 * **Decision (2026-10-23, [ADR-0019](adr/0019-reverse-z.md)).** Finite reverse-Z in `perspective_lh` and `orthographic_lh`. NDC 1 at the near plane, 0 at the far plane, `CompareFunction::Greater`, clear 0. No shader complement. `CameraProjection::Custom` is stored as given and is not converted. The M6-3B checkpoint on `spike/m6-3b-d48-coplanar` (`a176502`), Apple M5, Metal, separated a 1/1024 gap at perspective distance 200. The 0-near formula quantized that gap away. Screenshot ties are explained in the ADR. Vulkan, DirectX, OpenGL, and lavapipe are not verified.
-* **Needed by.** M6. **Blocks.** Nothing further inside D-07. M14 uses this mapping when shadow maps are built. Coplanar ordering is [ADR-0020](adr/0020-coplanar-priority.md). Gameplay orientation and D-26 stay open.
+* **Needed by.** M6. **Blocks.** Nothing further inside D-07. M14 uses this mapping when shadow maps are built. Coplanar ordering is [ADR-0020](adr/0020-coplanar-priority.md). Gameplay orientation stays open. D-26 is [ADR-0021](adr/0021-sprite-orientation.md).
 
 ### D-08 Multi-camera and render targets
 
@@ -315,7 +315,7 @@ Decided in [ADR-0015](adr/0015-material-alpha-classes.md). Opaque, Mask, and Ble
   nearest, clamp sampler. Each axis is capped at 8192, and a tighter device limit still refuses the
   image. These GPU tests were run on Apple M5, Metal.
 * **Not in this decision.** A render graph, automatic dependency scheduling, previous-frame feedback,
-  HDR, MSAA, other color formats, and sampling the depth image. Gameplay orientation, D-26, and D-06 stay open. D-07 and the coplanar mechanism ([ADR-0020](adr/0020-coplanar-priority.md)) are decided separately.
+  HDR, MSAA, other color formats, and sampling the depth image. Gameplay orientation and D-06 stay open. D-26 is [ADR-0021](adr/0021-sprite-orientation.md). D-07 and the coplanar mechanism ([ADR-0020](adr/0020-coplanar-priority.md)) are decided separately.
   M6 is not complete. Editor viewport UI remains M22. Shadow passes remain M14.
 * **Needed by.** M6. **Blocks.** Nothing further inside D-08. Shadow passes (M14) and the editor
   viewport (M22) can sample a target. They are not built here.
@@ -332,7 +332,7 @@ Decided in [ADR-0015](adr/0015-material-alpha-classes.md). Opaque, Mask, and Ble
   No trait object, no shader branch, no preset. A degenerate frustum plane fails open. A negative scale can
   preserve divided NDC and the corrected CPU frustum without preserving GPU homogeneous clipping. A custom
   matrix is stored as given. Settled D-07 does not convert a 0-near or OpenGL matrix; rebuild it
-  with `perspective_lh` or `orthographic_lh`. `Upright` under oblique shear stays unspecified (D-26).
+  with `perspective_lh` or `orthographic_lh`. [ADR-0021](adr/0021-sprite-orientation.md) keeps the camera basis under oblique shear (D-26).
   A coplanar tie stays a tie unless a sprite opts into `CoplanarPriority` ([ADR-0020](adr/0020-coplanar-priority.md)).
 * **Presets (ADR-0004).** The original six example constructors are unchanged. M6-1C adds a seventh example
   constructor, `custom`, which stores a local oblique matrix in `CameraProjection::Custom`. That constructor
@@ -345,12 +345,17 @@ Decided in [ADR-0015](adr/0015-material-alpha-classes.md). Opaque, Mask, and Ble
 ### D-26 Additional sprite orientations
 
 * **Problem.** `Billboard`, `Upright`, `Fixed` cover current needs. Axis-aligned billboards or
-  camera-position-facing billboards may be wanted.
-* **Direction (ADR-0004, 2026-10-13).** `Billboard`, `Upright` and `Fixed` remain candidate initial modes, not an
-  exhaustive or permanent set (`SpriteOrientation` is `#[non_exhaustive]`). Orientation stays independent of camera
-  projection. The semantics of `Upright` under steep, top-down and oblique views are clarified during
-  implementation, from the M6 test scene.
-* **Needed by.** Nothing is blocked. Decide only when a real scene needs it.
+  camera-position-facing billboards may be wanted. ADR-0004 left `Upright` under steep, top-down, and
+  oblique views undecided.
+* **Decided ([ADR-0021](adr/0021-sprite-orientation.md), 2026-10-23).** Keep the three modes. `Fixed`
+  plus a transform is ground alignment. `Upright` stays world-vertical, foreshortens, and is edge-on
+  when the view is exactly `±Y`, with no history and no blend into `Billboard`. `Billboard` is the
+  readable overhead and screen-facing policy. Oblique shear does not change the placement basis. A
+  `Fixed` child does not inherit a parent's rendered billboard basis. A 2D skeleton, in M11, applies
+  one policy at the visual root; bone sprites stay `Fixed`. Extraction was not changed. Tests lock the
+  existing math.
+* **Needed by.** Nothing further inside D-26. M7 and M8 still wait on gameplay orientation. M11 waits
+  on the visual-root frame, which this decision requires and does not implement.
 
 ## Needed during M7 (gameplay)
 
@@ -748,10 +753,10 @@ never `hecs` indices. No format and no `serde` dependency in M3a.
      isometric showed it and the other four hid it. Same caveat.
   Decals one unit apart in height resolve by the depth test in all five downward configurations. Isometric did
   not show a sorting failure beyond these coplanar cases, so no isometric occlusion policy is justified yet.
-  `Upright` measurements are under D-26: current behaviour, not a chosen design.
+  `Upright` measurements are the design in [ADR-0021](adr/0021-sprite-orientation.md).
 * **Decided for coplanar sprites (2026-10-23, [ADR-0020](adr/0020-coplanar-priority.md)).** `CoplanarPriority(u8)` in `0..=7` on a sprite. No component means ordinary spatial depth. `CoplanarSettings.thickness` is one world-unit step. A missing resource uses `1/256`. The sprite shader writes depth only, `(1 + level) * thickness` toward the camera, and keeps `clip.xy` and `clip.w`. Reverse-Z compare and clear are unchanged. Priority is not a batch key and does not order blend against blend. Meshes and tile maps do not read it. `1/1024` and `1/64` passed the same inside-pull and outside-pull check; `1/64` was not selected because level 7 then pulls 0.125. Verified on Apple M5, Metal. Other backends are not verified. The `spatial_scene` decals do not opt in, so the three conflict tests above still describe that scene.
-* **Still open inside D-48.** Gameplay-orientation components, deferred until M7 and M8 have requirements. D-26 (`Upright` under steep and top-down views) is a separate decision and is not accepted.
-* **Needed by.** The coplanar mechanism was required before M7 and M8. Those milestones still wait on gameplay orientation and on D-26. **Blocks.** M7, M8, M13, and M14 still need the orientation decisions. They can call `CoplanarPriority` as it stands.
+* **Still open inside D-48.** Gameplay-orientation components, deferred until M7 and M8 have requirements. D-26 is [ADR-0021](adr/0021-sprite-orientation.md).
+* **Needed by.** The coplanar mechanism was required before M7 and M8. Those milestones still wait on gameplay orientation. **Blocks.** M7, M8, M13, and M14 still need the gameplay-orientation decision. They can call `CoplanarPriority` and `SpriteOrientation` as they stand.
 
 ## Reopening a settled decision
 

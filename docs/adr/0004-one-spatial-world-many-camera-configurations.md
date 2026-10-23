@@ -300,6 +300,8 @@ edge-on; behaviour under an oblique or custom projection is unspecified. Whether
 foreshortening, whether steep views need another mode or a per-camera choice, and what an oblique projection means
 for a vertical quad are questions for the M6 test scene and the implementation, not decided here.
 
+Settled later by [ADR-0021](0021-sprite-orientation.md) (2026-10-23): the three modes stay, steep foreshortening and the top-down edge are the design, and oblique shear does not change the placement basis. This section remains the record of the candidate set.
+
 ## Evidence and revisit conditions
 
 Evidence the open items wait for, all from the M6 test scene unless stated: coplanar and depth-conflict cases

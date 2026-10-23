@@ -179,7 +179,7 @@ and a 0-near matrix are not converted. Rebuild a 0-near matrix with `perspective
 A finite singular matrix is accepted; rendering does not need an inverse, and
 `CameraView::ray_from_pixels` returns `None` when the inverse fails. Transparent objects still sort by
 camera-space depth from the view matrix, then `RenderOrder`, then extraction order. An oblique matrix can
-shear the picture while `Billboard` and `Upright` keep using the camera basis (D-26 is unchanged). A coplanar
+shear the picture while `Billboard` and `Upright` keep using the camera basis (ADR-0021). A coplanar
 tie stays a tie unless the sprite opts into `CoplanarPriority` (ADR-0020). Frustum planes come from the same `view_proj` formulas. A plane whose normal is
 negligible beside that plane's own coefficients is dropped and does not cull. Scaling the matrix by a
 negative constant can leave divided NDC and those CPU planes unchanged, because both the clip numerator
@@ -351,7 +351,7 @@ function, `sprite_placement`. Orientation is a rendering decision, so it lives i
 
 ### What `Upright` does in the test scene
 
-This is the current extraction rule, measured, not a decision that it should stay this way (D-26).
+This extraction rule is the design ([ADR-0021](adr/0021-sprite-orientation.md)). A straight-down edge and steep foreshortening are expected.
 `Upright` builds a vertical quad and turns it about world `+Y` to face the camera's heading. A pitched
 camera therefore foreshortens it.
 

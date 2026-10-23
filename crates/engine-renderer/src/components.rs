@@ -21,24 +21,29 @@ pub enum SpriteBlend {
 /// How a sprite quad is oriented in the world. This is a *rendering* decision about the sprite's
 /// geometry; where the sprite is always comes from its `Transform`.
 ///
+/// Extraction rebuilds the quad for the camera that is drawing it. That camera does not write
+/// `Transform` or `GlobalTransform`. A child does not inherit its parent's rendered basis: the
+/// child reads the simulation hierarchy. See ADR-0021.
+///
 /// Billboards align to the camera's **view plane** (its right/up axes), not to the camera's
 /// position. Every billboard therefore shares one orientation per frame, so a perspective camera
 /// never skews or rotates individual sprites; they only change position and apparent size.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum SpriteOrientation {
-    /// Faces the camera. The entity's position and scale are used, plus its roll about the view
-    /// axis (so a bone can rotate a sprite in the screen plane). Pitch and yaw of the entity are
-    /// ignored because the camera decides them.
+    /// Faces the view plane, including steep and exact top-down views. Camera roll rotates the
+    /// quad in that plane. The entity's position and scale are used, plus its roll about its own
+    /// Z axis. Pitch and yaw of the entity are ignored because the camera decides them.
     #[default]
     Billboard,
-    /// Faces the camera but stays upright: its quad is vertical and only turns about world +Y,
-    /// so a tilted camera foreshortens it like a real standing object and trees do not lean back.
-    /// Roll within that vertical plane is kept (bones can swing it). The usual choice for
-    /// characters and props standing on a ground plane.
+    /// Stays on world +Y and yaws about that axis toward the camera heading. A steep view
+    /// foreshortens it. A view along world up sees it edge-on; the heading is undefined there, so
+    /// the quad uses the camera's right axis and stays vertical. That choice is a function of the
+    /// current view, with no smoothing. Camera roll does not tilt it. The entity's Z twist is kept.
     Upright,
     /// A plain quad in the entity's local XY plane, facing local `-Z`, fully oriented by the
-    /// entity's `Transform`. Use for decals, signs and anything that must lie in the world.
+    /// entity's `Transform`. Ground art uses this with a rotation into that plane. The camera
+    /// does not turn it.
     Fixed,
 }
 
