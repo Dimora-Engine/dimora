@@ -91,7 +91,7 @@ Fixed and used everywhere, including shaders (full table in SPATIAL_RENDERING.md
 
 * Left-handed; `+X` right, `+Y` up, `+Z` forward/deeper. A camera with identity rotation looks
   down `+Z`; positive yaw turns towards `+X`.
-* Column-major matrices, column vectors (`clip = proj * view * model * v`); NDC depth `[0, 1]`.
+* Column-major matrices, column vectors (`clip = proj * view * model * v`); NDC depth `[0, 1]`, 1 at the near plane and 0 at the far plane (D-07 candidate, not accepted).
 * `Transform { position, rotation: Quat, scale: Vec3 }`; parent/child composition by matrix
   product in `propagate_transforms`, producing `GlobalTransform { matrix }`.
 * Sprites carry an anchor (default bottom-centre) and a world size; `pixels_per_unit` converts texels
@@ -230,7 +230,7 @@ Cutout sprites, tiles and opaque meshes are unordered except for grouping by tex
 mesh. Sprites and tiles share one instanced quad path. A missing asset is counted once on the scene,
 not once per camera.
 
-Backend: each destination has a `Depth32Float` image, cleared to 1.0 and discarded on every pass that
+Backend: each destination has a `Depth32Float` image, cleared to 0.0 and discarded on every pass that
 writes it. The surface depth is not reused for an offscreen target. The first camera that writes a
 destination clears that whole color image. Later cameras on it load the color. A later
 `CameraClear::Color` fills only its viewport. Opaque meshes (back-face culled), mask and cutout

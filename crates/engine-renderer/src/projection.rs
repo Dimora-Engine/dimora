@@ -20,7 +20,7 @@ pub struct ScreenPosition {
     pub pixels: Vec2,
     /// Normalized device coordinates: `[-1, 1]` on screen, +Y up.
     pub ndc: Vec2,
-    /// Depth-buffer value, `0` at the near plane and `1` at the far plane.
+    /// Depth-buffer value, `1` at the near plane and `0` at the far plane.
     pub depth: f32,
     /// Distance in front of the camera along its forward axis, in world units.
     pub view_depth: f32,
@@ -50,7 +50,7 @@ impl ScreenPosition {
 /// (oblique/cabinet, isometric with custom axes, ...): anything expressible as a 4x4 matrix works
 /// with the GPU backend, culling and picking unchanged.
 pub trait Projection {
-    /// View-space -> clip-space matrix (left-handed, NDC depth `[0, 1]`).
+    /// View-space -> clip-space matrix (left-handed, NDC depth `[0, 1]`, 1 at near and 0 at far).
     fn matrix(&self, aspect: f32) -> Mat4;
 
     /// Projects a world-space position for the given camera view. `None` if the point is behind
@@ -130,11 +130,13 @@ pub enum CameraProjection {
     /// * Left-handed view space, +Y up, +Z forward (into the scene).
     /// * Column vectors, `M * v`, projection applied after the view matrix.
     /// * NDC x and y in `[-1, 1]`, NDC +Y up, viewport origin at the top-left.
-    /// * NDC depth in `[0, 1]`: 0 at the near plane, 1 at the far plane.
-    /// * The depth buffer compares with less-than. Opaque and mask writes use that value.
+    /// * NDC depth in `[0, 1]`: 1 at the near plane, 0 at the far plane.
+    /// * The depth buffer compares with greater-than and clears to 0. Opaque and mask writes use that value.
     ///
-    /// A matrix that uses OpenGL depth (`[-1, 1]`) or reverse-Z is not converted. It still draws,
-    /// and occlusion follows whatever depth it writes. A finite matrix is accepted even when it
+    /// A matrix is stored as given. OpenGL depth (`[-1, 1]`) and the previous 0-near mapping are not
+    /// converted. Rebuild a 0-near matrix with [`Mat4::perspective_lh`](engine_math::Mat4::perspective_lh)
+    /// or [`Mat4::orthographic_lh`](engine_math::Mat4::orthographic_lh). A stored 0-near matrix still
+    /// draws, and under greater-than its farther fragments win. A finite matrix is accepted even when it
     /// is singular, oblique, off-centre, or unlike either built-in projection. Rendering does not
     /// need an inverse. [`crate::CameraView::ray_from_pixels`] returns `None` when the inverse
     /// cannot be computed. There is no panic on that path.

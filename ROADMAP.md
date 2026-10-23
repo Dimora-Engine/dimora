@@ -42,8 +42,9 @@ record is a later documentation commit. Localized mip-texel regeneration is not 
 **In progress.** M6 has the `spatial_scene` camera-configuration prototype (commit `6dbabb8`), custom
 projection (M6-1B, `a38cb30`), the example `custom` camera (M6-1C, `795bd95`), M6-2B surface cameras
 (`6a47882`, committed locally), and M6-2C offscreen targets and camera-to-texture (committed locally,
-not pushed). Tilemap chunking and the performance baseline are not done. M6 is not complete and is not
-pulled into M5.
+not pushed). A finite reverse-Z candidate for D-07 is on `feat/d07-reverse-z` (Proposed ADR-0019).
+D-07 is not accepted, and D-48 is not implemented. Tilemap chunking and the performance baseline are not
+done. M6 is not complete and is not pulled into M5.
 
 **M5 is complete locally and accepted.** The implementation checkpoint is
 `92286ce0546a4d94bb0365581ae7469fe2ad3260`. M5-2A through M5-6 are the local commits
@@ -590,7 +591,8 @@ baseline. Camera projection stays separate from gameplay orientation and visual 
   M13, which reuses this chunking and does not build a second one.
 - Render debugging, first slice: debug draw (lines, boxes, spheres, rays, camera frusta; depth-tested) and a
   depth-visualisation view, as the minimal debugging primitives for M7.
-- Depth convention (D-07). Pixel-art policies (D-06): texture-level filtering, and texel snapping at whichever
+- Depth convention (D-07). A candidate is implemented on `feat/d07-reverse-z` and recorded as Proposed ADR-0019. It is not accepted and does not close M6.
+- Pixel-art policies (D-06): texture-level filtering, and texel snapping at whichever
   level the chosen technique needs, validated by a prototype before any API is fixed. It is **lowest priority here** and never a default; no other configuration may depend on it.
 - Benchmarks (a small timing binary, no new dependency) for extraction and render CPU time with N
   sprites/meshes/tiles; record results and budgets in `docs/PERFORMANCE.md`.

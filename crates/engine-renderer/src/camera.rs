@@ -201,9 +201,9 @@ impl CameraView {
 
     /// World-space ray through a pixel (origin top-left of this viewport): `(origin, unit direction)`.
     ///
-    /// The ray is the unprojection of NDC depth 0 and 1 through `view_proj`. `None` when that
-    /// matrix has no reliable inverse, including a singular custom projection. Rendering does not
-    /// require the inverse and does not substitute a ray.
+    /// The ray is the unprojection of NDC depth 1 (near) and 0 (far) through `view_proj`. `None`
+    /// when that matrix has no reliable inverse, including a singular custom projection. Rendering
+    /// does not require the inverse and does not substitute a ray.
     pub fn ray_from_pixels(&self, pixels: Vec2) -> Option<(Vec3, Vec3)> {
         let inv = self.view_proj.inverse()?;
         let ndc = Vec2::new(pixels.x / self.viewport.x * 2.0 - 1.0, 1.0 - pixels.y / self.viewport.y * 2.0);
@@ -211,7 +211,7 @@ impl CameraView {
             let p = inv * engine_math::Vec4::new(ndc.x, ndc.y, z, 1.0);
             p.xyz() / p.w
         };
-        let (near, far) = (unproject(0.0), unproject(1.0));
+        let (near, far) = (unproject(1.0), unproject(0.0));
         Some((near, (far - near).normalized()))
     }
 }

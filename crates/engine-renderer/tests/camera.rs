@@ -151,13 +151,13 @@ fn depth_buffer_values_are_ordered_by_distance() {
             .iter()
             .map(|&z| view.project(Vec3::new(0.0, 0.0, z)).unwrap().depth)
             .collect();
-        assert!(depths.windows(2).all(|w| w[0] < w[1]), "{camera:?}: {depths:?}");
+        assert!(depths.windows(2).all(|w| w[0] > w[1]), "{camera:?}: {depths:?}");
         assert!(depths.iter().all(|d| (0.0..=1.0).contains(d)));
     }
 }
 
 #[test]
-fn near_and_far_planes_map_to_zero_and_one() {
+fn near_and_far_planes_map_to_one_and_zero() {
     let near_far = |camera: Camera| {
         let view = view_of_default(camera);
         let (n, f) = match camera.projection {
@@ -169,7 +169,7 @@ fn near_and_far_planes_map_to_zero_and_one() {
     };
     for camera in [Camera::perspective(60.0), Camera::orthographic(10.0)] {
         let (near, far) = near_far(camera);
-        assert!(near.abs() < 1e-4 && (far - 1.0).abs() < 1e-4, "{camera:?}: {near} {far}");
+        assert!((near - 1.0).abs() < 1e-4 && far.abs() < 1e-4, "{camera:?}: {near} {far}");
     }
 }
 
@@ -430,7 +430,7 @@ fn a_sprite_and_a_mesh_at_the_same_world_position_project_to_the_same_pixel() {
 }
 
 #[test]
-fn nearer_things_get_smaller_depth_values_regardless_of_kind() {
+fn nearer_things_get_larger_depth_values_regardless_of_kind() {
     // GPU depth resolves mesh-vs-cutout-sprite visibility; it is purely a function of position.
     let a = assets();
     let mut w = World::new();
@@ -445,10 +445,10 @@ fn nearer_things_get_smaller_depth_values_regardless_of_kind() {
     let sprite_depths: Vec<f32> =
         scene.sole_pass().cutout_sprites.instances.iter().map(|i| depth(i.model.translation())).collect();
     let (in_front, behind) = (
-        sprite_depths.iter().cloned().fold(f32::MAX, f32::min),
         sprite_depths.iter().cloned().fold(f32::MIN, f32::max),
+        sprite_depths.iter().cloned().fold(f32::MAX, f32::min),
     );
-    assert!(in_front < mesh && mesh < behind);
+    assert!(in_front > mesh && mesh > behind, "nearer reverse-Z depth is larger: {in_front} {mesh} {behind}");
     assert_eq!(scene.sole_pass().cutout_sprites.instances.len(), 2);
 }
 

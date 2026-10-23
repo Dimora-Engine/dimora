@@ -3,7 +3,7 @@
 //! Conventions (see `docs/ARCHITECTURE.md`):
 //! * `f32`, column-major matrices, column vectors (`M * v`).
 //! * Left-handed, +Y up, +Z away from the default camera.
-//! * Projection matrices produce NDC depth in `[0, 1]`.
+//! * Projection matrices produce NDC depth in `[0, 1]`, 1 at the near plane and 0 at the far plane.
 
 mod mat3;
 mod mat4;

@@ -498,10 +498,18 @@ fn custom_frustum_culls_on_the_gpu_and_a_degenerate_plane_does_not() {
     );
 
     let mut finite_far = CameraProjection::orthographic(2.0).with_clip_range(0.1, 20.0).matrix(1.0);
-    finite_far.cols[0].w = finite_far.cols[0].z;
-    finite_far.cols[1].w = finite_far.cols[1].z;
-    finite_far.cols[2].w = finite_far.cols[2].z;
-    finite_far.cols[3].w = finite_far.cols[3].z + 1.0;
+    // Drop NDC z = 0 (the far plane under reverse-Z) and keep the near plane in r3 - r2.
+    let r2 = [finite_far.cols[0].z, finite_far.cols[1].z, finite_far.cols[2].z, finite_far.cols[3].z];
+    let r3 = [finite_far.cols[0].w, finite_far.cols[1].w, finite_far.cols[2].w, finite_far.cols[3].w];
+    let near = [r3[0] - r2[0], r3[1] - r2[1], r3[2] - r2[2], r3[3] - r2[3]];
+    finite_far.cols[0].z = 0.0;
+    finite_far.cols[1].z = 0.0;
+    finite_far.cols[2].z = 0.0;
+    finite_far.cols[3].z = 1.0;
+    finite_far.cols[0].w = near[0];
+    finite_far.cols[1].w = near[1];
+    finite_far.cols[2].w = near[2];
+    finite_far.cols[3].w = near[3] + 1.0;
     let mut open = world(
         Camera::new(CameraProjection::custom(finite_far).unwrap()).with_clear_color(Color::BLACK),
         Transform::from_xyz(0.0, 0.0, -4.0),

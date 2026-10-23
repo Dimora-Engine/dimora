@@ -261,9 +261,10 @@ Decided in [ADR-0015](adr/0015-material-alpha-classes.md). Opaque, Mask, and Ble
 
 * **Problem.** Depth is standard 0..1 with `Depth32Float`. Large perspective ranges lose precision
   far away. Shadow maps (M14) will want a consistent choice.
-* **Options.** Keep standard Z; adopt reverse-Z.
-* **Leaning.** Keep standard Z unless a concrete precision artefact is shown in M6 testing.
-* **Needed by.** M6. **Blocks.** M14.
+* **Options.** Keep standard Z; adopt finite reverse-Z in the projection helpers.
+* **Evidence (not a decision).** The M6-3B checkpoint on `spike/m6-3b-d48-coplanar` (`a176502`), Apple M5, Metal, separated a 1/1024 gap at perspective distance 200 with a real reverse-Z matrix. The 0-near formula quantized that gap away. A shader `clip.w - clip.z` complement did not keep it. `feat/d07-reverse-z` implements the matrix, greater-than compare, and clear to 0. Proposed [ADR-0019](adr/0019-reverse-z.md). D-07 is not accepted. D-48 is not part of this candidate.
+* **Leaning.** The candidate is ready for the owner to accept or reject. It is not decided.
+* **Needed by.** M6. **Blocks.** M14 until D-07 is accepted or rejected.
 
 ### D-08 Multi-camera and render targets
 
@@ -282,10 +283,11 @@ Decided in [ADR-0015](adr/0015-material-alpha-classes.md). Opaque, Mask, and Ble
   color-only draw: no depth write, no alpha blend, alpha 1 to match the attachment clear. A later
   `Load` camera does not fill. `LoadOp::Clear` is not used for that later rectangle, because it would
   clear the whole attachment. One full-surface camera stays on that single attachment clear and does
-  not draw the fill. Zero active cameras extract nothing. Depth is `Depth32Float`, compare less. Every
-  pass clears it to 1.0 and discards it, so one camera's depth does not reject the next. Opaque and
-  Mask write depth. Blend tests depth and does not write it. That is the M5 alpha contract. D-07 is
-  unchanged. Globals and instance buffers are uploaded and `queue.submit`ted per camera. A later
+  not draw the fill. Zero active cameras extract nothing. Depth is `Depth32Float`. M6-2B compared less and
+  cleared every pass to 1.0. The D-07 candidate (Proposed ADR-0019, not accepted) compares greater and
+  clears every pass to 0.0. Either clear is discarded, so one camera's depth does not reject the next.
+  Opaque and Mask write depth. Blend tests depth and does not write it. That is the M5 alpha contract.
+  Globals and instance buffers are uploaded and `queue.submit`ted per camera. A later
   `write_buffer` does not replace bytes an earlier submission already recorded. Texture, sampler, and
   mesh-geometry caches stay shared. Mesh vertices are not copied per camera. Lights are chosen per
   camera because the nearest-16 cap depends on camera position. Ambient and fog stay on the scene.
@@ -329,8 +331,10 @@ Decided in [ADR-0015](adr/0015-material-alpha-classes.md). Opaque, Mask, and Ble
   convention. It is not rebuilt from aspect. `with_clip_range` does not edit it. Non-finite elements are
   `ProjectionError::NonFinite`. Singular matrices render; picking returns `None` when the inverse fails.
   No trait object, no shader branch, no preset. A degenerate frustum plane fails open. A negative scale can
-  preserve divided NDC and the corrected CPU frustum without preserving GPU homogeneous clipping. Reverse-Z
-  is not converted (D-07). `Upright` under oblique shear stays unspecified (D-26). Coplanar order is unchanged (D-48).
+  preserve divided NDC and the corrected CPU frustum without preserving GPU homogeneous clipping. A custom
+  matrix is stored as given. The D-07 candidate does not convert a 0-near or OpenGL matrix; rebuild it
+  with `perspective_lh` or `orthographic_lh`. `Upright` under oblique shear stays unspecified (D-26).
+  Coplanar order is unchanged (D-48).
 * **Presets (ADR-0004).** The original six example constructors are unchanged. M6-1C adds a seventh example
   constructor, `custom`, which stores a local oblique matrix in `CameraProjection::Custom`. That constructor
   is not an engine preset and not a public oblique builder. How an engine preset would fill a custom matrix

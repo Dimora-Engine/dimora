@@ -112,12 +112,12 @@ pub const OBLIQUE_SHEAR: Vec2 = Vec2::new(0.14, 0.04);
 ///
 /// 1. The camera [`Transform`] is the view. This matrix does not contain the world pose.
 /// 2. A view-space shear maps `(x, y, z, 1)` to `(x + z * shear.x, y + z * shear.y, z, 1)`.
-///    View `z` is unchanged, so depth order stays the ordinary near-to-far order.
+///    View `z` is unchanged, so a smaller view z still writes the larger depth.
 /// 3. [`Mat4::orthographic_lh`] then maps that sheared view into clip space: height
 ///    [`ORTHO_HEIGHT`], near 1, far 4000, aspect [`CUSTOM_ASPECT`]. Those clip distances are
 ///    inside the matrix. [`CameraProjection::with_clip_range`] does not edit `Custom`.
 ///
-/// Left-handed, +Y up, +Z forward, NDC depth `[0, 1]`, less-than depth. This is not a public
+/// Left-handed, +Y up, +Z forward, NDC depth `[0, 1]` with 1 at near and 0 at far. This is not a public
 /// oblique constructor.
 fn oblique_orthographic(shear: Vec2) -> Mat4 {
     let half_height = ORTHO_HEIGHT * 0.5;

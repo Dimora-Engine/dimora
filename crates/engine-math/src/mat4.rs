@@ -78,26 +78,31 @@ impl Mat4 {
         )
     }
 
-    /// Perspective projection, left-handed, NDC depth `[0, 1]`.
+    /// Perspective projection, left-handed, finite reverse-Z.
+    ///
+    /// NDC depth is `[0, 1]`: 1 at `near`, 0 at `far`. `near` and `far` stay view-space distances
+    /// in front of the camera. This is the projection itself, not a `clip.w - clip.z` complement.
     pub fn perspective_lh(fov_y: f32, aspect: f32, near: f32, far: f32) -> Self {
         let f = 1.0 / (fov_y * 0.5).tan();
-        let range = far / (far - near);
+        let span = far - near;
         Self::from_cols(
             Vec4::new(f / aspect, 0.0, 0.0, 0.0),
             Vec4::new(0.0, f, 0.0, 0.0),
-            Vec4::new(0.0, 0.0, range, 1.0),
-            Vec4::new(0.0, 0.0, -near * range, 0.0),
+            Vec4::new(0.0, 0.0, -near / span, 1.0),
+            Vec4::new(0.0, 0.0, near * far / span, 0.0),
         )
     }
 
-    /// Orthographic projection, left-handed, NDC depth `[0, 1]`.
+    /// Orthographic projection, left-handed, finite reverse-Z.
+    ///
+    /// NDC depth is `[0, 1]`: 1 at `near`, 0 at `far`. The x/y window is unchanged. `near` may be 0.
     pub fn orthographic_lh(left: f32, right: f32, bottom: f32, top: f32, near: f32, far: f32) -> Self {
         let (w, h, d) = (right - left, top - bottom, far - near);
         Self::from_cols(
             Vec4::new(2.0 / w, 0.0, 0.0, 0.0),
             Vec4::new(0.0, 2.0 / h, 0.0, 0.0),
-            Vec4::new(0.0, 0.0, 1.0 / d, 0.0),
-            Vec4::new(-(right + left) / w, -(top + bottom) / h, -near / d, 1.0),
+            Vec4::new(0.0, 0.0, -1.0 / d, 0.0),
+            Vec4::new(-(right + left) / w, -(top + bottom) / h, far / d, 1.0),
         )
     }
 
@@ -225,14 +230,49 @@ mod tests {
     }
 
     #[test]
-    fn projection_depth_range_is_zero_to_one() {
+    fn projection_depth_is_one_at_near_and_zero_at_far() {
         let p = Mat4::perspective_lh(1.0, 1.5, 0.1, 100.0);
         let near = p.mul_vec4(Vec4::new(0.0, 0.0, 0.1, 1.0));
         let far = p.mul_vec4(Vec4::new(0.0, 0.0, 100.0, 1.0));
-        assert!((near.z / near.w).abs() < 1e-5);
-        assert!((far.z / far.w - 1.0).abs() < 1e-5);
+        assert!((near.z / near.w - 1.0).abs() < 1e-5);
+        assert!((far.z / far.w).abs() < 1e-5);
         let o = Mat4::orthographic_lh(-2.0, 2.0, -1.0, 1.0, 0.0, 10.0);
-        assert!(o.transform_point3(Vec3::new(2.0, 1.0, 10.0)).approx_eq(Vec3::ONE, 1e-6));
-        assert!(o.transform_point3(Vec3::new(-2.0, -1.0, 0.0)).approx_eq(Vec3::new(-1.0, -1.0, 0.0), 1e-6));
+        assert!(o.transform_point3(Vec3::new(2.0, 1.0, 10.0)).approx_eq(Vec3::new(1.0, 1.0, 0.0), 1e-6));
+        assert!(o.transform_point3(Vec3::new(-2.0, -1.0, 0.0)).approx_eq(Vec3::new(-1.0, -1.0, 1.0), 1e-6));
+    }
+
+    /// The previous 0-at-near perspective, kept only so this test can show what reverse-Z changed.
+    fn historical_standard_perspective(fov_y: f32, aspect: f32, near: f32, far: f32) -> Mat4 {
+        let f = 1.0 / (fov_y * 0.5).tan();
+        let range = far / (far - near);
+        Mat4::from_cols(
+            Vec4::new(f / aspect, 0.0, 0.0, 0.0),
+            Vec4::new(0.0, f, 0.0, 0.0),
+            Vec4::new(0.0, 0.0, range, 1.0),
+            Vec4::new(0.0, 0.0, -near * range, 0.0),
+        )
+    }
+
+    fn ndc_z(projection: Mat4, z: f32) -> f32 {
+        let clip = projection.mul_vec4(Vec4::new(0.0, 0.0, z, 1.0));
+        clip.z / clip.w
+    }
+
+    #[test]
+    fn reverse_z_separates_a_far_perspective_gap_that_standard_z_cannot() {
+        let (near, far, eye) = (0.1, 1000.0, 200.0);
+        let gap = 1.0 / 1024.0;
+        let reverse = Mat4::perspective_lh(45f32.to_radians(), 1.0, near, far);
+        let standard = historical_standard_perspective(45f32.to_radians(), 1.0, near, far);
+        let reverse_pair = (ndc_z(reverse, eye), ndc_z(reverse, eye + gap));
+        let standard_pair = (ndc_z(standard, eye), ndc_z(standard, eye + gap));
+        assert_ne!(reverse_pair.0, reverse_pair.1, "reverse-Z keeps {gap} at z={eye}");
+        assert_eq!(standard_pair.0, standard_pair.1, "standard-Z quantizes that gap away: {standard_pair:?}");
+        assert!(reverse_pair.0 > reverse_pair.1, "nearer perspective depth is larger");
+
+        let ortho = Mat4::orthographic_lh(-5.0, 5.0, -5.0, 5.0, near, far);
+        let ortho_pair = (ndc_z(ortho, eye), ndc_z(ortho, eye + gap));
+        assert_ne!(ortho_pair.0, ortho_pair.1, "orthographic reverse-Z is linear and still separates the gap");
+        assert!(ortho_pair.0 > ortho_pair.1);
     }
 }

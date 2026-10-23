@@ -424,7 +424,7 @@ fn the_custom_configuration_shears_a_known_point_and_keeps_pose_on_the_transform
     let near = cv.project(position(&custom, "figure A") + Vec3::Y * 48.0).unwrap();
     let far = cv.project(position(&custom, "figure D") + Vec3::Y * 48.0).unwrap();
     assert!(near.is_visible() && far.is_visible());
-    assert!(near.view_depth < far.view_depth && near.depth < far.depth);
+    assert!(near.view_depth < far.view_depth && near.depth > far.depth);
     assert!((0.0..=1.0).contains(&near.depth) && (0.0..=1.0).contains(&far.depth));
 
     assert!(cv.position.approx_eq(ov.position, 1e-3));

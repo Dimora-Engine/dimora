@@ -9,9 +9,11 @@ pub struct Frustum {
 impl Frustum {
     /// Extracts inward planes from a world-to-clip matrix with NDC depth in `[0, 1]`.
     ///
-    /// The six combinations are `r3 ± r0`, `r3 ± r1`, `r2` (near, `z = 0`) and `r3 - r2` (far).
-    /// They match the clip cube used by [`crate::CameraProjection`], including a custom matrix
-    /// that follows that convention.
+    /// The six combinations are `r3 ± r0`, `r3 ± r1`, `r2` (far, NDC `z = 0`) and `r3 - r2`
+    /// (near, NDC `z = w`). Reverse-Z puts the near plane at 1 and the far plane at 0, so those
+    /// two depth planes swap names relative to a 0-near matrix. The visible volume is still
+    /// `0 <= clip.z <= clip.w`. They match the clip cube used by [`crate::CameraProjection`],
+    /// including a custom matrix that follows that convention.
     ///
     /// A plane is dropped when its xyz length is at most `1e-6` times that plane's own largest
     /// coefficient, or when a coefficient
@@ -183,14 +185,26 @@ mod tests {
         assert!(!frustum.intersects_sphere(Vec3::new(10.0, 0.0, 5.0), 0.2));
     }
 
+    /// Replaces NDC `z = 0` with a constant. Under reverse-Z that row is the far plane.
+    /// The near plane (`r3 - r2`) is copied into the new `r3` so a centred ortho does not lose it.
+    fn drop_ndc_zero_plane(matrix: &mut Mat4) {
+        let r2 = [matrix.cols[0].z, matrix.cols[1].z, matrix.cols[2].z, matrix.cols[3].z];
+        let r3 = [matrix.cols[0].w, matrix.cols[1].w, matrix.cols[2].w, matrix.cols[3].w];
+        let near = [r3[0] - r2[0], r3[1] - r2[1], r3[2] - r2[2], r3[3] - r2[3]];
+        matrix.cols[0].z = 0.0;
+        matrix.cols[1].z = 0.0;
+        matrix.cols[2].z = 0.0;
+        matrix.cols[3].z = 1.0;
+        matrix.cols[0].w = near[0];
+        matrix.cols[1].w = near[1];
+        matrix.cols[2].w = near[2];
+        matrix.cols[3].w = near[3] + 1.0;
+    }
+
     #[test]
     fn degenerate_far_plane_does_not_falsely_cull() {
         let mut matrix = Mat4::orthographic_lh(-5.0, 5.0, -5.0, 5.0, 0.1, 100.0);
-        // r3 = r2 + (0, 0, 0, 1) makes the far plane (r3 - r2) a constant, with no normal.
-        matrix.cols[0].w = matrix.cols[0].z;
-        matrix.cols[1].w = matrix.cols[1].z;
-        matrix.cols[2].w = matrix.cols[2].z;
-        matrix.cols[3].w = matrix.cols[3].z + 1.0;
+        drop_ndc_zero_plane(&mut matrix);
         let frustum = Frustum::from_view_proj(&matrix);
         assert!(frustum.intersects_sphere(Vec3::new(0.0, 0.0, 5000.0), 0.1), "no usable far plane");
         assert!(!frustum.intersects_sphere(Vec3::new(100.0, 0.0, 5.0), 0.1), "the side plane still culls");

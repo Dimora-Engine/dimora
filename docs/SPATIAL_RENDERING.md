@@ -61,7 +61,7 @@ configurable per game, and a movement plane is a gameplay choice, not the ground
 | Camera forward | The camera entity's local `+Z`. Identity rotation looks down `+Z`; positive yaw (rotation about `+Y`) turns it towards `+X`; positive pitch (about `+X`) tilts it down |
 | Rotations | Right-hand rule about the given axis (`Quat::from_rotation_x/y/z`) |
 | View space | Camera at the origin, `+X` right, `+Y` up, `+Z` into the screen. View depth is the `Z` of a point in this space |
-| Clip / NDC | wgpu/D3D style: x and y in `[-1, 1]` (`+Y` up), depth in `[0, 1]` (`0` near plane, `1` far plane) |
+| Clip / NDC | wgpu/D3D style: x and y in `[-1, 1]` (`+Y` up), depth in `[0, 1]` (`1` near plane, `0` far plane). D-07 candidate, not accepted |
 | Screen pixels | Origin at the **top-left** of the camera's viewport, `+X` right, `+Y` down |
 | Matrices | Column-major, column vectors: `clip = proj * view * model * v` |
 | Mesh winding | Triangles are wound so `(c - a) x (b - a)` is the outward normal; the pipeline uses `FrontFace::Ccw` + back-face culling |
@@ -166,7 +166,7 @@ An offscreen camera is not selected that way. `camera_view_of` still resolves it
 
 The first camera that writes a destination clears that whole image, whether the policy is `Color` or
 `Load`. A later `Color` pass on that destination fills only its rectangle and does not write depth. A
-later `Load` pass does not. Every pass clears that destination's depth to 1.0 and discards it. The
+later `Load` pass does not. Every pass clears that destination's depth to 0.0 and discards it. The
 renderer submits each camera before writing the next camera's globals or instance data. One
 full-surface camera does not add a fill draw. An offscreen target does not receive the surface clear.
 
@@ -174,8 +174,9 @@ full-surface camera does not add a fill draw. An offscreen target does not recei
 viewport resize changes pixel mapping and does not rebuild the matrix. Perspective and orthographic still
 recompute from the viewport aspect. `with_clip_range` edits only those two descriptors. The matrix must use
 the engine convention: left-handed, +Y up, +Z forward, column vectors, NDC xy in `[-1, 1]` with +Y up, NDC
-depth `[0, 1]` (0 near, 1 far), viewport origin top-left, depth compare less-than. OpenGL depth and reverse-Z
-are not converted. A finite singular matrix is accepted; rendering does not need an inverse, and
+depth `[0, 1]` (1 near, 0 far), viewport origin top-left, depth compare greater-than, clear 0. OpenGL depth
+and a 0-near matrix are not converted. Rebuild a 0-near matrix with `perspective_lh` or `orthographic_lh`.
+A finite singular matrix is accepted; rendering does not need an inverse, and
 `CameraView::ray_from_pixels` returns `None` when the inverse fails. Transparent objects still sort by
 camera-space depth from the view matrix, then `RenderOrder`, then extraction order. An oblique matrix can
 shear the picture while `Billboard` and `Upright` keep using the camera basis (D-26 is unchanged). Coplanar

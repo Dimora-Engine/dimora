@@ -745,7 +745,7 @@ impl SceneRenderer {
     /// clear color, whether the policy is [`CameraClear::Color`] or [`CameraClear::Load`]. A
     /// destination has no defined previous image. Later `Color` cameras on that same destination
     /// fill only their viewport. Later `Load` cameras do not. An offscreen target does not receive
-    /// a surface camera's clear. Every pass clears its own depth image to 1.0 and discards it.
+    /// a surface camera's clear. Every pass clears its own depth image to 0.0 and discards it.
     /// Surface depth is not reused for a target of a different size. One full-surface camera is
     /// still a single pass with no viewport-clear draw.
     ///
@@ -894,7 +894,7 @@ impl SceneRenderer {
                 })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                     view: depth_view,
-                    depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(1.0), store: wgpu::StoreOp::Discard }),
+                    depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(0.0), store: wgpu::StoreOp::Discard }),
                     stencil_ops: None,
                 }),
                 timestamp_writes: None,
@@ -1542,7 +1542,7 @@ fn depth_state(write: bool) -> wgpu::DepthStencilState {
     wgpu::DepthStencilState {
         format: DEPTH_FORMAT,
         depth_write_enabled: Some(write),
-        depth_compare: Some(wgpu::CompareFunction::Less),
+        depth_compare: Some(wgpu::CompareFunction::Greater),
         stencil: wgpu::StencilState::default(),
         bias: wgpu::DepthBiasState::default(),
     }
