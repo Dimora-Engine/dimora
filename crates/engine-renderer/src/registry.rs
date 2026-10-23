@@ -7,7 +7,7 @@ use engine_core::Color;
 use engine_math::Vec2;
 use engine_world::{ComponentDesc, ComponentRegistry, FieldDesc, Persistence};
 
-use crate::{Camera, Light, Mesh, RenderOrder, Sprite, TileMap};
+use crate::{Camera, CoplanarPriority, Light, Mesh, RenderOrder, Sprite, TileMap};
 
 const SPRITE_FIELDS: &[FieldDesc] = &[
     FieldDesc::new("asset", "AssetHandle<SpriteAsset>"),
@@ -25,6 +25,8 @@ const SPRITE_FIELDS: &[FieldDesc] = &[
 ];
 
 const ORDER_FIELDS: &[FieldDesc] = &[FieldDesc::new("layer", "i32"), FieldDesc::new("order", "i32")];
+
+const COPLANAR_FIELDS: &[FieldDesc] = &[FieldDesc::new("level", "u8")];
 
 const MESH_FIELDS: &[FieldDesc] = &[
     FieldDesc::new("asset", "AssetHandle<MeshData>"),
@@ -57,7 +59,8 @@ const LIGHT_FIELDS: &[FieldDesc] =
     &[FieldDesc::new("kind", "LightKind"), FieldDesc::new("color", "Color"), FieldDesc::new("intensity", "f32")];
 
 /// Registers the renderable components. `Material` is a field of `Mesh`, not its own component.
-/// `Fog` and `AmbientLight` are resources and are not registered here.
+/// `Fog`, `AmbientLight`, and `CoplanarSettings` are resources and are not registered here.
+/// `CoplanarPriority` is. A tile map does not read that component.
 ///
 /// An identical registration already stored for one of these types is left in place.
 /// A conflicting name or field list is returned.
@@ -73,6 +76,12 @@ pub fn register_render_components(registry: &mut ComponentRegistry) -> Result<()
         ORDER_FIELDS,
         Persistence::Persist,
         Some(order_values),
+    ))?;
+    registry.register_idempotent(ComponentDesc::new(
+        "CoplanarPriority",
+        COPLANAR_FIELDS,
+        Persistence::Persist,
+        Some(coplanar_values),
     ))?;
     registry.register_idempotent(ComponentDesc::new("Mesh", MESH_FIELDS, Persistence::Persist, Some(mesh_values)))?;
     registry.register_idempotent(ComponentDesc::new(
@@ -118,6 +127,10 @@ fn sprite_values(sprite: &Sprite) -> Vec<String> {
 
 fn order_values(order: &RenderOrder) -> Vec<String> {
     vec![order.layer.to_string(), order.order.to_string()]
+}
+
+fn coplanar_values(priority: &CoplanarPriority) -> Vec<String> {
+    vec![priority.0.to_string()]
 }
 
 fn mesh_values(mesh: &Mesh) -> Vec<String> {

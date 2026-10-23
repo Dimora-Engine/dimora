@@ -86,6 +86,9 @@ pub struct SpriteInstance {
     /// of the batch key. `None` is an unassigned sprite, not a shared material.
     pub material_id: Option<AssetId>,
     pub material_revision: u32,
+    /// Opt-in coplanar level, `0..=7`. `None` is ordinary spatial depth, including level 0's absence.
+    /// Not a batch key and not a blend sort key.
+    pub coplanar_level: Option<u8>,
 }
 
 impl SpriteInstance {
@@ -93,7 +96,7 @@ impl SpriteInstance {
     ///
     /// The key is the pipeline, the material identity and revision, and the texture. That texture
     /// handle is the sampled view and the sampler: one texture asset has one sampler descriptor.
-    /// Tint, UV, the model, and `lit` stay on the instance, so they do not split the draw. The mask
+    /// Tint, UV, the model, `lit`, and [`Self::coplanar_level`] stay on the instance, so they do not split the draw. The mask
     /// cutoff is copied from the shared material onto each instance. It is not a second cutoff and
     /// it is not a batch key: one material revision has one cutoff. Unassigned sprites use
     /// `material_id: None` and revision 0. They are not given a fabricated material, and they batch
@@ -311,6 +314,9 @@ pub struct RenderScene {
     pub ambient: [f32; 3],
     /// Fog color (rgb) and density.
     pub fog: [f32; 4],
+    /// World-unit step for [`crate::CoplanarPriority`]. `0` means an invalid explicit setting
+    /// disabled the displacement. Sprites without the component ignore it.
+    pub coplanar_thickness: f32,
     /// Sum of the pass visibility counts. `missing_assets` is the shared resolution count, once
     /// per missing reference, not once per camera. `sprites_visible` counts a sprite again for
     /// each camera that draws it.

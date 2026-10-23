@@ -148,7 +148,8 @@ pub enum CameraProjection {
     /// Transparent ordering stays camera-space depth from the view matrix (larger Z is farther).
     /// It does not use this matrix's clip Z or window Z, so a projection that scrambles view-space
     /// depth relative to occlusion will not get a different sort. `Upright` sprites follow the
-    /// camera basis, not the shear in this matrix (D-26). Coplanar ties stay ties (D-48).
+    /// camera basis, not the shear in this matrix (D-26). A coplanar tie stays a tie unless a sprite
+    /// opts into [`crate::CoplanarPriority`] (ADR-0020).
     Custom(Mat4),
 }
 

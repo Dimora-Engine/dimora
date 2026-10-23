@@ -9,6 +9,7 @@ use crate::camera::{Camera, CameraClear, CameraOutput, CameraView};
 use crate::components::{
     AmbientLight, Fog, Light, LightKind, Mesh, RenderOrder, Sprite, SpriteBlend, SpriteOrientation, TileMap,
 };
+use crate::coplanar::{resolve_coplanar_thickness, CoplanarPriority, CoplanarSettings};
 use crate::frustum::Frustum;
 use crate::interpolate::{render_poses, RenderPoses};
 use crate::missing::{report_absent_texture, resolve, MissingAssetWarnings};
@@ -54,6 +55,8 @@ pub fn extract_scene(world: &World, assets: &AssetManager, target_size: Vec2) ->
     let ambient = [ambient.color.r, ambient.color.g, ambient.color.b].map(|c| c * ambient.intensity);
     let fog = world.try_resource::<Fog>().map_or(Fog::default(), |f| *f);
     let fog = [fog.color.r, fog.color.g, fog.color.b, fog.density];
+    let coplanar_thickness =
+        resolve_coplanar_thickness(world.try_resource::<CoplanarSettings>().map(|settings| *settings));
 
     let mut written = HashSet::new();
     let mut missing_targets = missing_outputs;
@@ -75,7 +78,7 @@ pub fn extract_scene(world: &World, assets: &AssetManager, target_size: Vec2) ->
         stats.meshes_culled += pass.stats.meshes_culled;
         stats.lights += pass.stats.lights;
     }
-    Some(RenderScene { passes, targets, ambient, fog, stats })
+    Some(RenderScene { passes, targets, ambient, fog, coplanar_thickness, stats })
 }
 
 /// One active camera in draw order. Stored by value on each [`CameraPass`].
@@ -241,6 +244,18 @@ struct PreparedSprite {
     render_target: Option<RenderTargetId>,
     appearance: SpriteAppearance,
     order: RenderOrder,
+    coplanar_level: Option<u8>,
+}
+
+fn accepted_priority(entity: Entity, priority: Option<CoplanarPriority>) -> Option<u8> {
+    match priority.map(CoplanarPriority::checked) {
+        Some(Ok(level)) => Some(level),
+        Some(Err(error)) => {
+            log::warn!("coplanar priority on entity {} {error}; that sprite keeps its real depth", entity.id());
+            None
+        }
+        None => None,
+    }
 }
 
 struct PreparedMesh {
@@ -265,7 +280,9 @@ fn prepare_sprites(
     stats: &mut ExtractStats,
 ) -> Vec<PreparedSprite> {
     let mut prepared = Vec::new();
-    for (entity, (sprite, global, order)) in world.query::<(&Sprite, &GlobalTransform, Option<&RenderOrder>)>().iter() {
+    for (entity, (sprite, global, order, priority)) in
+        world.query::<(&Sprite, &GlobalTransform, Option<&RenderOrder>, Option<&CoplanarPriority>)>().iter()
+    {
         if hidden.hides(entity) {
             continue;
         }
@@ -286,6 +303,7 @@ fn prepare_sprites(
             render_target: sprite.render_target,
             appearance,
             order: order.copied().unwrap_or_default(),
+            coplanar_level: accepted_priority(entity, priority.copied()),
         });
     }
     prepared
@@ -428,6 +446,7 @@ fn build_pass(
             shading: appearance.shading,
             material_id: appearance.material_id,
             material_revision: appearance.material_revision,
+            coplanar_level: sprite.coplanar_level,
         };
         match appearance.shading {
             SpriteShading::LegacyCutout => cutout.push(instance),
@@ -903,6 +922,7 @@ fn extract_tilemap(
                 shading: SpriteShading::LegacyCutout,
                 material_id: None,
                 material_revision: 0,
+                coplanar_level: None,
             });
         }
     }

@@ -57,9 +57,9 @@ without it.
 | 6 | Input and action mapping | Working for M3b | Fixed-step latch and `Actions` (Phases 1–2). Physical pointer stays physical; logical conversion is on `Viewport` (`9c99edf`). A grabbed cursor takes `mouse_delta` from device motion; a free cursor uses position changes; focus loss releases held input and the grab (ADR-0013). Gamepad, text, and a rebinding UI are deferred | M3 |
 | 7 | Errors, logging, diagnostics, config | Partial | `log` 0.4 and `Diagnostics` (ADR-0012, M3a-4). No runtime config. No profiler, no history | M20, M24 |
 | **Rendering** | | | | |
-| 8 | Cameras and projection | Working; custom matrix implemented (M6-1B, `a38cb30`) | Ortho, perspective, and `CameraProjection::Custom(Mat4)`. Viewport, picking rays. `spatial_scene` demonstrates isometric, top-down, steep, side, and an example `custom` oblique matrix (M6-1C, committed locally, not pushed). Not an engine preset API and not an oblique builder. One camera/frame. D-48 and D-26 stay open | M6 |
+| 8 | Cameras and projection | Working; custom matrix implemented (M6-1B, `a38cb30`) | Ortho, perspective, and `CameraProjection::Custom(Mat4)`. Viewport, picking rays. `spatial_scene` demonstrates isometric, top-down, steep, side, and an example `custom` oblique matrix (M6-1C, committed locally, not pushed). Not an engine preset API and not an oblique builder. Several cameras per frame (D-08). Coplanar priority is ADR-0020. D-26 stays open | M6 |
 | 9 | Spatial sprites | Working | Orientation modes, region, tint, cutout/alpha; material batching (`a7efd6c`); CPU shelf packer (`bf4d9bb`); GPU atlas samples (`1666695`). M5 is accepted locally | M5 |
-| 10 | Depth, transparency, ordering | Working for sprites and meshes | One depth buffer. Blended sprites and blended meshes share one sequence (`ab1b6f7`). Object-level sort remains. Three coplanar conflicts stay unsolved (D-48, M6) | M6, M14 |
+| 10 | Depth, transparency, ordering | Working for sprites and meshes | One depth buffer. Reverse-Z (ADR-0019). Blended sprites and blended meshes share one sequence (`ab1b6f7`). Object-level sort remains. Opt-in `CoplanarPriority` (ADR-0020). Content that does not opt in, including the three `spatial_scene` conflicts, still ties | M6, M14 |
 | 11 | Meshes and materials | Working for the M5 asset | `MaterialAsset` (`e0c29ef`). Procedural plane, cube, cuboid, sphere, and cylinder (`92286ce`). Normal slot is stored and not shaded. No loader. `cone` still asserts | M12, M14 |
 | 12 | Textures, atlases | Working for M5 sampling | PNG; colour space, sampler, and mips; proved rectangle upload and whole-chain mip rebuild (`84d5ab1`); CPU shelf packer (`bf4d9bb`); GPU atlas samples (`1666695`). Localized mip texels are not implemented | M10 |
 | 13 | Lighting and fog | Working, forward only | Ambient/directional/point/spot (16), fog; 1 GPU test; no shadows, normal maps | M14 |
@@ -316,7 +316,7 @@ Missing from the original category list and now tracked: **save games** (34), **
   which happens before the divide. Settled D-07 uses NDC depth `[0, 1]`, 1 at near and 0 at far,
   compare greater, clear 0. A custom matrix is not converted; a stored 0-near matrix occludes backwards
   until it is rebuilt. Transparent sort stays camera-space Z. `Upright` does not follow
-  oblique shear (D-26). Coplanar ties stay ties (D-48).
+  oblique shear (D-26). A coplanar tie stays a tie unless a sprite opts into `CoplanarPriority` (ADR-0020).
 * **Camera configurations (ADR-0004; intended capabilities, status stated plainly).**
 
   | Configuration | Status today |
@@ -339,9 +339,10 @@ Missing from the original category list and now tracked: **save games** (34), **
   no camera-level or renderer-level style policy.
 * **Required.** The same behaviour of picking, culling, depth and lighting in every configuration.
   Multiple surface cameras and offscreen targets are implemented (D-08, locally). Custom matrices are
-  implemented (D-25, M6-1B). **Planned.** The rest of M6: D-48, chunking, debug draw, and benchmarks.
-  The configuration test scene is done (below). **Depends on.** D-48, D-07; D-06 is opt-in and not a
-  dependency of other views. D-08 and D-25 are implemented locally.
+  implemented (D-25, M6-1B). Reverse-Z is settled (D-07, ADR-0019). Coplanar sprite priority is settled
+  (ADR-0020). **Planned.** The rest of M6: gameplay orientation, D-26, chunking, debug draw, and benchmarks.
+  The configuration test scene is done (below). **Depends on.** D-26 and gameplay orientation before M7 and M8;
+  D-06 is opt-in and not a dependency of other views. D-08 and D-25 are implemented locally.
 * **Integration.** UI world anchors, picking, audio listener, directional frames (D-31) and the editor
   viewport all read the active camera's view.
 * **Performance.** Per-camera extraction multiplies CPU cost; cull per camera.
@@ -383,7 +384,7 @@ Missing from the original category list and now tracked: **save games** (34), **
   that sequence. `RenderOrder { layer, order }` overrides order inside it only. A missing component is
   `(0, 0)`. Sprite depth is the quad centre. Mesh depth is the camera-space Z of the world-space
   bounding-sphere centre. Sprites are visited before meshes, so an equal key draws the sprite first.
-  By decision (ADR-0004, amended 2026-10-13) spatial depth, transparency sorting, render layers or queues and explicit order are distinct concepts. A deliberate-ordering mechanism for coplanar opaque and cutout content is **not implemented and not chosen**. The M6 scene verified three limits, each pinned by a test in `configurations.rs` (D-48): equal-height cutout decals follow spawn order (`equal_height_cutout_decals_are_decided_by_draw_order_not_by_space`); a cutout decal coplanar with a slab is shown or hidden depending on the camera (`known_conflict_a_decal_coplanar_with_a_mesh_is_hidden_or_shown_by_rounding`); a blended decal at the same height as a cutout one is likewise camera-dependent (`known_conflict_a_blended_decal_at_the_same_height_as_a_cutout_one_depends_on_the_camera`). GPU tests: nearer mesh occludes a
+  By decision (ADR-0004, amended 2026-10-13) spatial depth, transparency sorting, render layers or queues and explicit order are distinct concepts. Coplanar priority is opt-in ([ADR-0020](adr/0020-coplanar-priority.md)): `CoplanarPriority(u8)` in `0..=7` on a sprite, and one `CoplanarSettings.thickness` in world units. No component is ordinary spatial depth. No resource uses `1/256`. The sprite shader changes depth only, by `(1 + level) * thickness` toward the camera, and keeps `clip.xy` and `clip.w`. Meshes, tiles, and blend-versus-blend order do not read it. Verified on Apple M5, Metal. The M6 scene does not opt in, so its three limits still describe that scene, each pinned by a test in `configurations.rs`: equal-height cutout decals follow spawn order (`equal_height_cutout_decals_are_decided_by_draw_order_not_by_space`); a cutout decal coplanar with a slab is shown or hidden depending on the camera (`known_conflict_a_decal_coplanar_with_a_mesh_is_hidden_or_shown_by_rounding`); a blended decal at the same height as a cutout one is likewise camera-dependent (`known_conflict_a_blended_decal_at_the_same_height_as_a_cutout_one_depends_on_the_camera`). GPU tests: nearer mesh occludes a
   sprite, farther does not, under all seven example configurations; a blended mesh, a blended sprite, and
   another blended mesh composite in depth order; the opposite arrangement puts the sprite in front.
   Limits: the mesh centre does not order intersections, cyclic overlaps, or a mesh that spans another
@@ -391,7 +392,7 @@ Missing from the original category list and now tracked: **save games** (34), **
 * **Required.** One documented rule for opaque, cutout and blended content from sprites, meshes, tiles,
   particles and skinned characters; defined behaviour when blended objects intersect.
 * **Planned.** Particles and skinned characters join the same transparent sequence when they exist.
-  **Depends on.** M5-5B (`3b3cd4a`), M5-5C (`ab1b6f7`), and M5-5D (`a7efd6c`). The three coplanar conflicts stay M6/D-48.
+  **Depends on.** M5-5B (`3b3cd4a`), M5-5C (`ab1b6f7`), and M5-5D (`a7efd6c`). The three `spatial_scene` conflicts stay until that scene opts in. Mesh, tile, and skeletal-attachment priority are not part of ADR-0020.
 * **Integration.** Shadows, particles and skinned meshes all pick a class; UI is outside this model.
 * **Tests/examples.** `blend.rs` reads back a blended mesh behind a sprite and another in front, and the sprite-in-front arrangement.
 * **Not initially.** Order-independent transparency, per-pixel sorting.
@@ -433,7 +434,7 @@ Missing from the original category list and now tracked: **save games** (34), **
   the existing renderer. `Atlas::replace_source` refreshes a same-size image and its extruded gutter
   through one `Texture::update_region`. Measured mip isolation is layout-specific and is not
   `floor(log2(padding))`. Linear filtering of a tightly packed atlas is not universally safe.
-* **Not implemented.** Localized mip-texel regeneration. Formal acceptance on 2026-10-22 classifies it as a deferred performance optimization with no milestone. `affected_mip_rect` remains the unused note for a later rebuild. KI-25 stays open. This row does not mark that optimization done. Also not implemented: normal-map shading (M14), order-independent transparency, sprite-sheet animation (M8), the glyph-atlas consumer (M10), and M6 coplanar stabilization.
+* **Not implemented.** Localized mip-texel regeneration. Formal acceptance on 2026-10-22 classifies it as a deferred performance optimization with no milestone. `affected_mip_rect` remains the unused note for a later rebuild. KI-25 stays open. This row does not mark that optimization done. Also not implemented: normal-map shading (M14), order-independent transparency, sprite-sheet animation (M8), and the glyph-atlas consumer (M10). Coplanar sprite priority is ADR-0020 and is not part of this texture row.
 * **Implemented with M5, and still limited by the measured layouts.** The atlas layouts are in
   ADR-0017. They do not reject a pack and they do not promise full-chain isolation. Wrap, separate
   filters, anisotropy normalization, per-texture colour space, the split GPU image and sampler caches,

@@ -11,9 +11,11 @@ struct Light {
 
 struct Globals {
     view_proj: mat4x4<f32>,
+    inv_view_proj: mat4x4<f32>,
     camera_pos: vec4<f32>,
     ambient: vec4<f32>,
     fog: vec4<f32>,             // rgb = color, w = density
+    coplanar: vec4<f32>,        // x = thickness in world units; 0 disables the opt-in pull
     counts: vec4<u32>,          // x = light count
     lights: array<Light, 16>,
 }

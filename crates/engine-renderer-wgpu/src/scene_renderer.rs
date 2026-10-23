@@ -844,7 +844,8 @@ impl SceneRenderer {
             })
             .collect();
         self.resource_stats.instance_buffer_grows += u64::from(self.blend_mesh_instances.upload(gpu, &blend_mesh_data));
-        let globals = GpuGlobals::from_camera(&camera.view, scene.ambient, scene.fog, &camera.lights);
+        let globals =
+            GpuGlobals::from_camera(&camera.view, scene.ambient, scene.fog, scene.coplanar_thickness, &camera.lights);
         gpu.queue.write_buffer(&self.globals, 0, bytemuck::bytes_of(&globals));
 
         if let CameraOutput::Target(id) = camera.output {
@@ -1556,7 +1557,12 @@ fn sprite_instances(layer: &SpriteLayer) -> Vec<GpuSpriteInstance> {
             model: i.model.to_cols_array(),
             uv: i.uv,
             tint: i.tint,
-            flags: [i.lit as u32, i.shading.cutoff_bits(), 0, 0],
+            flags: [
+                i.lit as u32,
+                i.shading.cutoff_bits(),
+                u32::from(i.coplanar_level.is_some()),
+                u32::from(i.coplanar_level.unwrap_or(0)),
+            ],
         })
         .collect()
 }

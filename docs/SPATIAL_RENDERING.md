@@ -179,8 +179,8 @@ and a 0-near matrix are not converted. Rebuild a 0-near matrix with `perspective
 A finite singular matrix is accepted; rendering does not need an inverse, and
 `CameraView::ray_from_pixels` returns `None` when the inverse fails. Transparent objects still sort by
 camera-space depth from the view matrix, then `RenderOrder`, then extraction order. An oblique matrix can
-shear the picture while `Billboard` and `Upright` keep using the camera basis (D-26 is unchanged). Coplanar
-ties stay ties (D-48). Frustum planes come from the same `view_proj` formulas. A plane whose normal is
+shear the picture while `Billboard` and `Upright` keep using the camera basis (D-26 is unchanged). A coplanar
+tie stays a tie unless the sprite opts into `CoplanarPriority` (ADR-0020). Frustum planes come from the same `view_proj` formulas. A plane whose normal is
 negligible beside that plane's own coefficients is dropped and does not cull. Scaling the matrix by a
 negative constant can leave divided NDC and those CPU planes unchanged, because both the clip numerator
 and `w` change sign and the frustum corrects the inward direction. The GPU clips in homogeneous space
@@ -210,7 +210,8 @@ back, pitched 0.3 rad down), a 96-unit figure at Z = 0, 100, 300 and 600 sits at
 | **Screen position** | Pixels in the camera's viewport | Derived by projecting a world position |
 | **Transparent-object ordering** | The order alpha-blended things are drawn in, so blending composes correctly | The extractor: back-to-front by view depth |
 | **Render layer or queue** | Which pass, group or camera content belongs to. **Not implemented** beyond the opaque, cutout and blended pass split; not the same thing as `RenderOrder.layer` | The renderer |
-| **Explicit render order** | An optional override (`RenderOrder`), for deliberate ordering where depth cannot decide, such as coplanar content. Never a substitute for depth | The game, when depth cannot decide |
+| **Explicit render order** | `RenderOrder` orders blended sprites and blended meshes. It does not order opaque or cutout draws | The game, for transparent ties |
+| **Coplanar priority** | Opt-in `CoplanarPriority` on a sprite. Depth-only pull of `(1 + level) * thickness` toward the camera. Not a z-index and not a blend sort (ADR-0020) | The game, on the sprites that share a surface |
 | **Camera projection** | How view space maps to the image | `Camera.projection` |
 
 Rules that follow:
@@ -243,16 +244,44 @@ applies inside that list only. A missing component is `(0, 0)`. Sprites are visi
 so a tie draws the sprite first. The mesh centre is an object-level approximation: intersecting
 transparent meshes, cyclic overlaps, an overlap whose centre misses the overlapping region, a mesh
 that spans another object's depth, and a transparent mesh passing through a sprite plane are outside
-what that point decides. The three coplanar conflicts below are unchanged and remain M6 (D-48).
-Configurable sort or occlusion policies for isometric styles are left room for and not built. No mechanism
-was chosen from the cases below (D-48).
+what that point decides. Coplanar priority is a separate opt-in (ADR-0020), described below. The three conflicts
+that follow are content that has not opted in. `spatial_scene` does not attach `CoplanarPriority`, so those
+tests still describe that scene. Configurable sort or occlusion policies for isometric styles are left room
+for and not built.
+
+### Coplanar priority (ADR-0020)
+
+`CoplanarPriority(level)` on a sprite opts that sprite into a depth-only pull of `(1 + level) * thickness`
+world units toward the camera. `level` is `0..=7`. Level 0 is a real step. Leaving the component off is
+ordinary spatial depth. `CoplanarSettings { thickness }` is one world resource. When it is absent the
+thickness is `1/256`. `CoplanarPriority::new` and `CoplanarSettings::new` refuse an out-of-range level and a
+non-positive or non-finite thickness. Extraction does not clamp a value written into the public field: a bad
+level is ignored, and a bad explicit thickness disables the pull.
+
+The sprite shader keeps `clip.xy` and `clip.w`. UVs, lighting, and the quad stay on the real vertex. Meshes
+are not moved. A tile map does not read the component. Two blended sprites still sort by camera-space Z and
+`RenderOrder`. A nearer mesh stays visible when its separation along the view ray exceeds the pull. At the
+fallback thickness, level 7 pulls 0.03125 world units. `1/1024` and `1/64` passed the same inside and outside
+checks; `1/64` was not selected because that pull is 0.125. A crossing mesh remains visible outside the band.
+A pull large enough to cover the crossing will hide the mesh, which is why thickness is not increased until a
+picture looks right.
+
+Priority is not a batch key. Sprites that share a material can use different levels and still draw together.
+The registry field is `level: u8`. `CoplanarSettings` is a resource, like `Fog`, and is not a component. A
+later editor should show both, refuse values `new` refuses, and describe the pull in world units. It should
+not present the level as a layer that replaces position. No editor is built here. Mesh decals, per-tile
+priority, and a skeletal-attachment API are out of scope. A sprite on a bone is still a sprite: the component
+on that entity already applies.
+
+Verified on Apple M5, Metal, with reverse-Z. Other backends are not verified.
 
 ### Coplanar conflicts the test scene verified (2026-10-14)
 
 `spatial_scene` lays flat `Fixed` decals on the `XZ` ground and samples their overlap under every
 configuration that is not edge-on to them (`side` is excluded: a flat decal has no area). These three are
-verified limitations. The tests pin the behaviour; they are expected to fail the day a mechanism removes it,
-and the finding should be updated in the same change. None of them is a chosen design.
+verified limitations of content that has not opted in. The scene was not given `CoplanarPriority` when
+ADR-0020 landed, so the tests still pin this behaviour. They should be updated in the same change that opts
+those decals in. None of them is a chosen design.
 
 | Conflict | What happens | Test |
 |---|---|---|
@@ -399,7 +428,7 @@ backend have no branch on the name.
 | `top-down` | Orthographic, height 1000 | Pitch 90°, looking along −Y, +Z toward the top of the image | Billboards face the camera. Flat decals are visible | `Upright` and vertical `Fixed` quads are edge-on |
 | `steep` | Perspective, 50° | Pitch 1.05 rad (about 60°), same focus | The same occlusion and picking | `Upright` is roughly half a billboard; that ratio is not a settled design |
 | `side` | Orthographic, height 400 | Level, looking along +Z | The same occlusion and picking | Flat ground decals are edge-on. Not a 2D-style game |
-| `custom` | Example `CameraProjection::Custom`: orthographic height 400, near 1, far 4000, aspect 16/9, after a view-space shear of `(0.14, 0.04)` | The same home transform as `perspective` and `orthographic` | Occlusion both ways; project-then-pick. At 320×180, figure C moves about 48 px from its orthographic pixel. The pillar's GPU pixel is the projected centre and is not the orthographic pixel. A cutout figure and a blended ghost stay visible. The frustum keeps those scene objects and culls a point at x = 8000. Resize keeps the matrix | Not an engine preset and not an oblique builder. Aspect is baked. `Upright` does not follow the shear (D-26). Coplanar order is unchanged (D-48). A negative scale of a custom matrix is not a claim of the same GPU image. Reverse-Z is not converted |
+| `custom` | Example `CameraProjection::Custom`: orthographic height 400, near 1, far 4000, aspect 16/9, after a view-space shear of `(0.14, 0.04)` | The same home transform as `perspective` and `orthographic` | Occlusion both ways; project-then-pick. At 320×180, figure C moves about 48 px from its orthographic pixel. The pillar's GPU pixel is the projected centre and is not the orthographic pixel. A cutout figure and a blended ghost stay visible. The frustum keeps those scene objects and culls a point at x = 8000. Resize keeps the matrix | Not an engine preset and not an oblique builder. Aspect is baked. `Upright` does not follow the shear (D-26). This scene does not opt into `CoplanarPriority` (ADR-0020). A negative scale of a custom matrix is not a claim of the same GPU image. A stored 0-near matrix is not converted |
 
 ## The example: `spatial_scene`
 

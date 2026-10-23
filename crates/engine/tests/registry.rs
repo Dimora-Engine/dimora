@@ -17,6 +17,8 @@ fn game_startup_registers_builtins_and_still_reports_unknown_components() {
         "SceneMember",
         "Visibility",
         "Sprite",
+        "RenderOrder",
+        "CoplanarPriority",
         "Mesh",
         "Camera",
         "Light",
@@ -38,6 +40,7 @@ fn game_startup_registers_builtins_and_still_reports_unknown_components() {
         Transform::IDENTITY,
         Sprite::new("hero"),
         RenderOrder::new(1, 2),
+        CoplanarPriority::new(3).unwrap(),
         Mesh::new("cube"),
         TileMap::new("atlas", 4, 4, Vec2::new(1.0, 1.0), 1, 1),
         Camera::orthographic(10.0),
@@ -49,6 +52,8 @@ fn game_startup_registers_builtins_and_still_reports_unknown_components() {
 
     let dump = game.world.dump_entity(root).unwrap();
     assert!(dump.contains("Sprite\n"));
+    assert!(dump.contains("CoplanarPriority\n"));
+    assert!(dump.contains("level: u8 script_visible=false script_writable=false = 3"));
     assert!(dump.contains("Mesh\n"));
     assert!(dump.contains("TileMap\n"));
     assert!(dump.contains("Camera\n"));

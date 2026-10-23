@@ -17,9 +17,12 @@ pub struct GpuLight {
 #[derive(Clone, Copy, Pod, Zeroable)]
 pub struct GpuGlobals {
     view_proj: [f32; 16],
+    inv_view_proj: [f32; 16],
     camera_pos: [f32; 4],
     ambient: [f32; 4],
     fog: [f32; 4],
+    /// `x` is the coplanar thickness in world units. The other lanes are unused.
+    coplanar: [f32; 4],
     counts: [u32; 4],
     lights: [GpuLight; MAX_LIGHTS],
 }
@@ -27,7 +30,13 @@ pub struct GpuGlobals {
 impl GpuGlobals {
     /// Uniforms for one camera pass. The caller writes this into a buffer region that stays live
     /// until that pass's submission has consumed it.
-    pub fn from_camera(view: &CameraView, ambient: [f32; 3], fog: [f32; 4], lights: &[LightData]) -> Self {
+    pub fn from_camera(
+        view: &CameraView,
+        ambient: [f32; 3],
+        fog: [f32; 4],
+        coplanar_thickness: f32,
+        lights: &[LightData],
+    ) -> Self {
         let mut gpu_lights = [GpuLight::zeroed(); MAX_LIGHTS];
         for (slot, light) in gpu_lights.iter_mut().zip(lights) {
             *slot = GpuLight::from_light(light);
@@ -35,9 +44,11 @@ impl GpuGlobals {
         let [ar, ag, ab] = ambient;
         Self {
             view_proj: view.view_proj.to_cols_array(),
+            inv_view_proj: view.view_proj.inverse().map(|inverse| inverse.to_cols_array()).unwrap_or([0.0; 16]),
             camera_pos: view.position.extend(1.0).to_array(),
             ambient: [ar, ag, ab, 0.0],
             fog,
+            coplanar: [coplanar_thickness, 0.0, 0.0, 0.0],
             counts: [lights.len().min(MAX_LIGHTS) as u32, 0, 0, 0],
             lights: gpu_lights,
         }
@@ -84,9 +95,10 @@ mod tests {
 
     #[test]
     fn layouts_match_wgsl() {
-        // WGSL: Light = 4 x vec4; Globals = mat4 + 4 x vec4 + 16 lights.
+        // WGSL: Light = 4 x vec4. Globals = two mat4, five vec4, then 16 lights.
+        // The sprite instance stays 112 bytes: coplanar level reuses the existing flag lanes.
         assert_eq!(core::mem::size_of::<GpuLight>(), 64);
-        assert_eq!(core::mem::size_of::<GpuGlobals>(), 64 + 64 + 16 * 64);
+        assert_eq!(core::mem::size_of::<GpuGlobals>(), 64 + 64 + 80 + 16 * 64);
         assert_eq!(core::mem::size_of::<GpuSpriteInstance>(), 112);
         assert_eq!(core::mem::size_of::<GpuMeshInstance>(), 96);
     }

@@ -110,6 +110,7 @@ fn a_material_revision_mismatch_splits_the_sprite_key() {
         shading,
         material_id: Some(material),
         material_revision: revision,
+        coplanar_level: None,
     };
     let same = SpriteLayer::from_ordered(vec![instance(3), instance(3)]);
     assert_eq!(same.batches.len(), 1);

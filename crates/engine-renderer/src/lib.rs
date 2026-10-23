@@ -13,6 +13,7 @@
 
 pub mod camera;
 pub mod components;
+pub mod coplanar;
 mod extract;
 pub mod frustum;
 mod interpolate;
@@ -25,6 +26,10 @@ pub mod scene;
 pub use camera::{Camera, CameraClear, CameraOutput, CameraView, ViewportRect};
 pub use components::{
     AmbientLight, Fog, Light, LightKind, Material, Mesh, RenderOrder, Sprite, SpriteBlend, SpriteOrientation, TileMap,
+};
+pub use coplanar::{
+    resolve_coplanar_thickness, CoplanarError, CoplanarPriority, CoplanarSettings, CANDIDATE_COPLANAR_THICKNESS,
+    MAX_COPLANAR_PRIORITY,
 };
 pub use extract::{
     active_surface_cameras, camera_view_of, extract_scene, top_surface_camera, OrderedCamera, SurfaceHit,

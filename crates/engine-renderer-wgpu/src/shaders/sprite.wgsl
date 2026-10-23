@@ -35,6 +35,11 @@ fn vs_main(in: Instance) -> VsOut {
     let world = model * vec4<f32>(p, 0.0, 1.0);
     var out: VsOut;
     out.clip = globals.view_proj * world;
+    // Opt-in only. flags.z is 0 for every sprite that has no CoplanarPriority, and for tiles.
+    // clip.xy and clip.w stay on the real projection. Only depth moves.
+    if in.flags.z != 0u {
+        out.clip = depth_only(out.clip, world, globals.coplanar.x * (1.0 + f32(in.flags.w)));
+    }
     out.world_pos = world.xyz;
     out.uv = vec2<f32>(mix(in.uv_rect.x, in.uv_rect.z, p.x), mix(in.uv_rect.w, in.uv_rect.y, p.y));
     // A sprite faces local -Z (toward the default camera).
@@ -42,6 +47,42 @@ fn vs_main(in: Instance) -> VsOut {
     out.tint = in.tint;
     out.lit = in.flags.x;
     out.cutoff_bits = in.flags.y;
+    return out;
+}
+
+// Move an opted-in sprite toward the camera in depth only.
+//
+// `away` is the view ray through this vertex, in world space, built in homogeneous form so a
+// vertex on the camera plane does not divide by zero. The original clip.xy and clip.w are kept.
+// A vertex that was inside the visible interval cannot be pushed through the near or far plane.
+fn depth_only(clip: vec4<f32>, world: vec4<f32>, amount: f32) -> vec4<f32> {
+    if amount <= 0.0 || clip.w <= 0.0 {
+        return clip;
+    }
+    let p0 = globals.inv_view_proj * vec4<f32>(clip.xy, 0.0, clip.w);
+    let p1 = globals.inv_view_proj * vec4<f32>(clip.xy, clip.w, clip.w);
+    if abs(p0.w) < 1e-6 || abs(p1.w) < 1e-6 {
+        return clip;
+    }
+    var away = p1.xyz / p1.w - p0.xyz / p0.w;
+    let len = length(away);
+    if len < 1e-6 {
+        return clip;
+    }
+    away = away / len;
+    if dot(away, world.xyz - globals.camera_pos.xyz) < 0.0 {
+        away = -away;
+    }
+    let moved = globals.view_proj * vec4<f32>(world.xyz - away * amount, 1.0);
+    if moved.w <= 1e-6 {
+        return clip;
+    }
+    var out = clip;
+    var z = (moved.z / moved.w) * clip.w;
+    if clip.z >= 0.0 && clip.z <= clip.w {
+        z = clamp(z, 0.0, clip.w);
+    }
+    out.z = z;
     return out;
 }
 

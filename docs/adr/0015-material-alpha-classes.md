@@ -70,7 +70,7 @@ A missing `RenderOrder` is `(0, 0)`, so depth decides. `layer` dominating depth 
 
 **Object-level limits, accepted as limits.** Whole-object sorting does not correctly order intersecting transparent meshes, overlapping transparent surfaces whose centres disagree with the overlap, cyclic overlaps, or one object that spans a depth range another object sits inside. Those cases are not solved in M5. Cutout, or a later technique outside M5, is the escape. This is the same limit KI-14 already records for large blended sprites.
 
-**Coplanar conflicts.** D-48 is unchanged. Equal-height cutout decals, a cutout decal coplanar with a mesh, and a blended decal at the same height as a cutout one stay known conflicts. This ADR does not extend `RenderOrder` to cutout or opaque content, and it does not add a depth bias.
+**Coplanar conflicts.** Equal-height cutout decals, a cutout decal coplanar with a mesh, and a blended decal at the same height as a cutout one stay known conflicts for content that has not opted in. This ADR does not extend `RenderOrder` to cutout or opaque content, and it does not add a depth bias. The later opt-in is [ADR-0020](0020-coplanar-priority.md).
 
 **MaterialAsset.** A CPU asset in `engine-assets`, no `wgpu` type. Fields: linear `Color` base colour, optional albedo `AssetHandle<Texture>`, optional normal-map `AssetHandle<Texture>` that M5 does not sample, `AlphaMode`, lit flag, double-sided flag. `AlphaMode::Mask` stores an `AlphaCutoff` that must be finite and in `0.0..=1.0`. The default cutoff is `0.5`. `MaterialAsset::default` is linear white, no textures, `Opaque`, `lit: true`, `double_sided: false`, matching the inline mesh `Material` plus the opaque class meshes already use. It does not reproduce `SpriteBlend::Alpha`. GPU pipelines and bind groups stay in `engine-renderer-wgpu`. `Sprite.material` and `Mesh.material_asset` are optional handles. `TileMap` has none.
 
@@ -109,7 +109,7 @@ M5-5A registers `MaterialAsset` through the existing `AssetManager`. A replaceme
 * The blended-mesh depth point is the camera-space Z of the world-space bounding-sphere centre. GPU readback covers ordinary non-intersecting order. The approximation limits above stay limits.
 * M14 samples the normal slot. M15 particles pick one of the three classes.
 * Screenshot baselines against `6dbabb8` stay in force. This ADR does not move them.
-* Not decided here: PBR, material graphs, custom shaders, alpha-to-coverage, order-independent transparency, and a coplanar mechanism (D-48). Reverse-Z is settled separately in [ADR-0019](0019-reverse-z.md).
+* Not decided here: PBR, material graphs, custom shaders, alpha-to-coverage, and order-independent transparency. Reverse-Z is settled separately in [ADR-0019](0019-reverse-z.md). Coplanar priority is settled separately in [ADR-0020](0020-coplanar-priority.md).
 
 ## Evidence and revisit conditions
 
