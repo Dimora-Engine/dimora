@@ -43,7 +43,7 @@ record is a later documentation commit. Localized mip-texel regeneration is not 
 projection (M6-1B, `a38cb30`), the example `custom` camera (M6-1C, `795bd95`), M6-2B surface cameras
 (`6a47882`, committed locally), and M6-2C offscreen targets and camera-to-texture (committed locally,
 not pushed). D-07 is settled ([ADR-0019](docs/adr/0019-reverse-z.md)): finite reverse-Z, compare `Greater`, clear 0, verified on Apple M5, Metal. Other backends are not verified.
-Coplanar sprite priority is settled ([ADR-0020](docs/adr/0020-coplanar-priority.md)): opt-in, depth-only, fallback thickness `1/256`, Apple M5, Metal only. Gameplay orientation is not decided. D-26 is settled in [ADR-0021](docs/adr/0021-sprite-orientation.md). The tilemap extraction baseline is recorded in [docs/PERFORMANCE.md](docs/PERFORMANCE.md). Extraction is still a full-grid scan. Tilemap chunking is not
+Coplanar sprite priority is settled ([ADR-0020](docs/adr/0020-coplanar-priority.md)): opt-in, depth-only, fallback thickness `1/256`, Apple M5, Metal only. Gameplay orientation is not decided. D-26 is settled in [ADR-0021](docs/adr/0021-sprite-orientation.md). Tilemap extraction culls 32×32 chunks. The baseline and the comparison are in [docs/PERFORMANCE.md](docs/PERFORMANCE.md). Debug draw is not
 done. M6 is not complete and is not pulled into M5.
 
 **M5 is complete locally and accepted.** The implementation checkpoint is
@@ -51,7 +51,7 @@ done. M6 is not complete and is not pulled into M5.
 `c687d5b`, `11b914f`, `622ef80`, `b51f1fb`, `84d5ab1`, `bf4d9bb`, `1666695`, `e0c29ef`,
 `3b3cd4a`, `ab1b6f7`, `a7efd6c`, and `92286ce`. None of them is pushed. Localized mip-texel
 regeneration is deferred and has no milestone. M6-2B surface cameras are commit `6a47882` and are not pushed.
-M6-2C camera-to-texture is committed locally and is not pushed. Coplanar sprite priority is [ADR-0020](docs/adr/0020-coplanar-priority.md). Sprite orientation is [ADR-0021](docs/adr/0021-sprite-orientation.md). The tilemap extraction baseline is in [docs/PERFORMANCE.md](docs/PERFORMANCE.md). Gameplay orientation, chunking, and debug draw have not
+M6-2C camera-to-texture is committed locally and is not pushed. Coplanar sprite priority is [ADR-0020](docs/adr/0020-coplanar-priority.md). Sprite orientation is [ADR-0021](docs/adr/0021-sprite-orientation.md). Tilemap chunking is in extraction, with the baseline and comparison in [docs/PERFORMANCE.md](docs/PERFORMANCE.md). Gameplay orientation and debug draw have not
 started.
 
 **Implemented and tested, beyond the 2026-10-13 audit.** Named stages, commands and events, the `log`
@@ -63,7 +63,7 @@ sprite and mesh sequence, material-aware instancing, and plane, cube, cuboid, sp
 generators. The acceptance evidence is in TASKS.md. The last recorded workspace check before that
 acceptance is the M5 audit (573 tests). This introduction does not add a separate test run.
 
-**Still partial.** Tilemaps have no chunking. Skeletal animation is a data model and one player. Assets
+**Still partial.** Tilemaps cull 32×32 chunks and still have no collision, flip, animation, or loader. Skeletal animation is a data model and one player. Assets
 are PNG and synchronous. Unassigned meshes still use the inline material. Localized mip-texel
 regeneration is not implemented. Normal-map shading, sprite-sheet animation, the glyph atlas, and
 order-independent transparency are not implemented. `Texture::from_rgba8` still asserts on a wrong
@@ -97,7 +97,7 @@ first" tiers in [docs/DECISIONS.md](docs/DECISIONS.md#what-to-resolve-first).
   `92286ce0546a4d94bb0365581ae7469fe2ad3260`. The acceptance record is the documentation commit that
   follows it. Decisions are ADR-0015, ADR-0016, ADR-0017, and ADR-0018. Localized mip-texel
   regeneration is deferred, with no milestone. It is not implemented.
-* **M6 stays after M5.** Custom projection, surface cameras, camera-to-texture, reverse-Z, coplanar sprite priority, and sprite orientation are in progress locally and are not pushed. The tilemap extraction baseline is recorded. Gameplay orientation, chunking, and debug draw are not started.
+* **M6 stays after M5.** Custom projection, surface cameras, camera-to-texture, reverse-Z, coplanar sprite priority, sprite orientation, and tilemap chunking are in progress locally and are not pushed. Gameplay orientation and debug draw are not started.
   M7 and M8 can proceed in parallel after M3a, M4, M5, and M6 as stated below. M9 freezes the foundational
   gameplay, scene, and component-integration contracts. Later milestones may add public APIs through a
   recorded decision. That freeze does not forbid every future public type.
@@ -633,8 +633,8 @@ part of the configuration bullet. **Surface cameras (M6-2B, `6a47882`).** Two vi
 picture-in-picture, `CameraClear::Color` and `Load`, and a per-camera depth clear are implemented and
 covered by GPU readback. **Camera-to-texture (M6-2C, committed locally, not pushed).** An offscreen camera's image is
 sampled by a later surface sprite, with resize, material and alpha class, invalid dependencies, and
-several writers covered by GPU readback. D-08 is implemented locally. **Coplanar sprite priority is met** ([ADR-0020](docs/adr/0020-coplanar-priority.md)). **Sprite orientation is met** ([ADR-0021](docs/adr/0021-sprite-orientation.md)). The tilemap extraction baseline is recorded in [docs/PERFORMANCE.md](docs/PERFORMANCE.md). **Not met:** gameplay orientation; chunking;
-an engine preset API; a public oblique builder. M6 is not complete. The baseline does not by itself meet the benchmark acceptance line: chunking's before-and-after comparison is still open.
+several writers covered by GPU readback. D-08 is implemented locally. **Coplanar sprite priority is met** ([ADR-0020](docs/adr/0020-coplanar-priority.md)). **Sprite orientation is met** ([ADR-0021](docs/adr/0021-sprite-orientation.md)). **Tilemap chunking is met for this foundation:** `set` rebuilds one chunk (`tile_chunk` tests), and a 1000×1000 map's extraction cost is recorded in [docs/PERFORMANCE.md](docs/PERFORMANCE.md). A partial view reads accepted chunks. A full view still reads every visible tile. **Not met:** gameplay orientation; debug draw;
+an engine preset API; a public oblique builder. M6 is not complete.
 The blended-sprite-versus-mesh assertion was not repeated per example configuration. The constructors are example-local.
 
 **Tests/examples.** `spatial_scene` has `--camera <name>`. The GPU tests for the scene are

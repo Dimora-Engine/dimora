@@ -253,6 +253,16 @@ pub struct ExtractStats {
     /// target is missing. Counted once per occurrence, not once per logged line.
     pub missing_targets: u32,
     pub lights: u32,
+    /// Tile cells read while building instances. Empty cells in a visible chunk count. Cells in a
+    /// rejected chunk do not. Summed across cameras on [`RenderScene::stats`].
+    pub tiles_visited: u32,
+    /// Tilemap chunks whose bounds were tested against a camera. Summed across cameras.
+    pub chunks_tested: u32,
+    /// Chunks rejected before their cells were read. Summed across cameras.
+    pub chunks_rejected: u32,
+    /// Chunk occupancy records scanned because they were dirty. A chunk is counted once per frame
+    /// even when several cameras draw the map.
+    pub chunks_rebuilt: u32,
 }
 
 /// One active camera, already culled and sorted for its own view.

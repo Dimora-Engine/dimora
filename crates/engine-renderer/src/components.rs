@@ -1,6 +1,8 @@
 //! Renderable ECS components. They describe *what* something is; *where* it is comes from the
 //! entity's `Transform`, the same as for every other spatial object.
 
+use std::sync::{Mutex, MutexGuard};
+
 use engine_assets::{AssetHandle, MaterialAsset, MeshData, SpriteAsset, Texture};
 use engine_core::Color;
 use engine_math::{Rect, Vec2};
@@ -253,8 +255,15 @@ impl Mesh {
 /// A grid of tiles taken from an atlas texture, laid out in the entity's local XY plane. Tile
 /// `(x, y)` occupies `[x, x+1] * tile_size.x` by `[y, y+1] * tile_size.y` from the local origin.
 /// Rotate the entity (e.g. 90 degrees about X) to lay it on the ground. Tiles are cutout-shaded and
-/// depth-tested, so a map costs no sorting.
-#[derive(Clone, Debug)]
+/// depth-tested, so a map costs no sorting. They do not read [`crate::CoplanarPriority`].
+///
+/// Extraction groups cells into [`Self::CHUNK_EDGE`] squares and skips a square the camera cannot
+/// see. [`Self::set`] dirties one square. [`Self::invalidate`] dirties every square after a direct
+/// write to [`Self::tiles`] or a change to `width` or `height`. The occupancy counts are extraction
+/// bookkeeping, not authored data, and they are not part of the component registry. The index sits
+/// behind a mutex because a component must be `Sync` and extraction updates it through a shared
+/// borrow. The engine runs that extraction on one thread.
+#[derive(Debug)]
 pub struct TileMap {
     pub texture: AssetHandle<Texture>,
     pub atlas_columns: u32,
@@ -266,10 +275,46 @@ pub struct TileMap {
     /// Row-major from the local origin; [`TileMap::EMPTY`] leaves a hole.
     pub tiles: Vec<u16>,
     pub lit: bool,
+    chunks: Mutex<ChunkIndex>,
+}
+
+/// Occupancy of one cull square. `dirty` means the count must be scanned again.
+#[derive(Clone, Copy, Debug)]
+struct ChunkRecord {
+    dirty: bool,
+    occupied: u32,
+}
+
+#[derive(Clone, Debug)]
+struct ChunkIndex {
+    width: u32,
+    height: u32,
+    edge: u32,
+    records: Vec<ChunkRecord>,
+}
+
+impl ChunkIndex {
+    fn empty() -> Self {
+        Self { width: 0, height: 0, edge: 0, records: Vec::new() }
+    }
+
+    fn matches(&self, map: &TileMap) -> bool {
+        let edge = TileMap::CHUNK_EDGE;
+        let expected = map.width.div_ceil(edge) * map.height.div_ceil(edge);
+        self.edge == edge
+            && self.width == map.width
+            && self.height == map.height
+            && self.records.len() == expected as usize
+    }
 }
 
 impl TileMap {
     pub const EMPTY: u16 = u16::MAX;
+
+    /// Tiles on each side of one cull square. `DIMORA_TILE_CHUNK=16` or `=64` rebuilds this crate
+    /// at that size; any other value, including unset, is 32. The measured choice is in
+    /// `docs/PERFORMANCE.md`.
+    pub const CHUNK_EDGE: u32 = chunk_edge();
 
     pub fn new(texture: &str, atlas_columns: u32, atlas_rows: u32, tile_size: Vec2, width: u32, height: u32) -> Self {
         Self {
@@ -281,6 +326,7 @@ impl TileMap {
             height,
             tiles: vec![Self::EMPTY; (width * height) as usize],
             lit: true,
+            chunks: Mutex::new(ChunkIndex::empty()),
         }
     }
 
@@ -295,10 +341,120 @@ impl TileMap {
 
     pub fn set(&mut self, x: u32, y: u32, tile: u16) {
         self.tiles[(y * self.width + x) as usize] = tile;
+        self.mark_chunk(x, y);
+    }
+
+    /// Marks every chunk dirty. [`Self::set`] already covers one cell. A direct write to
+    /// [`Self::tiles`], or a change to [`Self::width`] or [`Self::height`], does not.
+    pub fn invalidate(&mut self) {
+        let mut index = self.chunk_index();
+        if index.matches(self) {
+            for record in &mut index.records {
+                record.dirty = true;
+            }
+        } else {
+            *index = ChunkIndex::empty();
+        }
     }
 
     pub fn get(&self, x: u32, y: u32) -> u16 {
         self.tiles[(y * self.width + x) as usize]
+    }
+
+    pub(crate) fn ensure_chunks(&self) {
+        let mut index = self.chunk_index();
+        if index.matches(self) {
+            return;
+        }
+        let count = self.width.div_ceil(Self::CHUNK_EDGE) * self.height.div_ceil(Self::CHUNK_EDGE);
+        index.records = vec![ChunkRecord { dirty: true, occupied: 0 }; count as usize];
+        index.width = self.width;
+        index.height = self.height;
+        index.edge = Self::CHUNK_EDGE;
+    }
+
+    /// Occupancy of chunk `(cx, cy)`. The `bool` is true when this call scanned the chunk.
+    pub(crate) fn chunk_occupied(&self, cx: u32, cy: u32) -> (bool, u32) {
+        let chunks_x = self.width.div_ceil(Self::CHUNK_EDGE);
+        let slot = (cy * chunks_x + cx) as usize;
+        let dirty = self.chunk_index().records[slot].dirty;
+        if !dirty {
+            return (false, self.chunk_index().records[slot].occupied);
+        }
+        let occupied = self.count_chunk(cx, cy);
+        self.chunk_index().records[slot] = ChunkRecord { dirty: false, occupied };
+        (true, occupied)
+    }
+
+    fn mark_chunk(&mut self, x: u32, y: u32) {
+        let mut index = self.chunk_index();
+        if !index.matches(self) {
+            *index = ChunkIndex::empty();
+            return;
+        }
+        let chunks_x = self.width.div_ceil(Self::CHUNK_EDGE);
+        let slot = ((y / Self::CHUNK_EDGE) * chunks_x + x / Self::CHUNK_EDGE) as usize;
+        index.records[slot].dirty = true;
+    }
+
+    fn count_chunk(&self, cx: u32, cy: u32) -> u32 {
+        let x0 = cx * Self::CHUNK_EDGE;
+        let y0 = cy * Self::CHUNK_EDGE;
+        let x1 = (x0 + Self::CHUNK_EDGE).min(self.width);
+        let y1 = (y0 + Self::CHUNK_EDGE).min(self.height);
+        let mut occupied = 0u32;
+        for y in y0..y1 {
+            for x in x0..x1 {
+                if self.get(x, y) != Self::EMPTY {
+                    occupied += 1;
+                }
+            }
+        }
+        occupied
+    }
+
+    fn chunk_index(&self) -> MutexGuard<'_, ChunkIndex> {
+        self.chunks.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+}
+
+const fn chunk_edge() -> u32 {
+    match option_env!("DIMORA_TILE_CHUNK") {
+        Some(value) if const_str_eq(value, "16") => 16,
+        Some(value) if const_str_eq(value, "64") => 64,
+        _ => 32,
+    }
+}
+
+const fn const_str_eq(left: &str, right: &str) -> bool {
+    let left = left.as_bytes();
+    let right = right.as_bytes();
+    if left.len() != right.len() {
+        return false;
+    }
+    let mut index = 0;
+    while index < left.len() {
+        if left[index] != right[index] {
+            return false;
+        }
+        index += 1;
+    }
+    true
+}
+
+impl Clone for TileMap {
+    fn clone(&self) -> Self {
+        Self {
+            texture: self.texture,
+            atlas_columns: self.atlas_columns,
+            atlas_rows: self.atlas_rows,
+            tile_size: self.tile_size,
+            width: self.width,
+            height: self.height,
+            tiles: self.tiles.clone(),
+            lit: self.lit,
+            chunks: Mutex::new(self.chunk_index().clone()),
+        }
     }
 }
 
@@ -387,5 +543,23 @@ mod tests {
         assert!(map.lit);
         assert_eq!(map.tiles.len(), 4);
         assert_eq!(map.get(0, 0), TileMap::EMPTY);
+    }
+
+    #[test]
+    fn chunk_coordinates_cover_zero_the_edge_and_a_partial_last_chunk() {
+        let edge = TileMap::CHUNK_EDGE;
+        assert!(edge >= 2, "a cull square needs an interior and an edge");
+        let chunk = |coord: u32| coord / edge;
+        assert_eq!(chunk(0), 0);
+        assert_eq!(chunk(edge - 1), 0);
+        assert_eq!(chunk(edge), 1);
+        let width = edge * 2 + 3;
+        let height = edge + 1;
+        assert_eq!(width.div_ceil(edge), 3);
+        assert_eq!(height.div_ceil(edge), 2);
+        assert_eq!((width - 1) / edge, 2);
+        assert_eq!((height - 1) / edge, 1);
+        // Tile indices are `u32`. A negative index is not a cell. Negative world positions are a
+        // transform, covered by the chunk extraction tests.
     }
 }

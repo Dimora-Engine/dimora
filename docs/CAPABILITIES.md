@@ -64,7 +64,7 @@ without it.
 | 12 | Textures, atlases | Working for M5 sampling | PNG; colour space, sampler, and mips; proved rectangle upload and whole-chain mip rebuild (`84d5ab1`); CPU shelf packer (`bf4d9bb`); GPU atlas samples (`1666695`). Localized mip texels are not implemented | M10 |
 | 13 | Lighting and fog | Working, forward only | Ambient/directional/point/spot (16), fog; 1 GPU test; no shadows, normal maps | M14 |
 | 14 | Shadows | Absent | | M14 |
-| 15 | Tilemaps | Working, basic | Expanded to quads every frame; no chunking, collision, loader. Full-scan cost is recorded in [PERFORMANCE.md](PERFORMANCE.md) | M13 |
+| 15 | Tilemaps | Working, basic | 32×32 cull chunks in extraction; one `set` rebuilds one chunk. No collision or loader. Costs are in [PERFORMANCE.md](PERFORMANCE.md) | M13 |
 | 16 | Particles | Absent | | M15 |
 | 17 | Parallax | Working (emergent) | Falls out of perspective projection; tested; no per-layer factor by design | done |
 | 18 | Renderer resources and performance | Partial | Texture/mesh GPU caches with removal and idle eviction (T2); instance buffers only grow. Tilemap extraction baseline is in [PERFORMANCE.md](PERFORMANCE.md). GPU frame time is unmeasured | M6 |
@@ -461,13 +461,17 @@ Missing from the original category list and now tracked: **save games** (34), **
 * **Not initially.** Soft shadow filtering beyond basic PCF, cascades.
 
 ### 15. Tilemaps
-* **Now.** `TileMap` component expanded to cutout quads on every extraction (80x120 in the demo); one
-  extraction test. No chunking, flip flags, layers, animation, collision, loader. The full-grid
-  extraction cost for 64² through 1000² is recorded in [PERFORMANCE.md](PERFORMANCE.md).
+* **Now.** `TileMap` expands to cutout quads through the shared sprite path. Extraction tests 32×32
+  chunks and reads tiles only in chunks the camera can see. `set` dirties one chunk. `invalidate`
+  dirties every chunk after a direct write to `tiles`. Instances are built each frame for visible
+  tiles and are not cached. No flip flags, layers, animation, collision, or loader. Tile indices are
+  `u32`. `CoplanarPriority` is not read. Costs for 64² through 1000², before and after chunking, are
+  in [PERFORMANCE.md](PERFORMANCE.md).
 * **Planned.** M13: chunked storage, layers, collision layer. **Depends on.** M6, M7, M5.
 * **Integration.** Tiles live in world space (a map is an entity with a `Transform`), so physics and
   queries use world coordinates and a map can be rotated or stacked at depth.
-* **Performance.** Per-frame cost must be proportional to visible chunks, not tiles (M13 criterion).
+* **Performance.** A partial view reads the tiles in accepted 32×32 chunks, not the whole grid. A fully
+  visible map still reads every cell. The 1000×1000 numbers are in [PERFORMANCE.md](PERFORMANCE.md).
 * **Not initially.** Hex/isometric grids, auto-tiling, infinite maps.
 
 ### 16. Particles

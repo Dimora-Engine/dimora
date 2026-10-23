@@ -10,8 +10,8 @@
 //! `64,256,512,1000`. Refuses a debug build so a profile mix cannot be recorded
 //! as a baseline.
 //!
-//! Cells scanned are `width * height * cameras`. That is the current extractor:
-//! every cell is visited, and an empty cell does not increment `sprites_culled`.
+//! `cells_scanned` is `width * height * cameras`, the full-grid walk from the baseline.
+//! `tiles_visited`, `chunks_tested`, `chunks_rejected`, and `chunks_rebuilt` come from extraction.
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::hint::black_box;
@@ -138,7 +138,7 @@ fn main() {
     let sizes = selected_sizes();
     println!(
         "size,cameras,view,coverage,density,populated,samples,median_us,p95_us,min_us,max_us,\
-visible,culled,instances,batches,cells_scanned,sim_median_us,alloc_count,alloc_bytes,visible_fraction"
+visible,culled,instances,batches,cells_scanned,sim_median_us,alloc_count,alloc_bytes,visible_fraction,tiles_visited,chunks_tested,chunks_rejected,chunks_rebuilt"
     );
     eprintln!("tilemap extract bench: release, viewport {}x{}, sizes {:?}", VIEWPORT.x, VIEWPORT.y, sizes);
 
@@ -228,7 +228,7 @@ fn run_case(assets: &AssetManager, size: u32, cameras: u32, view: View, coverage
     let fraction = visible as f64 / denom;
 
     println!(
-        "{size},{cameras},{},{},{},{populated},{samples},{:.1},{:.1},{:.1},{:.1},{visible},{culled},{instances},{batches},{cells},{:.1},{alloc_count},{alloc_bytes},{fraction:.4}",
+        "{size},{cameras},{},{},{},{populated},{samples},{:.1},{:.1},{:.1},{:.1},{visible},{culled},{instances},{batches},{cells},{:.1},{alloc_count},{alloc_bytes},{fraction:.4},{},{},{},{}",
         view.name(),
         coverage.name(),
         density.name(),
@@ -237,6 +237,10 @@ fn run_case(assets: &AssetManager, size: u32, cameras: u32, view: View, coverage
         times[0],
         times[times.len() - 1],
         sim.median_us,
+        scene.stats.tiles_visited,
+        scene.stats.chunks_tested,
+        scene.stats.chunks_rejected,
+        scene.stats.chunks_rebuilt,
     );
     eprintln!("median {:.1} us, visible {:.1}%", median(&times), fraction * 100.0);
 }

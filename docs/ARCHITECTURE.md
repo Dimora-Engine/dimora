@@ -297,10 +297,12 @@ Each is verified by reading the code or by a test run; identifiers refer to the 
    entities driving child sprites. No blending, events, IK, skinning, or loading.
 9. **Transparency (KI-14).** Blended sprites are sorted per quad centre only; large or intersecting
    blended quads can mis-order; meshes cannot be blended.
-10. **Per-frame CPU cost.** Extraction walks all renderables each frame; tilemaps are expanded
-    tile-by-tile each frame (an 80x120 map is ~9,600 tile checks per frame); instance buffers are
-    rewritten fully. A release baseline of that full scan is in [PERFORMANCE.md](PERFORMANCE.md).
-    Chunking is not implemented. GPU frame time is not part of that baseline (KI-19).
+10. **Per-frame CPU cost.** Extraction walks sprites and meshes each frame. A tilemap is divided
+    into 32×32 cull squares. A camera tests every square, then reads tiles only inside squares that
+    meet the frustum. Rejected squares add a stored occupancy count and do not build matrices.
+    A camera that sees the whole map still reads every cell. `set` rebuilds one square's count.
+    The release numbers are in [PERFORMANCE.md](PERFORMANCE.md). GPU frame time is not part of that
+    record (KI-19).
 11. **Verification gaps (KI-1..3).** Mostly closed by T1: the toolchain is pinned, the MSRV is 1.90, and
     `scripts/check.sh` with `DIMORA_REQUIRE_GPU=1` turns a missing GPU adapter into a failure. Also done: a CI workflow
     runs the check on Windows, macOS and Linux and the MSRV job passes on all three (TASKS.md "CI results"). Still open: it uses
@@ -428,7 +430,8 @@ sprite. Keep three things
 separate: *projection* (how the world becomes pixels), *gameplay orientation* (up axis, ground plane,
 facing), *visual style* (snapping, fog, mood). *Today:* the camera maths takes any `Transform` and a perspective, orthographic, or custom view-to-clip
 matrix. The tilemap is a quad grid in its entity's local XY plane that is laid flat by rotating the
-entity, and sprite orientation modes are tested under a pitched camera. *Demonstrated (2026-10-14):* the same
+entity. Extraction culls that grid in 32×32 chunks with the same frustum and does not add a tilemap
+camera or a second pass. Sprite orientation modes are tested under a pitched camera. *Demonstrated (2026-10-14):* the same
 `spatial_scene` world through example-local perspective, orthographic, isometric, top-down, steep, side, and
 custom constructors, with GPU tests. Those constructors are not an engine preset API. *Custom projection (M6-1B, `a38cb30`):*
 `CameraProjection::Custom(Mat4)` renders and picks through the same extraction and `view_proj` uniform.

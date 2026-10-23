@@ -77,6 +77,10 @@ pub fn extract_scene(world: &World, assets: &AssetManager, target_size: Vec2) ->
         stats.meshes_visible += pass.stats.meshes_visible;
         stats.meshes_culled += pass.stats.meshes_culled;
         stats.lights += pass.stats.lights;
+        stats.tiles_visited += pass.stats.tiles_visited;
+        stats.chunks_tested += pass.stats.chunks_tested;
+        stats.chunks_rejected += pass.stats.chunks_rejected;
+        stats.chunks_rebuilt += pass.stats.chunks_rebuilt;
     }
     Some(RenderScene { passes, targets, ambient, fog, coplanar_thickness, stats })
 }
@@ -890,40 +894,102 @@ fn extract_tilemap(
     stats: &mut ExtractStats,
 ) {
     // Pull UVs in by a sliver of a texel so perspective minification never samples a neighbour.
+    // UVs are computed from the texture loaded for this frame. A reload that changes the texture
+    // size is picked up here. It does not need a chunk rebuild. Tiles have no material asset.
+    // `CoplanarPriority` is not read: tiles stay at `coplanar_level: None`. A future opt-in would
+    // be copied onto the instance at this push and would not be a batch key (ADR-0020).
     let inset = Vec2::new(0.02 / texture.width as f32, 0.02 / texture.height as f32);
     let cell = Vec2::new(1.0 / map.atlas_columns as f32, 1.0 / map.atlas_rows as f32);
+    let edge = TileMap::CHUNK_EDGE;
+    map.ensure_chunks();
+    let chunks_x = map.width.div_ceil(edge);
+    let chunks_y = map.height.div_ceil(edge);
+    let mut visible = vec![false; (chunks_x * chunks_y) as usize];
 
-    for y in 0..map.height {
-        for x in 0..map.width {
-            let tile = map.get(x, y);
-            if tile == TileMap::EMPTY {
-                continue;
+    for cy in 0..chunks_y {
+        for cx in 0..chunks_x {
+            let slot = (cy * chunks_x + cx) as usize;
+            stats.chunks_tested += 1;
+            let (rebuilt, occupied) = map.chunk_occupied(cx, cy);
+            if rebuilt {
+                stats.chunks_rebuilt += 1;
             }
-            let (col, row) = (tile as u32 % map.atlas_columns, tile as u32 / map.atlas_columns);
-            let min = Vec2::new(col as f32 * cell.x, row as f32 * cell.y) + inset;
-            let max = Vec2::new((col + 1) as f32 * cell.x, (row + 1) as f32 * cell.y) - inset;
-            let origin = Vec3::new(x as f32 * map.tile_size.x, y as f32 * map.tile_size.y, 0.0);
-            let model = *global
-                * Mat4::from_translation(origin)
-                * Mat4::from_scale(Vec3::new(map.tile_size.x, map.tile_size.y, 1.0));
-            if !quad_visible(frustum, &model) {
-                stats.sprites_culled += 1;
-                continue;
+            if chunk_visible(global, map, cx, cy, frustum) {
+                visible[slot] = true;
+            } else {
+                stats.chunks_rejected += 1;
+                stats.sprites_culled += occupied;
             }
-            stats.sprites_visible += 1;
-            out.push(SpriteInstance {
-                model,
-                uv: [min.x, min.y, max.x, max.y],
-                tint: [1.0; 4],
-                lit: map.lit,
-                texture: map.texture,
-                render_target: None,
-                unavailable_target: false,
-                shading: SpriteShading::LegacyCutout,
-                material_id: None,
-                material_revision: 0,
-                coplanar_level: None,
-            });
         }
     }
+
+    for y in 0..map.height {
+        let cy = y / edge;
+        let mut x = 0;
+        while x < map.width {
+            let cx = x / edge;
+            let x1 = ((cx + 1) * edge).min(map.width);
+            if !visible[(cy * chunks_x + cx) as usize] {
+                x = x1;
+                continue;
+            }
+            stats.tiles_visited += x1 - x;
+            for x in x..x1 {
+                let tile = map.get(x, y);
+                if tile == TileMap::EMPTY {
+                    continue;
+                }
+                let (col, row) = (tile as u32 % map.atlas_columns, tile as u32 / map.atlas_columns);
+                let min = Vec2::new(col as f32 * cell.x, row as f32 * cell.y) + inset;
+                let max = Vec2::new((col + 1) as f32 * cell.x, (row + 1) as f32 * cell.y) - inset;
+                let origin = Vec3::new(x as f32 * map.tile_size.x, y as f32 * map.tile_size.y, 0.0);
+                let model = *global
+                    * Mat4::from_translation(origin)
+                    * Mat4::from_scale(Vec3::new(map.tile_size.x, map.tile_size.y, 1.0));
+                if !quad_visible(frustum, &model) {
+                    stats.sprites_culled += 1;
+                    continue;
+                }
+                stats.sprites_visible += 1;
+                out.push(SpriteInstance {
+                    model,
+                    uv: [min.x, min.y, max.x, max.y],
+                    tint: [1.0; 4],
+                    lit: map.lit,
+                    texture: map.texture,
+                    render_target: None,
+                    unavailable_target: false,
+                    shading: SpriteShading::LegacyCutout,
+                    material_id: None,
+                    material_revision: 0,
+                    // Tiles do not opt into coplanar priority. See the note above this function.
+                    coplanar_level: None,
+                });
+            }
+            x = x1;
+        }
+    }
+}
+
+/// World-space sphere around a chunk rectangle after `global`. The sphere uses the transformed
+/// corners, so a rotated, scaled, or sheared map is not treated as axis-aligned.
+fn chunk_visible(global: &Mat4, map: &TileMap, cx: u32, cy: u32, frustum: &Frustum) -> bool {
+    let edge = TileMap::CHUNK_EDGE;
+    let x0 = cx * edge;
+    let y0 = cy * edge;
+    let x1 = (x0 + edge).min(map.width);
+    let y1 = (y0 + edge).min(map.height);
+    let (sx, sy) = (map.tile_size.x, map.tile_size.y);
+    let corners = [
+        Vec3::new(x0 as f32 * sx, y0 as f32 * sy, 0.0),
+        Vec3::new(x1 as f32 * sx, y0 as f32 * sy, 0.0),
+        Vec3::new(x0 as f32 * sx, y1 as f32 * sy, 0.0),
+        Vec3::new(x1 as f32 * sx, y1 as f32 * sy, 0.0),
+    ];
+    let world = corners.map(|corner| global.transform_point3(corner));
+    let center = (world[0] + world[1] + world[2] + world[3]) * 0.25;
+    let radius = world.iter().fold(0.0_f32, |radius, corner| radius.max((*corner - center).length()));
+    // A hair of padding keeps a corner tile from falling out of a sphere that already contains it
+    // once the matrix multiply rounds.
+    frustum.intersects_sphere(center, radius * (1.0 + 1e-5) + 1e-4)
 }
