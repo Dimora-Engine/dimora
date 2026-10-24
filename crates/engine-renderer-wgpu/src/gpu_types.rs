@@ -89,6 +89,15 @@ pub struct GpuMeshInstance {
     pub flags: [u32; 4],
 }
 
+/// One debug-line vertex. `position.w` is 1. Matches `debug_line.wgsl` locations 0 and 1.
+/// A `vec3` attribute would be padded to 16 bytes, so the position is a `vec4`.
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+pub struct GpuDebugVertex {
+    pub position: [f32; 4],
+    pub color: [f32; 4],
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -101,5 +110,6 @@ mod tests {
         assert_eq!(core::mem::size_of::<GpuGlobals>(), 64 + 64 + 80 + 16 * 64);
         assert_eq!(core::mem::size_of::<GpuSpriteInstance>(), 112);
         assert_eq!(core::mem::size_of::<GpuMeshInstance>(), 96);
+        assert_eq!(core::mem::size_of::<GpuDebugVertex>(), 32);
     }
 }

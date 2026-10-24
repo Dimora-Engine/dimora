@@ -5,7 +5,7 @@ use engine_assets::AssetManager;
 use engine_core::{Actions, FixedTimestep, Input, InputEvent, Time};
 use engine_platform::WindowConfig;
 use engine_renderer::{
-    extract_scene, AmbientLight, ExtractStats, MissingAssetWarnings, RenderScene, RenderTargetStore,
+    extract_scene, AmbientLight, DebugDraw, ExtractStats, MissingAssetWarnings, RenderScene, RenderTargetStore,
 };
 use engine_renderer_wgpu::{CacheStats, FrameStats, GpuContext, RenderError, SceneRenderer};
 use engine_world::{propagate_transforms, snapshot_interpolation, Schedule, ScheduleError, World};
@@ -243,6 +243,7 @@ impl Game {
         world.insert_resource(Viewport::from_logical_pixels(config.window.width, config.window.height));
         world.insert_resource(FixedTimestep::new(config.fixed_hz));
         world.insert_resource(StepClock::default());
+        world.insert_resource(DebugDraw::default());
 
         let mut time = Schedule::new();
         time.add_system(Stage::ADVANCE_TIME, advance_time).expect("advance_time");
@@ -378,9 +379,19 @@ impl Game {
     /// separately. `dt` is simulation time. It is not how long the call took. The fixed-update
     /// measurement is the CPU time of the whole fixed loop. [`Diagnostics::render`] is left as the
     /// most recent successful render; this call does not extract or render.
+    ///
+    /// [`DebugDraw`] is cleared before any stage runs. A segment submitted from `fixed_update`,
+    /// `update`, `animate`, `post_update`, or `input_clear` is still present when this call
+    /// returns, so the extract after this step can see it. A second extract before the next call
+    /// sees the same segments. The next call drops them. A removed `DebugDraw` resource is
+    /// inserted empty and then cleared, so a system can submit during this call.
     pub fn step(&mut self, dt: Duration) {
         self.world.clear_command_failures();
         self.world.clear_discarded_events();
+        if self.world.try_resource::<DebugDraw>().is_none() {
+            self.world.insert_resource(DebugDraw::default());
+        }
+        self.world.resource_mut::<DebugDraw>().clear();
         self.world.resource_mut::<Input>().publish_fixed_edges();
         self.world.resource_mut::<Actions>().publish_fixed_edges();
         self.world.resource_mut::<StepClock>().dt = dt;

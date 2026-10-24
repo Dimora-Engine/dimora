@@ -7,8 +7,8 @@ use engine_assets::{
     TexturePixelEdits,
 };
 use engine_renderer::{
-    CameraClear, CameraOutput, CameraPass, MeshDraw, MeshInstance, RenderScene, RenderTargetDesc, RenderTargetId,
-    SpriteBatch, SpriteLayer, SpritePipelineKind, TransparentBatch,
+    CameraClear, CameraOutput, CameraPass, DebugSegment, MeshDraw, MeshInstance, RenderScene, RenderTargetDesc,
+    RenderTargetId, SpriteBatch, SpriteLayer, SpritePipelineKind, TransparentBatch,
 };
 use wgpu::util::DeviceExt;
 
@@ -22,7 +22,7 @@ use crate::mip::{self, MipGenerator};
 /// view still contains only level 0, so a wider clamp does not sample a mip that was not allocated.
 const SINGLE_LEVEL_LOD_MAX: f32 = 32.0;
 
-use crate::gpu_types::{GpuGlobals, GpuMeshInstance, GpuSpriteInstance};
+use crate::gpu_types::{GpuDebugVertex, GpuGlobals, GpuMeshInstance, GpuSpriteInstance};
 use crate::{GpuContext, RenderError};
 
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
@@ -51,7 +51,8 @@ pub struct FrameStats {
     pub largest_draw_instances: u32,
     /// Sum of the instance ranges passed to world draw calls. An indexed mesh draw counts
     /// instances, not indices. A missing GPU mesh that is skipped is not included. A sprite drawn
-    /// by two cameras counts twice. Viewport clears are not included.
+    /// by two cameras counts twice. A debug line draw counts its vertices, two per segment, and
+    /// counts again for each camera that draws the batch. Viewport clears are not included.
     pub submitted_instances: u32,
 }
 
@@ -258,7 +259,9 @@ impl InstanceBuffer {
 /// Pass order in one render pass: depth-writing meshes, opaque sprites, mask sprites, then
 /// cutout sprites and tiles. Blended sprites and blended meshes follow in one back-to-front
 /// sequence. A pipeline change does not pull one primitive ahead of the other. Depth testing is
-/// what lets opaque and mask geometry occlude a later blend.
+/// what lets opaque and mask geometry occlude a later blend. When the frame has debug segments,
+/// one line-list draw follows that sequence: reverse-Z depth test, no depth write, unlit vertex
+/// color. An empty debug list does not add that draw.
 pub struct SceneRenderer {
     format: wgpu::TextureFormat,
     globals: wgpu::Buffer,
@@ -296,6 +299,8 @@ pub struct SceneRenderer {
     mesh_mask_double: wgpu::RenderPipeline,
     mesh_blend: wgpu::RenderPipeline,
     mesh_blend_double: wgpu::RenderPipeline,
+    /// One-pixel unlit lines. Group 0 only. Depth test on, depth write off, alpha blend.
+    debug_pipeline: wgpu::RenderPipeline,
     textures: HashMap<AssetId, GpuTexture>,
     white: GpuTexture,
     missing: GpuTexture,
@@ -309,6 +314,9 @@ pub struct SceneRenderer {
     blend_instances: InstanceBuffer,
     mesh_instances: InstanceBuffer,
     blend_mesh_instances: InstanceBuffer,
+    debug_vertices: InstanceBuffer,
+    /// Vertices uploaded for this frame's debug lines. Zero skips the line draw in every camera.
+    debug_vertex_count: u32,
     depth: Option<(wgpu::TextureView, (u32, u32))>,
     stats: FrameStats,
     pass_stats: Vec<PassFrameStats>,
@@ -487,6 +495,49 @@ impl SceneRenderer {
         let mesh_blend_double =
             mesh_pipeline("mesh blend double", "fs_blend", false, Some(wgpu::BlendState::ALPHA_BLENDING), None);
 
+        // Own shader module: `shader()` prepends common.wgsl, which binds a texture this
+        // pipeline does not have. Line width is not part of wgpu 30's primitive state, so the
+        // contract is one pixel. Alpha blend lets a segment's alpha show. Depth write stays off.
+        let debug_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("debug line"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/debug_line.wgsl").into()),
+        });
+        let debug_attrs = wgpu::vertex_attr_array![0 => Float32x4, 1 => Float32x4];
+        let debug_vertex_layout = wgpu::VertexBufferLayout {
+            array_stride: core::mem::size_of::<GpuDebugVertex>() as u64,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &debug_attrs,
+        };
+        let debug_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("debug line"),
+            layout: Some(&device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("debug line layout"),
+                bind_group_layouts: &[Some(&globals_layout)],
+                immediate_size: 0,
+            })),
+            vertex: wgpu::VertexState {
+                module: &debug_shader,
+                entry_point: Some("vs_debug"),
+                compilation_options: Default::default(),
+                buffers: &[Some(debug_vertex_layout)],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &debug_shader,
+                entry_point: Some("fs_debug"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: wgpu::PrimitiveState { topology: wgpu::PrimitiveTopology::LineList, ..Default::default() },
+            depth_stencil: Some(depth_state(false)),
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+
         let clear_uniform = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("viewport clear"),
             size: core::mem::size_of::<ClearUniform>() as u64,
@@ -625,6 +676,7 @@ impl SceneRenderer {
             mesh_mask_double,
             mesh_blend,
             mesh_blend_double,
+            debug_pipeline,
             textures: HashMap::new(),
             meshes: HashMap::new(),
             opaque_instances: InstanceBuffer::new(device, "opaque sprite instances"),
@@ -633,6 +685,8 @@ impl SceneRenderer {
             blend_instances: InstanceBuffer::new(device, "blended sprite instances"),
             mesh_instances: InstanceBuffer::new(device, "mesh instances"),
             blend_mesh_instances: InstanceBuffer::new(device, "blended mesh instances"),
+            debug_vertices: InstanceBuffer::new(device, "debug line vertices"),
+            debug_vertex_count: 0,
             depth: None,
             stats: FrameStats::default(),
             pass_stats: Vec::new(),
@@ -781,6 +835,13 @@ impl SceneRenderer {
         }
         self.evict_unused(assets);
         self.ensure_depth(gpu, size);
+        // One upload for every camera. Later cameras do not rewrite this buffer, so a second
+        // submit still reads the same vertices. An empty list does not write and does not draw.
+        let debug_vertices = collect_debug_vertices(&scene.debug_lines);
+        self.debug_vertex_count = debug_vertices.len() as u32;
+        if !debug_vertices.is_empty() {
+            self.resource_stats.instance_buffer_grows += u64::from(self.debug_vertices.upload(gpu, &debug_vertices));
+        }
 
         let mut stats = FrameStats { camera_passes: scene.passes.len() as u32, ..FrameStats::default() };
         let mut pass_stats = Vec::with_capacity(scene.passes.len());
@@ -933,6 +994,16 @@ impl SceneRenderer {
             self.draw_sprites(&mut pass, &camera.mask_sprites, &self.mask_instances, stats, &mut one);
             self.draw_sprites(&mut pass, &camera.cutout_sprites, &self.cutout_instances, stats, &mut one);
             self.draw_transparent(&mut pass, camera, stats, &mut one);
+            // After transparent draws. Opaque, mask, and cutout wrote depth, so a farther line
+            // is occluded. Blended draws did not write depth, so a line can paint over them.
+            // No depth write: a line does not hide a later camera. Not an X-ray overlay.
+            if self.debug_vertex_count > 0 {
+                pass.set_pipeline(&self.debug_pipeline);
+                pass.set_bind_group(0, &self.globals_bind_group, &[]);
+                pass.set_vertex_buffer(0, self.debug_vertices.buffer.slice(..));
+                pass.draw(0..self.debug_vertex_count, 0..1);
+                record_world(stats, &mut one, self.debug_vertex_count);
+            }
         }
         gpu.queue.submit([encoder.finish()]);
         one
@@ -1547,6 +1618,26 @@ fn depth_state(write: bool) -> wgpu::DepthStencilState {
         stencil: wgpu::StencilState::default(),
         bias: wgpu::DepthBiasState::default(),
     }
+}
+
+fn collect_debug_vertices(segments: &[DebugSegment]) -> Vec<GpuDebugVertex> {
+    let mut vertices = Vec::with_capacity(segments.len() * 2);
+    for segment in segments {
+        if !finite_debug_segment(segment) {
+            continue;
+        }
+        vertices.push(GpuDebugVertex { position: segment.start.extend(1.0).to_array(), color: segment.color });
+        vertices.push(GpuDebugVertex { position: segment.end.extend(1.0).to_array(), color: segment.color });
+    }
+    vertices
+}
+
+fn finite_debug_segment(segment: &DebugSegment) -> bool {
+    let finite_point = |x: f32, y: f32, z: f32| x.is_finite() && y.is_finite() && z.is_finite();
+    finite_point(segment.start.x, segment.start.y, segment.start.z)
+        && finite_point(segment.end.x, segment.end.y, segment.end.z)
+        && segment.color.iter().all(|channel| channel.is_finite())
+        && segment.start.distance_squared(segment.end) > 0.0
 }
 
 fn sprite_instances(layer: &SpriteLayer) -> Vec<GpuSpriteInstance> {

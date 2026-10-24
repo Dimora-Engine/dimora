@@ -8,12 +8,14 @@
 //!   [`Sprite`], [`Mesh`], [`TileMap`], [`Light`].
 //! * [`extract_scene`] snapshots the world into a plain-data [`RenderScene`], doing visibility,
 //!   frustum culling, depth sorting and batching on the way.
+//! * [`DebugDraw`] is single-frame world-space line data. Extraction copies it; it is not an entity.
 //!
 //! A GPU backend (see `engine-renderer-wgpu`) consumes a `RenderScene` and nothing else.
 
 pub mod camera;
 pub mod components;
 pub mod coplanar;
+pub mod debug;
 mod extract;
 pub mod frustum;
 mod interpolate;
@@ -31,6 +33,7 @@ pub use coplanar::{
     resolve_coplanar_thickness, CoplanarError, CoplanarPriority, CoplanarSettings, CANDIDATE_COPLANAR_THICKNESS,
     MAX_COPLANAR_PRIORITY,
 };
+pub use debug::{frustum_corners, DebugDraw, DebugSegment, DEBUG_SPHERE_SEGMENTS, DEBUG_SPHERE_SEGMENT_LIMIT};
 pub use extract::{
     active_surface_cameras, camera_view_of, extract_scene, top_surface_camera, OrderedCamera, SurfaceHit,
 };

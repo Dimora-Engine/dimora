@@ -7,6 +7,10 @@
 //! ```text
 //! time -> loads -> fixed_update (0 to 8) -> update -> animate -> post_update
 //!      -> input_clear -> extract -> render
+//!
+//! [`renderer::DebugDraw`] is cleared at the start of [`Game::step`], before those stages.
+//! Segments submitted during the step are still there for the extract that follows. Extract
+//! copies them and does not clear them. The next step drops them.
 //! ```
 //!
 //! `Game` is *not* the world: it holds one. Everything gameplay touches (time, input, assets,
@@ -71,9 +75,10 @@ pub mod prelude {
     pub use engine_math::{Mat4, Quat, Rect, Transform, Vec2, Vec3, Vec4};
     pub use engine_renderer::{
         AmbientLight, Camera, CameraClear, CameraOutput, CameraProjection, CameraView, CoplanarPriority,
-        CoplanarSettings, Fog, Light, LightKind, Material, Mesh, Orthographic, Perspective, Projection,
-        ProjectionError, RenderOrder, RenderTargetId, RenderTargetStore, Sprite, SpriteBlend, SpriteOrientation,
-        TileMap, ViewportRect, CANDIDATE_COPLANAR_THICKNESS, MAX_COPLANAR_PRIORITY,
+        CoplanarSettings, DebugDraw, DebugSegment, Fog, Light, LightKind, Material, Mesh, Orthographic, Perspective,
+        Projection, ProjectionError, RenderOrder, RenderTargetId, RenderTargetStore, Sprite, SpriteBlend,
+        SpriteOrientation, TileMap, ViewportRect, CANDIDATE_COPLANAR_THICKNESS, DEBUG_SPHERE_SEGMENTS,
+        MAX_COPLANAR_PRIORITY,
     };
     pub use engine_world::{
         Children, CommandError, CommandFailure, CommandWriter, ComponentDesc, ComponentInfo, ComponentRegistry,

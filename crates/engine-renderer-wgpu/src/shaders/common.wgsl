@@ -9,6 +9,8 @@ struct Light {
     cone: vec4<f32>,            // x = cos(inner), y = cos(outer)
 }
 
+// `debug_line.wgsl` copies this struct and must stay layout-compatible. It does not include
+// this file, because the bindings below also declare the group-1 albedo texture.
 struct Globals {
     view_proj: mat4x4<f32>,
     inv_view_proj: mat4x4<f32>,

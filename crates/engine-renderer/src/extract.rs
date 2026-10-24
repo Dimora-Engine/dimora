@@ -10,6 +10,7 @@ use crate::components::{
     AmbientLight, Fog, Light, LightKind, Mesh, RenderOrder, Sprite, SpriteBlend, SpriteOrientation, TileMap,
 };
 use crate::coplanar::{resolve_coplanar_thickness, CoplanarPriority, CoplanarSettings};
+use crate::debug::DebugDraw;
 use crate::frustum::Frustum;
 use crate::interpolate::{render_poses, RenderPoses};
 use crate::missing::{report_absent_texture, resolve, MissingAssetWarnings};
@@ -36,6 +37,9 @@ use crate::scene::*;
 /// A sprite, mesh, tilemap, or light is omitted when it or any ancestor has
 /// [`Visibility::Hidden`]. Absence of `Visibility` means visible. The components are only read.
 /// [`Camera::active`] decides which cameras render; `Visibility` does not.
+///
+/// [`DebugDraw`] segments are copied onto the scene and are not removed from the world. Every
+/// pass shares that one list. A missing resource is an empty list. The copy is not frustum-culled.
 pub fn extract_scene(world: &World, assets: &AssetManager, target_size: Vec2) -> Option<RenderScene> {
     let hidden = AncestorVisibility::read(world);
     let poses = render_poses(world);
@@ -70,7 +74,14 @@ pub fn extract_scene(world: &World, assets: &AssetManager, target_size: Vec2) ->
         passes.push(pass);
     }
     let targets = world.try_resource::<RenderTargetStore>().map(|store| store.descriptions()).unwrap_or_default();
-    let mut stats = ExtractStats { missing_assets: shared.missing_assets, missing_targets, ..ExtractStats::default() };
+    let debug_lines = world.try_resource::<DebugDraw>().map(|draw| draw.segments().to_vec()).unwrap_or_default();
+    let debug_segments = u32::try_from(debug_lines.len()).unwrap_or(u32::MAX);
+    let mut stats = ExtractStats {
+        missing_assets: shared.missing_assets,
+        missing_targets,
+        debug_segments,
+        ..ExtractStats::default()
+    };
     for pass in &passes {
         stats.sprites_visible += pass.stats.sprites_visible;
         stats.sprites_culled += pass.stats.sprites_culled;
@@ -82,7 +93,7 @@ pub fn extract_scene(world: &World, assets: &AssetManager, target_size: Vec2) ->
         stats.chunks_rejected += pass.stats.chunks_rejected;
         stats.chunks_rebuilt += pass.stats.chunks_rebuilt;
     }
-    Some(RenderScene { passes, targets, ambient, fog, coplanar_thickness, stats })
+    Some(RenderScene { passes, targets, ambient, fog, coplanar_thickness, debug_lines, stats })
 }
 
 /// One active camera in draw order. Stored by value on each [`CameraPass`].

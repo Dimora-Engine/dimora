@@ -7,6 +7,7 @@ use engine_core::Color;
 use engine_math::{Mat4, Vec3};
 
 use crate::camera::{CameraClear, CameraOutput, CameraView};
+use crate::debug::DebugSegment;
 use crate::render_target::{RenderTargetDesc, RenderTargetId};
 
 /// Most lights a single frame can use; extras are dropped (nearest to the camera are kept).
@@ -263,6 +264,9 @@ pub struct ExtractStats {
     /// Chunk occupancy records scanned because they were dirty. A chunk is counted once per frame
     /// even when several cameras draw the map.
     pub chunks_rebuilt: u32,
+    /// Debug segments copied from [`crate::DebugDraw`] for this frame. Counted once, not once per
+    /// camera. Zero when the resource is absent or empty.
+    pub debug_segments: u32,
 }
 
 /// One active camera, already culled and sorted for its own view.
@@ -327,6 +331,11 @@ pub struct RenderScene {
     /// World-unit step for [`crate::CoplanarPriority`]. `0` means an invalid explicit setting
     /// disabled the displacement. Sprites without the component ignore it.
     pub coplanar_thickness: f32,
+    /// World-space debug segments for every camera this frame. Copied from [`crate::DebugDraw`].
+    /// Not frustum-culled, not split per pass, and not consumed by a camera. Empty when that
+    /// resource is absent or has no accepted segments. The backend draws this as one line batch
+    /// after the transparent sequence when it is non-empty.
+    pub debug_lines: Vec<DebugSegment>,
     /// Sum of the pass visibility counts. `missing_assets` is the shared resolution count, once
     /// per missing reference, not once per camera. `sprites_visible` counts a sprite again for
     /// each camera that draws it.
