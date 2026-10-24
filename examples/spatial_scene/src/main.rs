@@ -17,8 +17,9 @@
 //!   smaller yard in the same view: a lit mesh, unlit sprites, and one point light.
 //!
 //! Configurations (`--camera NAME`, key `C`): perspective, orthographic, isometric, top-down, steep, side,
-//! custom. `custom` is an example-local oblique matrix. It is not an engine preset. Each configuration is a
-//! `Camera` plus a `Transform` over the same world and the same renderer.
+//! custom. The placements come from `PlacedCamera`. `custom` stores
+//! `CameraProjection::oblique_orthographic`. This example still chooses the scene framing. Each
+//! configuration is a `Camera` plus a `Transform` over the same world and the same renderer.
 //!
 //! Controls. These keys are gameplay actions. The mouse wheel stays raw input.
 //! ```text

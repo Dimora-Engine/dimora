@@ -4,12 +4,13 @@ Dimora is a Rust game engine built around a unified spatial model for 2.5D game 
 tilemaps, skeletal 2D characters, 3D meshes and fully 3D characters into a shared world with coherent transforms,
 cameras, depth and rendering, and aims to make hybrid 2D/3D games natural to build through programming APIs combined
 with purpose-built visual tools, including a user-friendly editor. It is not tied to one look or camera: perspective,
-orthographic, isometric, top-down and side-scrolling views are meant to be configurations of the same world (today
-perspective and orthographic are implemented and tested; the others are planned).
+orthographic, isometric, top-down and side-scrolling views are meant to be configurations of the same world.
+Public constructors for those placements exist. What is tested, and what is still open, is in
+[docs/CAPABILITIES.md](docs/CAPABILITIES.md).
 
-**Today** Dimora is a code-driven engine: sprites, tilemaps, a skeletal 2D data model and 3D meshes share one world,
-one camera and one set of lights. The editor and the other character types are planned, not built; see
-[Status](#status).
+**Today** Dimora is a code-driven engine: sprites, tilemaps, a skeletal 2D data model and 3D meshes share one world
+and one camera model. Several cameras can view that world. The editor and the other character types are planned,
+not built; see [Status](#status).
 
 > **2.5D is a spatial world, not a fake 2D layer system.** Every object has a real `Vec3` position. Depth drives
 > projection, parallax, occlusion and lighting. There is no integer z-index.
@@ -72,8 +73,10 @@ cargo run --release -p spatial_scene
 | `A` / `D` | Strafe |
 | `Space` / `Shift` | Camera up / down |
 | Arrow keys | Rotate the camera (yaw / pitch) |
-| `P` | Perspective / orthographic |
+| `C` | Next camera configuration: perspective, orthographic, isometric, top-down, steep, side, custom |
+| `P` | Perspective / orthographic. A custom projection is left unchanged |
 | `O` | Cycle sprite orientation: billboard, upright, fixed |
+| `Tab` | Switch between environment A and environment B |
 | `R` / `Esc` | Reset camera / quit |
 
 The rendering model (world vs render state, depth vs order vs position, orientation, conventions) is written up in
@@ -175,17 +178,11 @@ To see the failure path on purpose, remove the adapter: on Linux `VK_ICD_FILENAM
 
 ## Status
 
-Dimora is early. The foundation (math, ECS wrapper, transforms and hierarchy, asset manager, platform loop) and
-the spatial renderer (perspective and orthographic cameras, depth-sorted sprites and meshes, sprite orientation
-modes, forward lighting and fog, camera viewports) exist and are covered by tests. Basic tilemaps and a skeletal animation data model
-exist but are limited (see ROADMAP.md). There are no particles, collision, audio, UI, shadows,
-scene serialization, asset bundling or editor.
-
-Planned but not started: three character representations (sprite sheet, skeletal 2D, 3D skinned) over one
-gameplay model, a UI runtime, and gameplay scripting. See `ROADMAP.md` for their order and prerequisites. The current
-milestone was M3a, the frame model (stages, commands, events, logging, opt-in interpolation, and the
-public-API review). It is complete locally and is not pushed. M3b, input and platform, is complete
-locally and is not pushed. M4 is next and is not started.
+Dimora is early. The living record of what runs is [docs/CAPABILITIES.md](docs/CAPABILITIES.md). Milestone order
+is [ROADMAP.md](ROADMAP.md). Evidence for the current milestone is [TASKS.md](TASKS.md). Locally, M3a, M3b, M4,
+and M5 are complete, and M6 is in progress. That history is on local `main` and is not on `origin/main`. M6 is
+not complete. Pixel-art policy (D-06) and gameplay orientation are still open. There are no particles, collision,
+audio, UI, shadows, scene serialization, asset bundling, or editor.
 
 Each question has one home, so documents do not compete:
 
@@ -197,3 +194,12 @@ Each question has one home, so documents do not compete:
 * [`TASKS.md`](TASKS.md): the current milestone, its tasks, known issues, blockers and evidence.
 
 Contributors and agents also follow the project rules in [`.cursor/rules/`](.cursor/rules/).
+
+## How work lands
+
+Start each feature from the latest verified local `main`. Keep the change focused enough to test on its own.
+Update the status documents in that same branch. Run the tests that cover the change, then
+`DIMORA_REQUIRE_GPU=1 scripts/check.sh`. Review that evidence before calling the work accepted. After
+acceptance, fast-forward `main` promptly so the next feature does not start from an older branch. Push
+`main` only when that push is separately authorized. Leave the feature branch in place until someone asks
+to delete it.
