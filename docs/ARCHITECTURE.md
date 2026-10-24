@@ -310,8 +310,12 @@ Each is verified by reading the code or by a test run; identifiers refer to the 
     stale until `invalidate`. Instances are not cached. A camera that sees the whole map still
     reads every cell. `set` rebuilds one square's count. The release numbers, and the reading of
     the allocation column as traffic rather than resident memory, are in
-    [PERFORMANCE.md](PERFORMANCE.md). GPU frame time is not part of that record (KI-19). The
-    full-view instance traffic is KI-31.
+    [PERFORMANCE.md](PERFORMANCE.md). Sprite, mesh, and mixed-scene extraction, and the CPU cost of
+    recording and submitting a frame, are in that file (`82972c2`). A frustum rejection does not skip
+    the sprite prepare walk. GPU pass timestamps are still not in that record (KI-19). The
+    full-view tile instance traffic is KI-31 and stays deferred. The scale harness calls
+    `extract_scene` and `SceneRenderer::render`. It is not a second extractor.
+    `instance_buffer_capacity_bytes` reports reserved instance-buffer bytes and does not change a draw.
 11. **Verification gaps (KI-1..3).** Mostly closed by T1: the toolchain is pinned, the MSRV is 1.90, and
     `scripts/check.sh` with `DIMORA_REQUIRE_GPU=1` turns a missing GPU adapter into a failure. Also done: a CI workflow
     runs the check on Windows, macOS and Linux and the MSRV job passes on all three (TASKS.md "CI results"). Still open: it uses

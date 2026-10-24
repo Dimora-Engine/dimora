@@ -43,14 +43,14 @@ record is a later documentation commit. Localized mip-texel regeneration is not 
 projection (M6-1B, `a38cb30`), the example `custom` camera (M6-1C, `795bd95`), M6-2B surface cameras
 (`6a47882`, committed locally), and M6-2C offscreen targets and camera-to-texture (committed locally,
 not pushed). D-07 is settled ([ADR-0019](docs/adr/0019-reverse-z.md)): finite reverse-Z, compare `Greater`, clear 0, verified on Apple M5, Metal. Other backends are not verified.
-Coplanar sprite priority is settled ([ADR-0020](docs/adr/0020-coplanar-priority.md)): opt-in, depth-only, fallback thickness `1/256`, Apple M5, Metal only. Gameplay orientation is not decided. D-26 is settled in [ADR-0021](docs/adr/0021-sprite-orientation.md). Tilemap extraction culls 32×32 chunks. The baseline and the comparison are in [docs/PERFORMANCE.md](docs/PERFORMANCE.md). Debug drawing is implemented locally (`b7ec684`): one-pixel world-space lines, rays, wire boxes, wire spheres, and camera frusta, depth-tested and not depth-writing. A depth-visualisation view is not implemented. M6 is not complete and is not pulled into M5.
+Coplanar sprite priority is settled ([ADR-0020](docs/adr/0020-coplanar-priority.md)): opt-in, depth-only, fallback thickness `1/256`, Apple M5, Metal only. Gameplay orientation is not decided. D-26 is settled in [ADR-0021](docs/adr/0021-sprite-orientation.md). Tilemap extraction culls 32×32 chunks. The baseline and the comparison are in [docs/PERFORMANCE.md](docs/PERFORMANCE.md). Debug drawing is implemented locally (`b7ec684`): one-pixel world-space lines, rays, wire boxes, wire spheres, and camera frusta, depth-tested and not depth-writing. Sprite, mesh, mixed-scene, lighting, and multi-camera CPU extraction, plus CPU encode and submit, are recorded in [docs/PERFORMANCE.md](docs/PERFORMANCE.md) (`82972c2`). GPU pass timestamps are not measured. A depth-visualisation view is not implemented. M6 is not complete and is not pulled into M5.
 
 **M5 is complete locally and accepted.** The implementation checkpoint is
 `92286ce0546a4d94bb0365581ae7469fe2ad3260`. M5-2A through M5-6 are the local commits
 `c687d5b`, `11b914f`, `622ef80`, `b51f1fb`, `84d5ab1`, `bf4d9bb`, `1666695`, `e0c29ef`,
 `3b3cd4a`, `ab1b6f7`, `a7efd6c`, and `92286ce`. None of them is pushed. Localized mip-texel
 regeneration is deferred and has no milestone. M6-2B surface cameras are commit `6a47882` and are not pushed.
-M6-2C camera-to-texture is committed locally and is not pushed. Coplanar sprite priority is [ADR-0020](docs/adr/0020-coplanar-priority.md). Sprite orientation is [ADR-0021](docs/adr/0021-sprite-orientation.md). Tilemap chunking is in extraction, with the baseline and comparison in [docs/PERFORMANCE.md](docs/PERFORMANCE.md). Debug drawing is implemented locally (`b7ec684`). Gameplay orientation, the depth-visualisation view, broader sprite and mesh benchmarks, and D-06 have not
+M6-2C camera-to-texture is committed locally and is not pushed. Coplanar sprite priority is [ADR-0020](docs/adr/0020-coplanar-priority.md). Sprite orientation is [ADR-0021](docs/adr/0021-sprite-orientation.md). Tilemap chunking is in extraction, with the baseline and comparison in [docs/PERFORMANCE.md](docs/PERFORMANCE.md). Debug drawing is implemented locally (`b7ec684`). The sprite, mesh, and mixed-scene benchmark is recorded (`82972c2`). Gameplay orientation, the depth-visualisation view, and D-06 have not
 started.
 
 **Implemented and tested, beyond the 2026-10-13 audit.** Named stages, commands and events, the `log`
@@ -96,7 +96,7 @@ first" tiers in [docs/DECISIONS.md](docs/DECISIONS.md#what-to-resolve-first).
   `92286ce0546a4d94bb0365581ae7469fe2ad3260`. The acceptance record is the documentation commit that
   follows it. Decisions are ADR-0015, ADR-0016, ADR-0017, and ADR-0018. Localized mip-texel
   regeneration is deferred, with no milestone. It is not implemented.
-* **M6 stays after M5.** Custom projection, surface cameras, camera-to-texture, reverse-Z, coplanar sprite priority, sprite orientation, the tilemap chunking foundation, and debug drawing are implemented locally and are not pushed. Gameplay orientation, the depth-visualisation view, broader benchmarks, and D-06 are not started. M6 is not complete.
+* **M6 stays after M5.** Custom projection, surface cameras, camera-to-texture, reverse-Z, coplanar sprite priority, sprite orientation, the tilemap chunking foundation, and debug drawing are implemented locally and are not pushed. The sprite, mesh, and mixed-scene benchmark is recorded (`82972c2`); GPU pass time is not. Gameplay orientation, the depth-visualisation view, and D-06 are not started. M6 is not complete.
   M7 and M8 can proceed in parallel after M3a, M4, M5, and M6 as stated below. M9 freezes the foundational
   gameplay, scene, and component-integration contracts. Later milestones may add public APIs through a
   recorded decision. That freeze does not forbid every future public type.
@@ -606,7 +606,12 @@ baseline. Camera projection stays separate from gameplay orientation and visual 
 - Pixel-art policies (D-06): texture-level filtering, and texel snapping at whichever
   level the chosen technique needs, validated by a prototype before any API is fixed. It is **lowest priority here** and never a default; no other configuration may depend on it.
 - Benchmarks (a small timing binary, no new dependency) for extraction and render CPU time with N
-  sprites/meshes/tiles; record results and budgets in `docs/PERFORMANCE.md`.
+  sprites/meshes/tiles; record results and budgets in `docs/PERFORMANCE.md`. **Met for CPU extraction
+  and CPU encode/submit** (`82972c2`). Sprite counts 1,000, 10,000, and 100,000; mesh counts 100,
+  1,000, and 10,000; a mixed lane; 0, 4, and 16 lights; and 1, 2, and 7 cameras, including one
+  offscreen target. Results are in [docs/PERFORMANCE.md](docs/PERFORMANCE.md). A 16.7 ms frame is
+  context there, not an adopted budget. GPU pass timestamps are not measured. Tile extraction was
+  already recorded above this bullet.
 
 **Dependencies.** D-25, D-08, D-48, D-07; D-06 (opt-in only).
 
@@ -643,7 +648,7 @@ part of the configuration bullet. **Surface cameras (M6-2B, `6a47882`).** Two vi
 picture-in-picture, `CameraClear::Color` and `Load`, and a per-camera depth clear are implemented and
 covered by GPU readback. **Camera-to-texture (M6-2C, committed locally, not pushed).** An offscreen camera's image is
 sampled by a later surface sprite, with resize, material and alpha class, invalid dependencies, and
-several writers covered by GPU readback. D-08 is implemented locally. **Coplanar sprite priority is met** ([ADR-0020](docs/adr/0020-coplanar-priority.md)). **Sprite orientation is met** ([ADR-0021](docs/adr/0021-sprite-orientation.md)). **Tilemap chunking is met for this foundation:** `set` rebuilds one chunk (`tile_chunk` tests), and a 1000×1000 map's extraction cost is recorded in [docs/PERFORMANCE.md](docs/PERFORMANCE.md). A partial view reads accepted chunks. A full view still reads every visible tile. A direct write to `tiles` does not drop a tile a camera can see; `invalidate` refreshes only the rejected-chunk cull count. The allocation column is cumulative traffic, not resident memory. **Debug drawing is met for this slice (`b7ec684`):** world-space lines, rays, wire boxes, wire spheres, and frusta, one batch per camera, depth-tested, no depth write. The depth-visualisation view is not met. **Not met:** gameplay orientation; the depth view;
+several writers covered by GPU readback. D-08 is implemented locally. **Coplanar sprite priority is met** ([ADR-0020](docs/adr/0020-coplanar-priority.md)). **Sprite orientation is met** ([ADR-0021](docs/adr/0021-sprite-orientation.md)). **Tilemap chunking is met for this foundation:** `set` rebuilds one chunk (`tile_chunk` tests), and a 1000×1000 map's extraction cost is recorded in [docs/PERFORMANCE.md](docs/PERFORMANCE.md). A partial view reads accepted chunks. A full view still reads every visible tile. A direct write to `tiles` does not drop a tile a camera can see; `invalidate` refreshes only the rejected-chunk cull count. The allocation column is cumulative traffic, not resident memory. **Debug drawing is met for this slice (`b7ec684`):** world-space lines, rays, wire boxes, wire spheres, and frusta, one batch per camera, depth-tested, no depth write. The depth-visualisation view is not met. **CPU extraction and CPU encode/submit benchmarks are met (`82972c2`):** sprites, meshes, a mixed lane, lights, and one to seven cameras, including one offscreen target. Numbers and the machine are in [docs/PERFORMANCE.md](docs/PERFORMANCE.md). GPU pass time is not met. **Not met:** gameplay orientation; the depth view;
 an engine preset API; a public oblique builder. M6 is not complete.
 The blended-sprite-versus-mesh assertion was not repeated per example configuration. The constructors are example-local.
 

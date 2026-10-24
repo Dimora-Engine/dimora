@@ -459,3 +459,255 @@ empty 2 0 0 0 1417 2528 2
 10000 1 20000 1 40875 5083 401872 3
 10000 2 20000 2 40333 5125 402528 3
 ```
+
+## Render scale
+
+Measured 2026-10-24 on Apple M5, Metal, macOS arm64, `rustc 1.99.0`. Release. The CPU log was written at 1:00 PM America/Chicago and the GPU log at 1:02 PM America/Chicago. The measured code is `82972c2` on `feat/m6-render-scale`. The following commit, `b26dd3a`, only corrects rustdoc links. No new dependency. Rendering draws were not changed. `SceneRenderer::instance_buffer_capacity_bytes` only reports reserved buffer bytes.
+
+Commands:
+
+```
+cargo run --release -p engine-renderer --bin render_scale_bench
+cargo run --release -p engine-renderer-wgpu --example render_scale_gpu
+DIMORA_SCALE_CASES=sprite-opaque-1k,mesh-shared-100 cargo run --release -p engine-renderer --bin render_scale_bench
+DIMORA_SCALE_LIST=1 cargo run --release -p engine-renderer --bin render_scale_bench
+```
+
+The CPU binary is `crates/engine-renderer/src/bin/render_scale_bench.rs`. The GPU example is `crates/engine-renderer-wgpu/examples/render_scale_gpu.rs`. Both refuse a debug build. Scenes are `engine_renderer::bench_scene`. That module is the benchmark catalog, not a gameplay API and not a prelude export. A later milestone adds a case there; it does not replace the harness. The lane scene is the hybrid world those later cases should keep.
+
+`extract_median_ns` is `extract_scene` plus dropping the `RenderScene`. Sorting is inside that time. `propagate_median_ns` is a later `propagate_transforms` on an already-propagated world. `motion_prepare_median_ns` is zero except `sprite-opaque-10k-move`, where each sample adds 0.01 to every sprite's local X and then propagates. That prepare is outside the extract time. Two unrecorded extracts of the first case run before the table. `first_extract_ns` is the call before that row's warmup.
+
+Rows whose authored sprites or meshes, times the camera count, reach 100,000 use 1 warmup and 7 samples. Smaller CPU rows use 4 warmup and 11 samples. The median is the middle sample. Nearest-rank p95 on 7 or 11 samples is the slowest sample. Stable CPU rows have a p95 close to the median. The narrative uses medians. The first opaque rows (`sprite-opaque-1k` at 761 µs, `sprite-opaque-10k` at 2.45 ms) are higher than later rows of the same size (about 163 µs and 1.67 ms). Those two medians are not the slope.
+
+`alloc_bytes` sums `Layout::size` for every `alloc` and `realloc` during one later call and does not subtract frees. `peak_extra_bytes` is the high water of outstanding bytes during that call, minus the outstanding bytes at the start. `retained_bytes` is the capacity of the returned scene's vectors. None of these is process RSS or a Metal heap. The tilemap column in the sections above is the same kind of traffic. It is not a claim that a sprite crowd allocates like a million-tile map.
+
+GPU `encode_*` is `SceneRenderer::render` after a poll, so the queue is idle. That call records command buffers and submits them. It does not map a readback and it does not present. `completion_*` is the following `device.poll(wait_indefinitely)`. That waits until submitted work finishes. It includes GPU execution and driver synchronization. It is not a timestamp query inside the pass. This renderer still sets `timestamp_writes` to `None`. Completion p95 often jumps to several milliseconds while the median stays under half a millisecond, so completion is not a GPU budget. `first_encode_ns` is the first render after pipeline creation and includes uploads and instance-buffer growth. Each GPU case builds a new `SceneRenderer`. Steady samples follow that frame plus warmup (1 and 7 at 100,000 authored objects times cameras, otherwise 2 and 11). `steady_buffer_grows` was 0 on every row. The color target is `Rgba8Unorm`, 1280×720, `RENDER_ATTACHMENT` only.
+
+Visible and batch columns are summed across cameras. `sprites_visible` counts tile quads as well as authored sprites. `transparent_batches` overlaps the blended part of `sprite_batches`. Textures are 4×4 solids. This is not a texture-bandwidth test. Grid sprite materials are double-sided. Mesh-field materials use the default cull mode. The lane's crate material uses the sprite helper, so it is double-sided. Cuboid index count is 36. The reference sphere is 1,056. Eight distinct mesh assets differ by asset id, not by a measured vertex-cost sweep.
+
+### Sprite extraction
+
+One shared opaque material stays one batch at 1,000, 10,000, and 100,000 sprites. Mask matches that time. Blend stays one batch when every sprite shares the material, and costs more at the high count. Eight opaque materials are eight batches. Eight blended materials, interleaved in depth order, are 1,000 batches at 1,000 sprites. Mixed `Billboard`, `Upright`, and `Fixed` stay one opaque batch. `CoplanarPriority` levels 0 through 7 stay one opaque batch. A moving 10,000-sprite extract matches the static extract. One thousand debug segments add 40,000 bytes of retained capacity and do not move the 1,000-sprite extract.
+
+| Scene | Visible | Culled | Batches | Extract | Propagate | Alloc bytes | Alloc count | Retained |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| mask 1k | 1,000 | 0 | 1 | 163 µs | 11 µs | 872,816 | 1,022 | 156,464 |
+| opaque 10k, later unlit row | 10,000 | 0 | 1 | 1.67 ms | 102 µs | 12,850,736 | 10,030 | 2,491,184 |
+| mask 10k | 10,000 | 0 | 1 | 1.67 ms | 104 µs | 12,850,736 | 10,030 | 2,491,184 |
+| blend 10k | 10,000 | 0 | 1 | 2.36 ms | 102 µs | 18,515,280 | 10,044 | 2,491,376 |
+| legacy cutout 10k | 10,000 | 0 | 1 | 1.05 ms | 103 µs | 12,850,736 | 10,030 | 2,491,184 |
+| opaque, 8 materials, 10k | 10,000 | 0 | 8 | 1.92 ms | 103 µs | 12,851,056 | 10,031 | 2,491,344 |
+| blend, 8 materials, 1k | 1,000 | 0 | 1,000 | 206 µs | 11 µs | 1,411,920 | 1,048 | 246,416 |
+| orientations 10k | 10,000 | 0 | 1 | 1.66 ms | 103 µs | 12,850,736 | 10,030 | 2,491,184 |
+| coplanar levels 10k | 10,000 | 0 | 1 | 1.71 ms | 103 µs | 12,850,736 | 10,030 | 2,491,184 |
+| sparse, camera frames all, 10k | 10,000 | 0 | 1 | 1.69 ms | 103 µs | 12,850,736 | 10,030 | 2,491,184 |
+| sparse, partial, 10k | 1,596 | 8,404 | 1 | 1.57 ms | 103 µs | 7,215,184 | 10,027 | 312,112 |
+| dense, partial, 10k | 1,800 | 8,200 | 1 | 1.56 ms | 103 µs | 7,246,192 | 10,027 | 312,112 |
+| sparse, tight, 10k | 20 | 9,980 | 1 | 1.54 ms | 102 µs | 6,359,728 | 10,020 | 5,680 |
+| moving 10k | 10,000 | 0 | 1 | 1.67 ms | 103 µs | 12,850,736 | 10,030 | 2,491,184 |
+| hierarchy 1k | 1,000 | 0 | 1 | 192 µs | 25 µs | 907,640 | 1,023 | 156,464 |
+| opaque 100k | 100,000 | 0 | 1 | 19.06 ms | 1.53 ms | 99,280,984 | 100,036 | 19,923,760 |
+| mask 100k | 100,000 | 0 | 1 | 19.61 ms | 1.57 ms | 99,280,984 | 100,036 | 19,923,760 |
+| blend 100k | 100,000 | 0 | 1 | 29.16 ms | 1.75 ms | 143,720,784 | 100,053 | 19,923,952 |
+
+The move row's prepare median is 148 µs. That is the nudge plus propagation. Extract after those moves matches the static 10,000-sprite row. Hierarchy is 100 roots of 10 children. Propagation is about twice the flat 1,000-sprite propagate, and extract stays in the same band as a flat 1,000.
+
+A 16.7 ms frame budget is context, not an adopted engine budget. Ten thousand opaque sprites fit on this machine: about 1.67 ms to extract. One hundred thousand opaque or mask sprites spend about 19 ms in extract alone. One hundred thousand blended sprites spend about 29 ms. Rejecting 9,980 of 10,000 sprites leaves extract at 1.54 ms. The retained scene drops from 2.49 MB to 5,680 bytes. `alloc_count` stays about 10,020. Frustum rejection does not skip the prepare walk.
+
+`AncestorVisibility::hides` builds a `Vec` on every call, including a parentless visible entity. `alloc_count` tracks that: about 10,030 for 10,000 sprites and 100,036 for 100,000, including the tight cull. The share of the 1.5 ms that belongs to those allocations was not timed apart from the walk.
+
+Opaque and mask 10,000-sprite retained capacity is 2,491,184 bytes. `SpriteInstance` is 152 bytes, and 16,384 × 152 is 2,490,368. The rest is the other scene vectors. One hundred thousand sprites retain 19,923,760 bytes, which is 131,072 × 152 plus that same remainder. Seven cameras retain exactly seven times the one-camera figure.
+
+### Mesh extraction
+
+| Scene | Visible | Culled | Draws | Extract | Alloc bytes | Alloc count | Retained |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| shared cuboid 100 | 100 | 0 | 1 | 12.8 µs | 93,264 | 115 | 18,064 |
+| sphere 100 | 100 | 0 | 1 | 12.7 µs | 93,264 | 115 | 18,064 |
+| shared cuboid 1k | 1,000 | 0 | 1 | 137 µs | 774,896 | 1,021 | 139,920 |
+| eight assets 1k | 1,000 | 0 | 8 | 147 µs | 774,896 | 1,021 | 139,920 |
+| eight materials 1k | 1,000 | 0 | 8 | 140 µs | 774,896 | 1,021 | 139,920 |
+| partial 1k | 210 | 790 | 1 | 131 µs | 458,560 | 1,019 | 35,472 |
+| shared cuboid 10k | 10,000 | 0 | 1 | 1.40 ms | 11,380,016 | 10,029 | 2,228,880 |
+
+CPU extract does not read the index buffer. A 1,056-index sphere matches a 36-index cuboid at 100 instances. Eight assets or eight materials add draws and do not add a measurable extract cost at 1,000 instances. Ten thousand shared meshes are one draw and 1.40 ms. `MeshInstance` is 136 bytes.
+
+### Mixed lane
+
+The lane is a constructed street, not a shipped game. A 48×48 tile ground, 160 upright opaque actors, 48 upright mask trees, and 24 billboard blended glows. With meshes: 16 crates and 6 buildings, one cuboid asset and one opaque material. Default lights are 4 point lights. Default camera is perspective, distance 55, 50° field of view. Orthographic and isometric rows use height 52. `sprites_visible` of 2,536 is 232 authored sprites plus 2,304 tile quads.
+
+| Scene | Cameras | Visible sprites | Visible meshes | Tile quads | Sprite batches | Mesh draws | Extract |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| sprites only | 1 | 2,536 | 0 | 2,304 | 4 | 0 | 87 µs |
+| mixed, perspective | 1 | 2,536 | 22 | 2,304 | 4 | 1 | 90 µs |
+| mixed, orthographic | 1 | 2,536 | 22 | 2,304 | 4 | 1 | 89 µs |
+| mixed, isometric | 1 | 2,536 | 22 | 2,304 | 4 | 1 | 89 µs |
+| mixed, 2 cameras | 2 | 5,072 | 44 | 4,608 | 8 | 2 | 147 µs |
+| mixed, 7 cameras | 7 | 17,713 | 154 | 16,128 | 28 | 7 | 438 µs |
+
+Adding 22 meshes changes extract by a few microseconds. That comparison is 0 versus 22 meshes. The mesh field above is the crowd. Seven cameras visit 2,304 × 7 tile quads. One isometric camera of the seven leaves 39 sprite quads culled; the other lane rows cull none. All four chunks of the 48×48 map are accepted by a single camera.
+
+### Lights
+
+Point lights, except the unit test that also keeps one directional when 20 points would otherwise fill the 16 slots. `sprite-lights-32-10k` authors 32 and selects 16. CPU extract stays at 1.69 ms for 0, 4, 16, and 32 lights over 10,000 opaque sprites. Mesh 1,000 stays at 133–137 µs for 4 and 16 lights. The lane stays at 88–89 µs for 0, 4, and 16 lights. Selection cost at these counts is inside the noise of the extract. Upload of the fixed 16-light uniform is inside encode, below. These rows do not measure shader lighting, normal maps, or shadows. Those are not implemented.
+
+### Cameras
+
+| Scene | Cameras | Visible sprites | Extract | Retained |
+|---|---:|---:|---:|---:|
+| opaque 10k, one orthographic | 1 | 10,000 | 1.67 ms | 2,491,184 |
+| opaque 10k, perspective | 1 | 10,000 | 1.69 ms | 2,491,184 |
+| opaque 10k, isometric | 1 | 10,000 | 1.69 ms | 2,491,184 |
+| opaque 10k, two | 2 | 20,000 | 2.08 ms | 4,982,368 |
+| opaque 10k, seven orthographic | 7 | 70,000 | 4.07 ms | 17,438,288 |
+| opaque 10k, seven cycling ortho, perspective, iso | 7 | 70,000 | 4.05 ms | 17,438,288 |
+| offscreen plus surface, 1k | 2 | 2,002 | 204 µs | 313,024 |
+| two surface cameras, 1k | 2 | 2,000 | 203 µs | 312,928 |
+
+Seven cameras take about 2.4× one camera's extract and exactly 7× the retained instance capacity. The prepare walk is shared. The instance vectors are not. Cycling projections matches seven orthographic cameras. An offscreen 1280×720 target plus the surface camera matches two surface cameras on the CPU. The writing camera cannot sample its own target (`missing_targets` is 1 in the unit test). The surface pair has no target.
+
+### GPU encode and submit
+
+Apple M5, Metal. Encode is CPU recording and submit. Completion is the driver wait and is not a pass timestamp.
+
+| Scene | Encode | Draws | World | Clear | Instances | Buffer capacity | Render alloc bytes |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| opaque 1k | 48 µs | 1 | 1 | 0 | 1,000 | 155,648 | 121,637 |
+| opaque 10k | 159 µs | 1 | 1 | 0 | 10,000 | 2,121,728 | 1,129,637 |
+| opaque 100k | 1.40 ms | 1 | 1 | 0 | 100,000 | 16,801,792 | 11,209,637 |
+| mask 10k | 158 µs | 1 | 1 | 0 | 10,000 | 2,121,728 | 1,129,637 |
+| blend 1k | 44 µs | 1 | 1 | 0 | 1,000 | 155,648 | 121,637 |
+| blend 10k | 151 µs | 1 | 1 | 0 | 10,000 | 2,121,728 | 1,129,637 |
+| blend 100k | 1.38 ms | 1 | 1 | 0 | 100,000 | 16,801,792 | 11,209,637 |
+| opaque, 8 materials, 10k | 174 µs | 8 | 8 | 0 | 10,000 | 2,121,728 | 1,132,741 |
+| blend, 8 materials, 1k | 281 µs | 1,000 | 1,000 | 0 | 1,000 | 155,648 | 596,037 |
+| dense partial 10k | 54 µs | 1 | 1 | 0 | 1,800 | 286,720 | 211,461 |
+| sparse tight 10k | 30 µs | 1 | 1 | 0 | 20 | 28,672 | 12,101 |
+| unlit opaque 10k | 150 µs | 1 | 1 | 0 | 10,000 | 2,121,728 | 1,129,861 |
+| 16 lights, opaque 10k | 151 µs | 1 | 1 | 0 | 10,000 | 2,121,728 | 1,129,861 |
+| seven cameras, opaque 10k | 1.21 ms | 13 | 7 | 6 | 70,000 | 2,121,728 | 7,914,019 |
+| shared mesh 100 | 35 µs | 1 | 1 | 0 | 100 | 40,960 | 20,405 |
+| sphere 100 | 35 µs | 1 | 1 | 0 | 100 | 40,960 | 20,573 |
+| shared mesh 1k | 90 µs | 1 | 1 | 0 | 1,000 | 155,648 | 106,805 |
+| shared mesh 10k | 592 µs | 1 | 1 | 0 | 10,000 | 1,073,152 | 970,805 |
+| eight mesh assets 1k | 92 µs | 8 | 8 | 0 | 1,000 | 155,648 | 108,765 |
+| lane mixed | 78 µs | 5 | 5 | 0 | 2,558 | 319,488 | 300,893 |
+| lane, 7 cameras | 615 µs | 41 | 35 | 6 | 17,867 | 319,488 | 2,101,883 |
+| lane, 16 lights | 77 µs | 5 | 5 | 0 | 2,558 | 319,488 | 300,893 |
+| offscreen 1k | 87 µs | 4 | 4 | 0 | 2,002 | 155,648 | 246,110 |
+| two surface cameras, 1k | 90 µs | 3 | 2 | 1 | 2,000 | 155,648 | 244,938 |
+
+Sixteen lights encode in the same 150 µs as the unlit 10,000-sprite row. The lane with 16 lights encodes in 77 µs against 78 µs with 4. That is not a measured GPU lighting cost. Completion medians for those pairs sit in a noisy band (unlit 255 µs, 16 lights 396 µs, both with multi-millisecond p95).
+
+Interleaved blended materials are the draw-call case. CPU extract stays at 206 µs, the same as one blended batch. Encode moves from 44 µs to 281 µs, and the draw count from 1 to 1,000. Eight opaque materials stay at 8 draws and move encode from 159 µs to 174 µs. Coplanar levels and mixed orientations stay at one draw.
+
+Instance-buffer capacity is the seven buffers, each starting at 4,096 bytes and growing to the next power of two. Empty layers do not shrink. A 100,000-sprite frame reserves 16,777,216 plus 6 × 4,096 = 16,801,792. A 20-sprite frame never grows, so capacity stays 7 × 4,096 = 28,672. Seven cameras reuse one camera's buffer: the 10,000-sprite seven-camera row stays at 2,121,728. The CPU upload vector is not shared. Render `alloc_bytes` at 10,000 sprites is 1,129,637, and at seven cameras is 7,914,019. Steady samples do not grow the GPU buffers. They still upload.
+
+`texture_creates` counts from `SceneRenderer::new`, including the two placeholders. One scene texture records 3. Eight material textures record 10. The lane's albedo plus tile texture records 4. `base_upload_bytes` is 72, 520, and 136 on those same rows. `render_target_creates` is 1 on the offscreen row and 0 on the two-surface row. Mesh cache length is 1 for a shared cuboid, 8 for eight assets, and 1 for the lane. The offscreen row's four world draws are the crowd plus the sprite that samples the target. The two-surface row is two world draws and one viewport clear.
+
+A 100-instance sphere overlaps the cuboid's 35 µs encode. Index count is not a measured GPU limit at that size. Ten thousand meshes encode in 592 µs against 1.40 ms of CPU extract. Ten thousand sprites encode in 159 µs against 1.67 ms of extract. On these rows the CPU extract is the larger part of the measured frame. Pure GPU pass time remains unmeasured.
+
+### What this says about KI-31
+
+The full-view million-tile case still holds: one orthographic camera records hundreds of megabytes of allocator traffic and keeps 152 MiB of instance-vector capacity, and seven cameras keep 1,064 MiB. Sprite retention has the same shape at a different size. Ten thousand sprites keep 2.49 MB per camera and extract in about 1.7 ms. That does not pull the tile reuse forward. KI-31 stays deferred. The `hides` allocation is a separate, smaller follow-up. It is not that tile-vector reuse.
+
+### Later cases, not built here
+
+The catalog can gain a case without a new harness. Not measured, because the systems are not in the engine: sprite-sheet animation, skeletal 2D pose evaluation, skinned 3D characters, directional sprite animation, sprite and mesh shadows, an editor viewport, selection, asset hot reload, and scene instantiation. Debug drawing already has its own section. The lane remains the hybrid scene those cases should extend.
+
+### Limits
+
+One machine, Apple M5 Metal. No Vulkan, DirectX, OpenGL, or lavapipe numbers. No GPU timestamp. No process RSS. No Metal heap size. No separate sort timer. No 100,000-sprite tight camera. No texture-bandwidth sweep. No mesh-complexity sweep past 100 spheres. The lane is not a 10,000-mesh scene. Completion p95 is not a budget. The first two opaque CPU medians are noisy. M6 is not complete.
+
+### CPU record
+
+```
+render_scale_bench viewport=1280x720 cuboid_indices=36 sphere_indices=1056 sprite_instance_bytes=152 mesh_instance_bytes=136
+label sprites meshes lights tiles cameras passes visible_sprites culled_sprites visible_meshes culled_meshes tiles_visited chunks_tested chunks_rejected chunks_rebuilt sprite_batches mesh_draws transparent_batches lights_min lights_max missing_assets debug_segments first_extract_ns extract_median_ns extract_p95_ns propagate_median_ns motion_prepare_median_ns alloc_bytes alloc_count peak_extra_bytes retained_bytes samples
+sprite-opaque-1k 1000 0 0 0 1 1 1000 0 0 0 0 0 0 0 1 0 0 0 0 0 0 429958 761083 1016042 57500 0 872816 1022 497936 156464 11
+sprite-opaque-10k 10000 0 0 0 1 1 10000 0 0 0 0 0 0 0 1 0 0 0 0 0 0 6087792 2448542 3120208 214125 0 12850736 10030 7026896 2491184 11
+sprite-opaque-100k 100000 0 0 0 1 1 100000 0 0 0 0 0 0 0 1 0 0 0 0 0 0 18240958 19060459 19531667 1529667 0 99280984 100036 52041976 19923760 7
+sprite-mask-1k 1000 0 0 0 1 1 1000 0 0 0 0 0 0 0 1 0 0 0 0 0 0 185416 162625 163875 10750 0 872816 1022 497936 156464 11
+sprite-mask-10k 10000 0 0 0 1 1 10000 0 0 0 0 0 0 0 1 0 0 0 0 0 0 1891125 1674500 1692958 103875 0 12850736 10030 7026896 2491184 11
+sprite-mask-100k 100000 0 0 0 1 1 100000 0 0 0 0 0 0 0 1 0 0 0 0 0 0 19680792 19610875 19863000 1571792 0 99280984 100036 52041976 19923760 7
+sprite-blend-1k 1000 0 0 0 1 1 1000 0 0 0 0 0 0 0 1 0 1 0 0 0 0 218000 202666 210250 10625 0 1232400 1032 530320 156656 11
+sprite-blend-10k 10000 0 0 0 1 1 10000 0 0 0 0 0 0 0 1 0 1 0 0 0 0 2795875 2355375 2509875 102125 0 18515280 10044 8259760 2491376 11
+sprite-blend-100k 100000 0 0 0 1 1 100000 0 0 0 0 0 0 0 1 0 1 0 0 0 0 28939125 29162875 30271958 1746833 0 143720784 100053 66062512 19923952 7
+sprite-legacy-cutout-10k 10000 0 0 0 1 1 10000 0 0 0 0 0 0 0 1 0 0 0 0 0 0 1655625 1045625 1092542 102667 0 12850736 10030 7026896 2491184 11
+sprite-opaque-materials-10k 10000 0 0 0 1 1 10000 0 0 0 0 0 0 0 8 0 0 0 0 0 0 1932375 1918125 2008459 102833 0 12851056 10031 7026896 2491344 11
+sprite-blend-materials-1k 1000 0 0 0 1 1 1000 0 0 0 0 0 0 0 1000 0 1000 0 0 0 0 218292 205584 224542 10667 0 1411920 1048 608080 246416 11
+sprite-orient-10k 10000 0 0 0 1 1 10000 0 0 0 0 0 0 0 1 0 0 0 0 0 0 1660333 1662917 1744584 102625 0 12850736 10030 7026896 2491184 11
+sprite-coplanar-10k 10000 0 0 0 1 1 10000 0 0 0 0 0 0 0 1 0 0 0 0 0 0 1685167 1705625 1777833 102959 0 12850736 10030 7026896 2491184 11
+sprite-sparse-mostly-10k 10000 0 0 0 1 1 10000 0 0 0 0 0 0 0 1 0 0 0 0 0 0 1700583 1690250 1793041 103166 0 12850736 10030 7026896 2491184 11
+sprite-sparse-partial-10k 10000 0 0 0 1 1 1596 8404 0 0 0 0 0 0 1 0 0 0 0 0 0 1574167 1571584 1673167 102625 0 7215184 10027 3570416 312112 11
+sprite-dense-partial-10k 10000 0 0 0 1 1 1800 8200 0 0 0 0 0 0 1 0 0 0 0 0 0 1570667 1564458 1592667 102916 0 7246192 10027 3601424 312112 11
+sprite-sparse-tight-10k 10000 0 0 0 1 1 20 9980 0 0 0 0 0 0 1 0 0 0 0 0 0 1652292 1538834 1578292 102250 0 6359728 10020 3021552 5680 11
+sprite-opaque-10k-unlit 10000 0 0 0 1 1 10000 0 0 0 0 0 0 0 1 0 0 0 0 0 0 1750292 1673583 1708166 101625 0 12850736 10030 7026896 2491184 11
+sprite-opaque-10k-move 10000 0 0 0 1 1 10000 0 0 0 0 0 0 0 1 0 0 0 0 0 0 1689584 1673334 1767959 102875 147750 12850736 10030 7026896 2491184 11
+sprite-hierarchy-1k 1000 0 0 0 1 1 1000 0 0 0 0 0 0 0 1 0 0 0 0 0 0 197209 192125 210125 25334 0 907640 1023 532760 156464 11
+sprite-opaque-1k-debug 1000 0 0 0 1 1 1000 0 0 0 0 0 0 0 1 0 0 0 0 0 1000 156709 162459 166375 10792 0 912816 1023 497936 196464 11
+sprite-lights-4-10k 10000 0 4 0 1 1 10000 0 0 0 0 0 0 0 1 0 0 4 4 0 0 1772083 1698375 1783959 102250 0 12851280 10036 7027104 2491392 11
+sprite-lights-16-10k 10000 0 16 0 1 1 10000 0 0 0 0 0 0 0 1 0 0 16 16 0 0 1698000 1688291 1799584 102792 0 12853536 10050 7027728 2492016 11
+sprite-lights-32-10k 10000 0 32 0 1 1 10000 0 0 0 0 0 0 0 1 0 0 16 16 0 0 1707584 1687542 1717291 102542 0 12856544 10067 7028560 2492848 11
+sprite-cam-2-10k 10000 0 0 0 2 2 20000 0 0 0 0 0 0 0 2 0 0 0 0 0 0 2372250 2079583 2169083 102500 0 19351680 10045 9518080 4982368 11
+sprite-cam-7-10k 10000 0 0 0 7 7 70000 0 0 0 0 0 0 0 7 0 0 0 0 0 0 6223750 4074167 4262250 103000 0 51858832 10121 21975216 17438288 11
+sprite-cam-persp-10k 10000 0 0 0 1 1 10000 0 0 0 0 0 0 0 1 0 0 0 0 0 0 1710084 1687791 1715459 102750 0 12850736 10030 7026896 2491184 11
+sprite-cam-iso-10k 10000 0 0 0 1 1 10000 0 0 0 0 0 0 0 1 0 0 0 0 0 0 1696291 1692166 1740166 102625 0 12850736 10030 7026896 2491184 11
+sprite-cam-cycle-7-10k 10000 0 0 0 7 7 70000 0 0 0 0 0 0 0 7 0 0 0 0 0 0 4041458 4054750 4172125 102167 0 51858832 10121 21975216 17438288 11
+mesh-shared-100 0 100 0 0 1 1 0 0 100 0 0 0 0 0 0 1 0 0 0 0 0 24500 12834 13875 1292 0 93264 115 53360 18064 11
+mesh-shared-1k 0 1000 0 0 1 1 0 0 1000 0 0 0 0 0 0 1 0 0 0 0 0 126875 137125 143834 9916 0 774896 1021 440976 139920 11
+mesh-shared-10k 0 10000 0 0 1 1 0 0 10000 0 0 0 0 0 0 1 0 0 0 0 0 2027375 1395125 1473125 95209 0 11380016 10029 6211536 2228880 11
+mesh-distinct-1k 0 1000 0 0 1 1 0 0 1000 0 0 0 0 0 0 8 0 0 0 0 0 154583 146959 151791 9875 0 774896 1021 440976 139920 11
+mesh-materials-1k 0 1000 0 0 1 1 0 0 1000 0 0 0 0 0 0 8 0 0 0 0 0 143334 140375 142166 10041 0 774896 1021 440976 139920 11
+mesh-partial-1k 0 1000 0 0 1 1 0 0 210 790 0 0 0 0 0 1 0 0 0 0 0 132416 130917 131334 9834 0 458560 1019 229088 35472 11
+mesh-sphere-100 0 100 0 0 1 1 0 0 100 0 0 0 0 0 0 1 0 0 0 0 0 17417 12667 13708 1292 0 93264 115 53360 18064 11
+mesh-lights-4-1k 0 1000 4 0 1 1 0 0 1000 0 0 0 0 0 0 1 0 4 4 0 0 136417 137416 150416 10167 0 775440 1027 441184 140128 11
+mesh-lights-16-1k 0 1000 16 0 1 1 0 0 1000 0 0 0 0 0 0 1 0 16 16 0 0 142791 133042 137458 9541 0 777696 1041 441808 140752 11
+lane-sprites 232 0 4 2304 1 1 2536 0 0 0 2304 4 0 0 4 0 1 4 4 0 0 99125 87083 90458 2708 0 1854228 290 1076160 677792 11
+lane-mixed 232 22 4 2304 1 1 2536 0 22 0 2304 4 0 0 4 1 1 4 4 0 0 94042 89542 90917 3291 0 1879220 321 1085632 682144 11
+lane-ortho 232 22 4 2304 1 1 2536 0 22 0 2304 4 0 0 4 1 1 4 4 0 0 92875 88542 90875 3292 0 1879220 321 1085632 682144 11
+lane-iso 232 22 4 2304 1 1 2536 0 22 0 2304 4 0 0 4 1 1 4 4 0 0 96625 89083 91417 3292 0 1879220 321 1085632 682144 11
+lane-cameras-2 232 22 4 2304 2 2 5072 0 44 0 4608 8 0 0 8 2 2 4 4 0 0 155208 147459 154208 3417 0 3645336 368 1767776 1364288 11
+lane-cameras-7 232 22 4 2304 7 7 17713 39 154 0 16128 28 0 0 28 7 7 4 4 0 0 455208 437792 455833 3333 0 12472420 604 5179712 4775008 11
+lane-lights-0 232 22 0 2304 1 1 2536 0 22 0 2304 4 0 0 4 1 1 0 0 0 0 93750 87667 98083 2709 0 1878676 315 1085424 681936 11
+lane-lights-16 232 22 16 2304 1 1 2536 0 22 0 2304 4 0 0 4 1 1 16 16 0 0 87209 89250 95250 3458 0 1881476 335 1086256 682768 11
+offscreen-1k 1001 0 0 0 2 2 2002 0 0 0 0 0 0 0 4 0 0 0 0 0 0 211291 204375 214292 10625 0 1336796 1036 654596 313024 11
+surface-2cam-1k 1000 0 0 0 2 2 2000 0 0 0 0 0 0 0 2 0 0 0 0 0 0 188833 203083 238041 10791 0 1336320 1033 654400 312928 11
+```
+
+### GPU record
+
+```
+render_scale_gpu adapter=Apple M5 backend=Metal viewport=1280x720 format=Rgba8Unorm
+label encode_median_ns encode_p95_ns completion_median_ns completion_p95_ns first_encode_ns draw_calls world_draw_calls clear_draw_calls camera_passes offscreen_passes sprite_instances mesh_instances submitted_instances instance_capacity_bytes steady_buffer_grows texture_creates render_target_creates base_upload_bytes mesh_cache alloc_bytes alloc_count peak_extra_bytes samples
+sprite-opaque-1k 48250 77333 222500 2783417 126375 1 1 0 1 0 1000 0 1000 155648 0 3 0 72 0 121637 56 112732 11
+sprite-opaque-10k 159125 214000 352958 4562292 254667 1 1 0 1 0 10000 0 10000 2121728 0 3 0 72 0 1129637 56 1120732 11
+sprite-opaque-100k 1398666 1659000 1584625 4405250 2048667 1 1 0 1 0 100000 0 100000 16801792 0 3 0 72 0 11209637 56 11200732 7
+sprite-mask-10k 157708 195708 325958 3852875 221208 1 1 0 1 0 10000 0 10000 2121728 0 3 0 72 0 1129637 56 1120732 11
+sprite-blend-1k 43917 51208 194292 220708 88958 1 1 0 1 0 1000 0 1000 155648 0 3 0 72 0 121637 56 112732 11
+sprite-blend-10k 151250 167584 295291 4656208 192000 1 1 0 1 0 10000 0 10000 2121728 0 3 0 72 0 1129637 56 1120732 11
+sprite-blend-100k 1377125 1697333 2688541 4696250 1817500 1 1 0 1 0 100000 0 100000 16801792 0 3 0 72 0 11209637 56 11200732 7
+sprite-opaque-materials-10k 173792 192250 277584 2811750 241125 8 8 0 1 0 10000 0 10000 2121728 0 10 0 520 0 1132741 60 1120732 11
+sprite-blend-materials-1k 280875 309583 231166 3253875 628500 1000 1000 0 1 0 1000 0 1000 155648 0 10 0 520 0 596037 73 241134 11
+sprite-orient-10k 154875 187042 260458 3541375 224250 1 1 0 1 0 10000 0 10000 2121728 0 3 0 72 0 1129861 56 1120732 11
+sprite-coplanar-10k 146584 157625 253084 270417 226708 1 1 0 1 0 10000 0 10000 2121728 0 3 0 72 0 1129861 56 1120732 11
+sprite-dense-partial-10k 54041 83000 195500 2134625 73334 1 1 0 1 0 1800 0 1800 286720 0 3 0 72 0 211461 56 202332 11
+sprite-sparse-tight-10k 29875 39875 197000 275875 48583 1 1 0 1 0 20 0 20 28672 0 3 0 72 0 12101 56 6239 11
+sprite-opaque-10k-unlit 149583 188333 255291 2554542 218667 1 1 0 1 0 10000 0 10000 2121728 0 3 0 72 0 1129861 56 1120732 11
+sprite-lights-16-10k 151416 196667 395583 3730291 189125 1 1 0 1 0 10000 0 10000 2121728 0 3 0 72 0 1129861 56 1120732 11
+sprite-cam-7-10k 1208750 1711833 294417 3656834 1563666 13 7 6 7 0 70000 0 70000 2121728 0 3 0 72 0 7914019 392 1130338 11
+sprite-cam-cycle-7-10k 1193958 1329917 243625 3557791 1316916 13 7 6 7 0 70000 0 70000 2121728 0 3 0 72 0 7914019 392 1130338 11
+mesh-shared-100 34542 38166 179875 222875 400750 1 1 0 1 0 0 100 100 40960 0 3 0 72 1 20405 58 15863 11
+mesh-shared-1k 90167 127042 216708 2601750 156334 1 1 0 1 0 0 1000 1000 155648 0 3 0 72 1 106805 58 102263 11
+mesh-shared-10k 591667 656916 297333 3463291 667833 1 1 0 1 0 0 10000 10000 1073152 0 3 0 72 1 970805 58 966263 11
+mesh-distinct-1k 91833 103083 211417 228708 184667 8 8 0 1 0 0 1000 1000 155648 0 3 0 72 8 108765 59 102431 11
+mesh-materials-1k 94042 105667 208917 2031500 187708 8 8 0 1 0 0 1000 1000 155648 0 10 0 520 1 112541 62 103470 11
+mesh-sphere-100 35375 45458 193083 289083 60583 1 1 0 1 0 0 100 100 40960 0 3 0 72 1 20573 58 16031 11
+mesh-lights-16-1k 87666 92458 231917 242375 129666 1 1 0 1 0 0 1000 1000 155648 0 3 0 72 1 106973 58 102431 11
+lane-mixed 78459 135458 276167 2059958 163917 5 5 0 1 0 2536 22 2558 319488 0 4 0 136 1 300893 78 258860 11
+lane-cameras-7 615250 750833 431000 3660125 717292 41 35 6 7 0 17713 154 17867 319488 0 4 0 136 1 2101883 546 281680 11
+lane-lights-16 77250 111042 458542 3075166 143042 5 5 0 1 0 2536 22 2558 319488 0 4 0 136 1 300893 78 258860 11
+offscreen-1k 87167 100500 222292 316167 154167 4 4 0 2 1 2002 0 2002 155648 0 3 1 72 0 246110 114 117783 11
+surface-2cam-1k 89834 108375 235542 2829292 186792 3 2 1 2 0 2000 0 2000 155648 0 3 0 72 0 244938 112 117671 11
+```
+

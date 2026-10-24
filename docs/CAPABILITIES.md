@@ -67,7 +67,7 @@ without it.
 | 15 | Tilemaps | Working, basic | 32×32 cull chunks in extraction; one `set` rebuilds one chunk. No collision or loader. Costs are in [PERFORMANCE.md](PERFORMANCE.md) | M13 |
 | 16 | Particles | Absent | | M15 |
 | 17 | Parallax | Working (emergent) | Falls out of perspective projection; tested; no per-layer factor by design | done |
-| 18 | Renderer resources and performance | Partial | Texture/mesh GPU caches with removal and idle eviction (T2); instance buffers only grow. Tilemap extraction baseline is in [PERFORMANCE.md](PERFORMANCE.md). GPU frame time is unmeasured | M6 |
+| 18 | Renderer resources and performance | Partial | Texture/mesh GPU caches with removal and idle eviction (T2); instance buffers only grow. Tilemap, debug-line, and sprite/mesh/mixed CPU costs are in [PERFORMANCE.md](PERFORMANCE.md). GPU pass time is unmeasured | M6 |
 | **Characters and animation** | | | | |
 | 19 | Sprite-sheet animation | Absent | Only `Sprite.region/size/anchor` building blocks (KI-21) | M8 |
 | 20 | Skeletal 2D animation | Partial (data model) | Bones as entities, linear clips, one player; 4 tests; no blending, events, IK | M11 |
@@ -145,7 +145,9 @@ Missing from the original category list and now tracked: **save games** (34), **
 * **Depends on.** Math. **Integration.** Everything is an entity; extraction, animation, UI anchors,
   colliders, scripts and the editor all read it.
 * **Performance.** `propagate_transforms` is O(entities) every frame; extraction walks all renderables.
-  Unmeasured (KI-19).
+  Release medians on Apple M5, 2026-10-24: about 103 µs to propagate 10,000 sprite entities, and 1.5–1.7 ms
+  for 100,000. Extraction of those worlds is the larger cost ([PERFORMANCE.md](PERFORMANCE.md), "Render scale").
+  Propagation at these counts stays smaller than extraction, so D-02 stays provisional.
 * **Tests/examples.** Hierarchy invariants test (every `Parent` valid), 10k-entity propagation timing (M6).
 * **Unresolved.** D-18's scene-file half, asset ownership, and spawn rollback stay open (ADR-0014). D-02 is provisional (ADR-0009: none until a profile). D-45 is decided (ADR-0010): three tiers, no `hecs` wrap in M3a, the public list is still M9.
 * **Not initially.** Parallel systems, reactive change detection, archetype-level APIs.
@@ -340,12 +342,12 @@ Missing from the original category list and now tracked: **save games** (34), **
 * **Required.** The same behaviour of picking, culling, depth and lighting in every configuration.
   Multiple surface cameras and offscreen targets are implemented (D-08, locally). Custom matrices are
   implemented (D-25, M6-1B). Reverse-Z is settled (D-07, ADR-0019). Coplanar sprite priority is settled
-  (ADR-0020). Sprite orientation is [ADR-0021](adr/0021-sprite-orientation.md). **Done for the chunking foundation.** Tilemap extraction culls 32×32 chunks; production tile APIs stay M13. **Done for debug drawing.** Single-frame world-space lines, rays, wire boxes, wire spheres, and camera frusta. One-pixel, depth-tested, no depth write, one batch per camera. **Planned.** The rest of M6: the depth-visualisation view, gameplay orientation, and benchmarks beyond the tilemap and debug-line harnesses.
+  (ADR-0020). Sprite orientation is [ADR-0021](adr/0021-sprite-orientation.md). **Done for the chunking foundation.** Tilemap extraction culls 32×32 chunks; production tile APIs stay M13. **Done for debug drawing.** Single-frame world-space lines, rays, wire boxes, wire spheres, and camera frusta. One-pixel, depth-tested, no depth write, one batch per camera. **Recorded.** Sprite, mesh, mixed-scene, lighting, and multi-camera CPU extraction, plus CPU encode and submit (`82972c2`). GPU pass timestamps are not measured. **Planned.** The rest of M6: the depth-visualisation view and gameplay orientation. D-06 stays last and opt-in.
   The configuration test scene is done (below). **Depends on.** Gameplay orientation before M7 and M8.
   D-26 is settled. D-06 is opt-in and not a dependency of other views. D-08 and D-25 are implemented locally.
 * **Integration.** UI world anchors, picking, audio listener, directional frames (D-31) and the editor
   viewport all read the active camera's view.
-* **Performance.** Per-camera extraction multiplies CPU cost; cull per camera.
+* **Performance.** Each camera builds its own instances and submits its own pass. The sprite prepare walk is once per extract. Seven cameras over 10,000 opaque sprites take about 2.4× one camera's extract time and keep 7× the instance-vector capacity ([PERFORMANCE.md](PERFORMANCE.md)).
 * **Tests/examples.** `examples/spatial_scene/tests/configurations.rs` (19 tests, 2026-10-22): the same world
   under all seven configurations, project-then-pick, mesh/sprite occlusion both ways, orientation, the three
   coplanar conflicts, and the example `custom` shear, picking, and GPU pixels. M6-2B adds
@@ -492,13 +494,15 @@ Missing from the original category list and now tracked: **save games** (34), **
 ### 18. Renderer resources, limits and performance
 * **Now.** GPU texture and mesh caches keyed by asset id and revision; evicted when the asset is removed
   or idle for N frames (default 120) with counts exposed (`CacheStats`); instance buffers grow and never
-  shrink; surface loss and resize handled; frame stats. Tilemap CPU extraction is measured on Apple M5
-  ([PERFORMANCE.md](PERFORMANCE.md)). GPU frame time is not measured.
+  shrink; surface loss and resize handled; frame stats. Tilemap, debug-line, and sprite/mesh/mixed CPU
+  costs, plus CPU encode and submit, are measured on Apple M5
+  ([PERFORMANCE.md](PERFORMANCE.md)). GPU pass time is not measured. A driver completion wait is recorded
+  and is not that pass time.
   Device limits are not queried for instance buffers. Texture creation calls
   `validate_texture_dimensions` with `max_texture_dimension_2d` before allocation. A test can tighten
-  that limit without allocating a huge texture. No GPU timing.
-* **Planned.** Broader sprite and mesh benchmarks beyond the tilemap extraction baseline and the debug-line harness (M6). **Depends on.** D-07, D-08.
-* **Tests/examples.** Cache-count tests exist; benchmark binary (M6).
+  that limit without allocating a huge texture. No GPU timestamp query.
+* **Planned.** GPU pass timestamps, when a later checkpoint needs a GPU budget. **Depends on.** D-07, D-08, which are implemented locally.
+* **Tests/examples.** Cache-count tests exist. Harnesses: `tilemap_extract_bench`, `debug_draw_bench`, `render_scale_bench`, and the `render_scale_gpu` example.
 * **Unresolved.** Device-lost recovery is not implemented. Instance-buffer limits are not queried.
 
 ---

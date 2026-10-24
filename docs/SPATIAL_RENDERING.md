@@ -425,7 +425,7 @@ large blended box still sorts by the centre of its bounding sphere.
   that from splitting batches.
 * In `spatial_scene`, hundreds of floor-tile meshes are a handful of draw calls. In
   `basic_2_5d`, 3000 grass tufts plus tiles are a single sprite draw call.
-* Culling (a bounding sphere against the camera frustum) runs before instances are created.
+* Culling (a bounding sphere against the camera frustum) runs before instances are created. That test does not skip `prepare_sprites`: every sprite that ancestor visibility leaves visible is prepared once per extract, including sprites the camera then rejects. The release numbers are in [PERFORMANCE.md](PERFORMANCE.md).
 * Sprites that share one atlas texture batch as one texture. `AtlasBuilder` fills those UV rects
   (M5-4A, `bf4d9bb`); GPU samples of that path are M5-4B (`1666695`). A material albedo uses those
   UVs as stored and does not repack the atlas. A sprite run merges when the pipeline, material id,
