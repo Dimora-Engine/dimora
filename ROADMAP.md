@@ -43,15 +43,14 @@ record is a later documentation commit. Localized mip-texel regeneration is not 
 projection (M6-1B, `a38cb30`), the example `custom` camera (M6-1C, `795bd95`), M6-2B surface cameras
 (`6a47882`, committed locally), and M6-2C offscreen targets and camera-to-texture (committed locally,
 not pushed). D-07 is settled ([ADR-0019](docs/adr/0019-reverse-z.md)): finite reverse-Z, compare `Greater`, clear 0, verified on Apple M5, Metal. Other backends are not verified.
-Coplanar sprite priority is settled ([ADR-0020](docs/adr/0020-coplanar-priority.md)): opt-in, depth-only, fallback thickness `1/256`, Apple M5, Metal only. Gameplay orientation is not decided. D-26 is settled in [ADR-0021](docs/adr/0021-sprite-orientation.md). Tilemap extraction culls 32×32 chunks. The baseline and the comparison are in [docs/PERFORMANCE.md](docs/PERFORMANCE.md). Debug draw is not
-done. M6 is not complete and is not pulled into M5.
+Coplanar sprite priority is settled ([ADR-0020](docs/adr/0020-coplanar-priority.md)): opt-in, depth-only, fallback thickness `1/256`, Apple M5, Metal only. Gameplay orientation is not decided. D-26 is settled in [ADR-0021](docs/adr/0021-sprite-orientation.md). Tilemap extraction culls 32×32 chunks. The baseline and the comparison are in [docs/PERFORMANCE.md](docs/PERFORMANCE.md). Debug drawing is implemented locally (`b7ec684`): one-pixel world-space lines, rays, wire boxes, wire spheres, and camera frusta, depth-tested and not depth-writing. A depth-visualisation view is not implemented. M6 is not complete and is not pulled into M5.
 
 **M5 is complete locally and accepted.** The implementation checkpoint is
 `92286ce0546a4d94bb0365581ae7469fe2ad3260`. M5-2A through M5-6 are the local commits
 `c687d5b`, `11b914f`, `622ef80`, `b51f1fb`, `84d5ab1`, `bf4d9bb`, `1666695`, `e0c29ef`,
 `3b3cd4a`, `ab1b6f7`, `a7efd6c`, and `92286ce`. None of them is pushed. Localized mip-texel
 regeneration is deferred and has no milestone. M6-2B surface cameras are commit `6a47882` and are not pushed.
-M6-2C camera-to-texture is committed locally and is not pushed. Coplanar sprite priority is [ADR-0020](docs/adr/0020-coplanar-priority.md). Sprite orientation is [ADR-0021](docs/adr/0021-sprite-orientation.md). Tilemap chunking is in extraction, with the baseline and comparison in [docs/PERFORMANCE.md](docs/PERFORMANCE.md). Gameplay orientation and debug draw have not
+M6-2C camera-to-texture is committed locally and is not pushed. Coplanar sprite priority is [ADR-0020](docs/adr/0020-coplanar-priority.md). Sprite orientation is [ADR-0021](docs/adr/0021-sprite-orientation.md). Tilemap chunking is in extraction, with the baseline and comparison in [docs/PERFORMANCE.md](docs/PERFORMANCE.md). Debug drawing is implemented locally (`b7ec684`). Gameplay orientation, the depth-visualisation view, broader sprite and mesh benchmarks, and D-06 have not
 started.
 
 **Implemented and tested, beyond the 2026-10-13 audit.** Named stages, commands and events, the `log`
@@ -97,7 +96,7 @@ first" tiers in [docs/DECISIONS.md](docs/DECISIONS.md#what-to-resolve-first).
   `92286ce0546a4d94bb0365581ae7469fe2ad3260`. The acceptance record is the documentation commit that
   follows it. Decisions are ADR-0015, ADR-0016, ADR-0017, and ADR-0018. Localized mip-texel
   regeneration is deferred, with no milestone. It is not implemented.
-* **M6 stays after M5.** Custom projection, surface cameras, camera-to-texture, reverse-Z, coplanar sprite priority, sprite orientation, and the tilemap chunking foundation are implemented locally and are not pushed. Gameplay orientation, debug draw, broader benchmarks, and D-06 are not started. M6 is not complete.
+* **M6 stays after M5.** Custom projection, surface cameras, camera-to-texture, reverse-Z, coplanar sprite priority, sprite orientation, the tilemap chunking foundation, and debug drawing are implemented locally and are not pushed. Gameplay orientation, the depth-visualisation view, broader benchmarks, and D-06 are not started. M6 is not complete.
   M7 and M8 can proceed in parallel after M3a, M4, M5, and M6 as stated below. M9 freezes the foundational
   gameplay, scene, and component-integration contracts. Later milestones may add public APIs through a
   recorded decision. That freeze does not forbid every future public type.
@@ -218,7 +217,7 @@ locally (M3a-4, not pushed). The later rows are not built.
 | Runtime diagnostics | M3a | **Done (M3a-4, committed locally, not pushed).** `Diagnostics`: per-stage CPU timings, frame delta, fixed-step count, entity count, `RenderStats` and cache counts, printed by the examples | M3a stages |
 | Scene and entity inspection | M4 | **Text dump done (M4 Phase 1, local, not pushed).** `dump_hierarchy` and `dump_entity` list runtime ids, names, parent links, registered component names and fields, and unregistered `TypeId`s. No visual inspector | ADR-0014 |
 | Asset validation | M5 (textures, atlases), M17 (importers, dependency graph), M21 (bundle-time) | Reports with the asset name: limits, missing or unused references, malformed data | D-16, D-17 |
-| Render debugging | M6 (debug draw, depth view, camera frusta), M14 (light and shadow views) | Minimal primitives drawn through the real renderer | M6 |
+| Render debugging | M6 (debug lines, rays, boxes, spheres, and frusta are done locally; the depth view is not), M14 (light and shadow views) | One-pixel world-space lines through the existing renderer. Not an overlay and not a second scene | M6 |
 | On-screen overlay | M10 | Frame time, draw calls and log lines through the UI runtime | M10 |
 | Consolidated debug tools, interactive inspector, profiling | M20 | Edit-capable inspector, profiling scopes, collider and skeleton overlays | M19 |
 | **Editor** | M22 | See the stability gate under M22 | Gate below |
@@ -594,8 +593,15 @@ baseline. Camera projection stays separate from gameplay orientation and visual 
   Sprite instances are built every frame for visible tiles and are not cached. A camera that sees
   the whole map still reads every visible tile. Production tile APIs stay in M13, which reuses
   this chunking and does not build a second extractor.
-- Render debugging, first slice: debug draw (lines, boxes, spheres, rays, camera frusta; depth-tested) and a
-  depth-visualisation view, as the minimal debugging primitives for M7.
+- Render debugging, first slice. **Debug drawing is met** (`b7ec684`, `feat/m6-debug-draw`). `DebugDraw` is a
+  world resource of single-frame world-space segments: lines, rays, wire boxes, wire spheres, camera
+  frusta, and an axis helper that reuses lines. `Game::step` clears the resource before systems.
+  Extraction copies it and does not clear it, so every camera in the frame shares one list. The wgpu
+  backend draws that list as one one-pixel line batch per camera after the transparent sequence,
+  reverse-Z depth test, no depth write, unlit vertex color. An empty list adds no draw. Invalid
+  primitives are omitted. CPU costs are in [docs/PERFORMANCE.md](docs/PERFORMANCE.md). **Not met:** a
+  depth-visualisation view. That remains the other half of this slice. It is not an overlay, a gizmo,
+  or a collision or lighting tool.
 - Depth convention (D-07). Settled in [ADR-0019](docs/adr/0019-reverse-z.md): finite reverse-Z in the projection helpers, compare `Greater`, clear 0. It does not close M6. Cross-platform verification is still outstanding.
 - Pixel-art policies (D-06): texture-level filtering, and texel snapping at whichever
   level the chosen technique needs, validated by a prototype before any API is fixed. It is **lowest priority here** and never a default; no other configuration may depend on it.
@@ -637,7 +643,7 @@ part of the configuration bullet. **Surface cameras (M6-2B, `6a47882`).** Two vi
 picture-in-picture, `CameraClear::Color` and `Load`, and a per-camera depth clear are implemented and
 covered by GPU readback. **Camera-to-texture (M6-2C, committed locally, not pushed).** An offscreen camera's image is
 sampled by a later surface sprite, with resize, material and alpha class, invalid dependencies, and
-several writers covered by GPU readback. D-08 is implemented locally. **Coplanar sprite priority is met** ([ADR-0020](docs/adr/0020-coplanar-priority.md)). **Sprite orientation is met** ([ADR-0021](docs/adr/0021-sprite-orientation.md)). **Tilemap chunking is met for this foundation:** `set` rebuilds one chunk (`tile_chunk` tests), and a 1000×1000 map's extraction cost is recorded in [docs/PERFORMANCE.md](docs/PERFORMANCE.md). A partial view reads accepted chunks. A full view still reads every visible tile. A direct write to `tiles` does not drop a tile a camera can see; `invalidate` refreshes only the rejected-chunk cull count. The allocation column is cumulative traffic, not resident memory. **Not met:** gameplay orientation; debug draw;
+several writers covered by GPU readback. D-08 is implemented locally. **Coplanar sprite priority is met** ([ADR-0020](docs/adr/0020-coplanar-priority.md)). **Sprite orientation is met** ([ADR-0021](docs/adr/0021-sprite-orientation.md)). **Tilemap chunking is met for this foundation:** `set` rebuilds one chunk (`tile_chunk` tests), and a 1000×1000 map's extraction cost is recorded in [docs/PERFORMANCE.md](docs/PERFORMANCE.md). A partial view reads accepted chunks. A full view still reads every visible tile. A direct write to `tiles` does not drop a tile a camera can see; `invalidate` refreshes only the rejected-chunk cull count. The allocation column is cumulative traffic, not resident memory. **Debug drawing is met for this slice (`b7ec684`):** world-space lines, rays, wire boxes, wire spheres, and frusta, one batch per camera, depth-tested, no depth write. The depth-visualisation view is not met. **Not met:** gameplay orientation; the depth view;
 an engine preset API; a public oblique builder. M6 is not complete.
 The blended-sprite-versus-mesh assertion was not repeated per example configuration. The constructors are example-local.
 
@@ -655,7 +661,7 @@ Offscreen targets are `crates/engine-renderer/tests/render_target.rs` and
 
 **Objective.** Spatial collision and a kinematic character controller; no rigid-body physics.
 
-**Prerequisites.** M3 (fixed stage), M4 (events/commands), M6 (debug draw).
+**Prerequisites.** M3 (fixed stage), M4 (events/commands), M6. Debug drawing, the part of M6 this milestone names for collider visualization, is implemented locally. M6 itself is not complete, and M7 has not started.
 
 **Tasks.**
 - Collider components (sphere, box, capsule; layers/masks) in **3D world space**, so an object at a

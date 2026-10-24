@@ -414,3 +414,48 @@ size,cameras,view,coverage,density,populated,samples,median_us,p95_us,min_us,max
 1000,7,isometric,partial,dense,1000000,5,58020.8,69525.2,54717.0,69525.2,1701429,5298571,1701429,7,7000000,0.3,145,687163832,0.2431,2127872,7168,5084,0
 1000,7,isometric,partial,sparse,125000,5,8221.2,8420.4,7845.6,8420.4,212757,662243,212757,7,7000000,0.3,124,102081936,0.2432,2127872,7168,5084,0
 ```
+
+## Debug lines
+
+Measured 2026-10-24, 12:08 PM America/Chicago, on Apple M5, macOS arm64, `rustc 1.99.0`. Release. Command: `cargo run --release -p engine-renderer --bin debug_draw_bench`. The binary is `crates/engine-renderer/src/bin/debug_draw_bench.rs`. It refuses a debug build. No GPU, and no new dependency.
+
+Generation is the `DebugDraw::line` calls that build a new list. Extraction is `extract_scene` after that list is already a resource, including dropping the `RenderScene`. Four warmup calls, then the median of 11. The viewport is 1280×720. Cameras are orthographic and look at the segments. `alloc_bytes` is one extra extract after the timed samples. It sums `Layout::size` for every `alloc` and `realloc` and does not subtract frees. The same reading as the tilemap column: cumulative traffic, not resident memory, not a GPU allocation.
+
+`implied_draws` is not a GPU measurement. It is 0 when there are no segments and otherwise one line draw per camera. The GPU tests check that count. This renderer does not write timestamps (`timestamp_writes` is `None`), so GPU time is not claimed.
+
+`DebugSegment` in this build is 40 bytes (two `Vec3` and one `[f32; 4]`). Ten thousand segments are 400,000 bytes. The one-camera row's 401,872 bytes are that copy plus the 1,872 bytes an empty one-camera extract already records. The two-camera row adds 656 bytes for the second pass (402,528 − 401,872), not a second copy of the segments. `alloc_count` stays 3 from 100 segments upward: the segment vector is one allocation.
+
+An absent `DebugDraw` and an empty one record the same traffic (1,872 bytes and 2 allocations with one camera; 2,528 bytes and 2 allocations with two). Their extract medians are 1.0–1.4 µs, the same band as a scene that has cameras and no segments. Unused debug data does not add an extract allocation. The renderer still creates the line pipeline and a 4,096-byte vertex buffer when the `SceneRenderer` is constructed. An empty frame does not write that buffer and does not draw.
+
+| Segments | Cameras | Vertices | Implied draws | Generation | Extraction | Alloc bytes | Alloc count |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| absent | 1 | 0 | 0 | not timed | 1.17 µs | 1,872 | 2 |
+| empty | 1 | 0 | 0 | not timed | 1.04 µs | 1,872 | 2 |
+| absent | 2 | 0 | 0 | not timed | 1.42 µs | 2,528 | 2 |
+| empty | 2 | 0 | 0 | not timed | 1.42 µs | 2,528 | 2 |
+| 0 | 1 | 0 | 0 | 0.04 µs | 1.00 µs | 1,872 | 2 |
+| 0 | 2 | 0 | 0 | 0.04 µs | 1.46 µs | 2,528 | 2 |
+| 100 | 1 | 200 | 1 | 1.38 µs | 1.17 µs | 5,872 | 3 |
+| 100 | 2 | 200 | 2 | 1.25 µs | 1.63 µs | 6,528 | 3 |
+| 1,000 | 1 | 2,000 | 1 | 10.4 µs | 2.50 µs | 41,872 | 3 |
+| 1,000 | 2 | 2,000 | 2 | 10.4 µs | 2.71 µs | 42,528 | 3 |
+| 10,000 | 1 | 20,000 | 1 | 40.9 µs | 5.08 µs | 401,872 | 3 |
+| 10,000 | 2 | 20,000 | 2 | 40.3 µs | 5.13 µs | 402,528 | 3 |
+
+The 0-segment generation time is an empty loop. It is not a claim that constructing the resource is free. The 10,000-segment generation time includes growing a new vector from empty. These are medians of a warm process. They are not a budget, and they are not a GPU frame.
+
+```
+segments cameras vertices implied_draws gen_ns extract_ns alloc_bytes alloc_count
+absent 1 0 0 0 1167 1872 2
+empty 1 0 0 0 1042 1872 2
+absent 2 0 0 0 1417 2528 2
+empty 2 0 0 0 1417 2528 2
+0 1 0 0 42 1000 1872 2
+0 2 0 0 41 1458 2528 2
+100 1 200 1 1375 1167 5872 3
+100 2 200 2 1250 1625 6528 3
+1000 1 2000 1 10417 2500 41872 3
+1000 2 2000 2 10417 2708 42528 3
+10000 1 20000 1 40875 5083 401872 3
+10000 2 20000 2 40333 5125 402528 3
+```

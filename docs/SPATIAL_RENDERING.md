@@ -251,6 +251,18 @@ distinct on purpose ([ADR-0004](adr/0004-one-spatial-world-many-camera-configura
 sprite depth point is the quad centre. A blended mesh uses the camera-space Z of its world-space
 bounding-sphere centre.
 
+**Debug lines.** `DebugDraw` segments are world positions. They use the camera's existing
+`view_proj`, including perspective, orthographic, a rotated or isometric pose, a custom matrix, a
+split viewport, and an offscreen target. There is no debug camera and no screen-space path. The
+backend draws them as a `LineList` after the transparent sequence. wgpu 30 has no portable line
+width, so each segment is one pixel. The depth test is reverse-Z greater-than, and the draw does
+not write depth. Opaque, mask, and cutout geometry, which did write depth, hide a line that is
+farther from the camera. A blended sprite or mesh does not write depth, so a line can paint over
+those pixels even when the blend is nearer. That is the current transparency limit. Lines are not
+lit, fogged, or shadowed, and they do not change sprite or mesh order. An empty list adds no draw.
+Segments are not culled on the CPU; the GPU clips them. A line exactly on a surface can z-fight,
+because there is no depth bias.
+
 **Assigned materials (ADR-0015).** Opaque, Mask, and Blend are material classes. An assigned
 sprite uses the class instead of `SpriteBlend`. Opaque and Mask write depth and do not blend. Mask
 discards below the material cutoff. Blend sprites and blend meshes share one back-to-front list.

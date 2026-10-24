@@ -52,7 +52,7 @@ About 8,000 lines of Rust in nine library crates and two examples.
 | `engine-core` | `Color`, `Time`, `FixedTimestep`, `Key`/`Input`, `Actions` | math | none |
 | `engine-world` | `World` (wraps `hecs` + typed resources), sequential `Schedule`, `Parent`/`Children`, `GlobalTransform`, `propagate_transforms`, `Interpolate`, `Name`, `Visibility` | math | `hecs` |
 | `engine-assets` | `AssetId`, `AssetKind`, `AssetHandle<T>`, `AssetManager`, `AssetSource` (filesystem, memory), `Texture`, `SpriteAsset`, `MeshData` | math | `image` (PNG), `bytemuck` |
-| `engine-renderer` | Backend-agnostic render model: `Camera`, projections, frustum, render components (`Sprite`, `Mesh`, `Material`, `TileMap`, `Light`, ...), `extract_scene` -> `RenderScene` | math, core, world, assets | none |
+| `engine-renderer` | Backend-agnostic render model: `Camera`, projections, frustum, render components (`Sprite`, `Mesh`, `Material`, `TileMap`, `Light`, ...), single-frame `DebugDraw` segments, `extract_scene` -> `RenderScene` | math, core, world, assets | none |
 | `engine-renderer-wgpu` | The wgpu backend: pipelines, GPU caches, instance buffers, window/offscreen presentation, WGSL shaders. Consumes `RenderScene` only | math, assets, renderer | `wgpu`, `pollster`, `bytemuck` |
 | `engine-animation` | `Skeleton`, bones as entities, `AnimationClip`, `AnimationPlayer`, `animate_system` | math, core, world, assets | none |
 | `engine-platform` | winit window and event loop -> `InputEvent`s, frame timing, `App` trait | math, core | `winit` |
@@ -228,13 +228,19 @@ keep directionals and the positional lights nearest to that camera. Blended spri
 sort per camera by `(RenderOrder.layer, view depth far->near, RenderOrder.order, extraction order)`.
 Cutout sprites, tiles and opaque meshes are unordered except for grouping by texture, material, and
 mesh. Sprites and tiles share one instanced quad path. A missing asset is counted once on the scene,
-not once per camera.
+not once per camera. `DebugDraw`, when the world has one, is copied onto `RenderScene::debug_lines`
+and is not removed from the world. The copy is one list for every camera. It is not frustum-culled.
+A missing resource is an empty list. `Game::step` clears the resource before systems, so a later
+extract of the same step still sees what those systems submitted, and the next step drops it.
 
 Backend: each destination has a `Depth32Float` image, cleared to 0.0 and discarded on every pass that
 writes it. The surface depth is not reused for an offscreen target. The first camera that writes a
 destination clears that whole color image. Later cameras on it load the color. A later
 `CameraClear::Color` fills only its viewport. Opaque meshes (back-face culled), mask and cutout
-sprites and tiles write depth. Blended sprites and meshes test depth and do not write it. Each camera
+sprites and tiles write depth. Blended sprites and meshes test depth and do not write it. When
+`debug_lines` is non-empty, one line-list draw follows that sequence: the same camera matrices,
+greater-than depth test, no depth write, unlit vertex color, alpha blend. The vertices are uploaded
+once per frame and drawn by each camera. An empty list does not upload and does not draw. Each camera
 is uploaded and submitted before the next camera writes the shared globals or instance buffers.
 Texture, sampler, and mesh-geometry caches stay shared. Offscreen color images stay in a renderer
 cache keyed by `RenderTargetId` and are replaced when the description's generation changes. A sprite

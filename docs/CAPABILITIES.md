@@ -90,7 +90,7 @@ without it.
 | 32 | Scenes and lifecycle | Absent | World is flat; `Name`, `Visibility` only | M4 |
 | 33 | Serialization (scenes) | Absent | No `serde`; no component registry | M19 |
 | 34 | Save games and persistent state | Absent, unscheduled | Distinct from scene files | add (M19+) |
-| 35 | Debugging and developer tooling | Partial | `Diagnostics` and `log` (M3a-4). Examples print entity count, fixed steps, and CPU step time in the window title. No inspector, debug draw, or overlay | M4, M6, M10, M20 |
+| 35 | Debugging and developer tooling | Partial | `Diagnostics` and `log` (M3a-4). Single-frame world-space debug lines, rays, wire boxes, wire spheres, and camera frusta (M6). No inspector, depth view, gizmo, or overlay | M4, M6, M10, M20 |
 | 36 | Editor and inspection (core goal) | Absent | Foundations (registry, commands, ids) not yet shaped for it, R-15 | M22 |
 | 37 | Build, CI, packaging | Partial | Pinned toolchain, `check.sh`; no CI, no licence files, no release | M2, M24 |
 | 38 | Docs, examples, tests, onboarding | Partial | Accurate README and docs, 2 examples, 138 tests; no rustdoc guide, no tutorial | M24 |
@@ -340,7 +340,7 @@ Missing from the original category list and now tracked: **save games** (34), **
 * **Required.** The same behaviour of picking, culling, depth and lighting in every configuration.
   Multiple surface cameras and offscreen targets are implemented (D-08, locally). Custom matrices are
   implemented (D-25, M6-1B). Reverse-Z is settled (D-07, ADR-0019). Coplanar sprite priority is settled
-  (ADR-0020). Sprite orientation is [ADR-0021](adr/0021-sprite-orientation.md). **Done for the chunking foundation.** Tilemap extraction culls 32×32 chunks; production tile APIs stay M13. **Planned.** The rest of M6: gameplay orientation, debug draw, and benchmarks beyond the tilemap harness.
+  (ADR-0020). Sprite orientation is [ADR-0021](adr/0021-sprite-orientation.md). **Done for the chunking foundation.** Tilemap extraction culls 32×32 chunks; production tile APIs stay M13. **Done for debug drawing.** Single-frame world-space lines, rays, wire boxes, wire spheres, and camera frusta. One-pixel, depth-tested, no depth write, one batch per camera. **Planned.** The rest of M6: the depth-visualisation view, gameplay orientation, and benchmarks beyond the tilemap and debug-line harnesses.
   The configuration test scene is done (below). **Depends on.** Gameplay orientation before M7 and M8.
   D-26 is settled. D-06 is opt-in and not a dependency of other views. D-08 and D-25 are implemented locally.
 * **Integration.** UI world anchors, picking, audio listener, directional frames (D-31) and the editor
@@ -497,7 +497,7 @@ Missing from the original category list and now tracked: **save games** (34), **
   Device limits are not queried for instance buffers. Texture creation calls
   `validate_texture_dimensions` with `max_texture_dimension_2d` before allocation. A test can tighten
   that limit without allocating a huge texture. No GPU timing.
-* **Planned.** Broader benchmarks beyond the tilemap extraction baseline (M6). **Depends on.** D-07, D-08.
+* **Planned.** Broader sprite and mesh benchmarks beyond the tilemap extraction baseline and the debug-line harness (M6). **Depends on.** D-07, D-08.
 * **Tests/examples.** Cache-count tests exist; benchmark binary (M6).
 * **Unresolved.** Device-lost recovery is not implemented. Instance-buffer limits are not queried.
 
@@ -551,8 +551,9 @@ Missing from the original category list and now tracked: **save games** (34), **
 
 ### 23. Collision and spatial queries
 * **Now.** Absent. **Planned.** M7: 3D colliders (sphere/box/capsule, layers), a `CollisionWorld`
-  resource rebuilt in the fixed stage, raycast and overlap, triggers via events, debug draw.
-  **Depends on.** M3, M4, M6 (debug draw), D-09, D-10.
+  resource rebuilt in the fixed stage, raycast and overlap, triggers via events. Bounds can use
+  `DebugDraw::wire_box` and raycasts can use `DebugDraw::ray`. That call is not written.
+  **Depends on.** M3, M4, M6, D-09, D-10. Debug drawing exists. M7 has not started.
 * **Integration.** World-space 3D, attached to the **gameplay** entity; tilemap collision layer (M13)
   and foot placement (M12) feed it; scripts and UI hit-testing may use queries.
 * **Performance.** Broadphase must scale with entity count; deterministic across runs.
@@ -663,9 +664,15 @@ Missing from the original category list and now tracked: **save games** (34), **
 ### 35. Debugging and profiling
 * **Now.** `log` records and a `Diagnostics` resource (M3a-4). Examples print a few of those numbers in
   the window title. M4 Phase 1 adds a read-only text dump of the hierarchy and of one entity's registered
-  fields. No on-screen log and no visual inspector. **Planned (incremental, ADR-0003; ROADMAP
+  fields. `DebugDraw` holds single-frame world-space segments. `line`, `ray`, `wire_box`,
+  `wire_box_matrix`, `wire_sphere`, `wire_sphere_segments`, `frustum`, and `axes` all become that list.
+  `Game::step` clears it before systems. Extraction copies it. Every camera shares the copy. The wgpu
+  backend draws one one-pixel line batch per camera after transparent geometry, with the reverse-Z
+  greater-than test and no depth write. Unlit vertex color. No material, texture, light, fog, or shadow.
+  An empty list adds no draw. A non-finite or degenerate primitive is omitted. There is no inspector,
+  no depth view, no gizmo, and no screen-space overlay. **Planned (incremental, ADR-0003; ROADMAP
   "Incremental developer tooling").** Asset
-  validation (M5, M17, M21), render debugging with debug draw and a depth view (M6), an on-screen overlay
+  validation (M5, M17, M21), a depth-visualisation view (M6), an on-screen overlay
   (M10), then M20 consolidates with an edit-capable inspector, profiling scopes (D-21) and collider, skeleton,
   UI and script overlays. **Depends on.** M3a stages, the M4 registry, M6, M10, M19.
 * **Not initially.** Remote debugging, GPU profiler integration.
