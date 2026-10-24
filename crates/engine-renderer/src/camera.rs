@@ -104,6 +104,9 @@ pub enum CameraClear {
 /// says how view space is projected ([`CameraProjection`]) and where the image lands on the render
 /// target ([`ViewportRect`]). Moving the camera in 3D is what produces parallax.
 ///
+/// [`Self::pixel_snap`] can quantize an orthographic view translation when a [`CameraView`] is
+/// built. It does not write the entity transform.
+///
 /// Every [`Self::active`] camera is rendered, in ascending `(order, entity id)`. A lower order
 /// draws first and sits underneath. A higher order draws later and can overlay it. There is no
 /// separate priority field. `Visibility` does not activate or hide a camera.
@@ -118,6 +121,18 @@ pub struct Camera {
     pub output: CameraOutput,
     /// Color or depth presentation. The default from [`Camera::new`] is [`CameraPresentation::Shaded`].
     pub presentation: CameraPresentation,
+    /// Orthographic view-translation snap. The default from [`Camera::new`] is `false`.
+    ///
+    /// When this is `true` and [`Self::projection`] is [`CameraProjection::Orthographic`],
+    /// [`CameraView::new`] moves the eye in the camera's right/up plane so the view-space X and Y
+    /// translation land on the viewport's pixel grid. View-space Z and the rotation stay. The
+    /// entity `Transform` and `GlobalTransform` are not modified. Sprites, tilemaps, meshes, and
+    /// debug lines for that camera all use the same snapped view.
+    ///
+    /// [`CameraProjection::Perspective`] and [`CameraProjection::Custom`] store the flag and do
+    /// not snap. An oblique builder stores a custom matrix, so it does not snap either. The flag
+    /// stays editable when the projection changes. Camera presets do not turn it on.
+    pub pixel_snap: bool,
     pub active: bool,
     /// Draw order among active cameras. Lower draws first. Equal orders use the entity id.
     pub order: i32,
@@ -132,6 +147,7 @@ impl Camera {
             clear: CameraClear::Color,
             output: CameraOutput::Surface,
             presentation: CameraPresentation::Shaded,
+            pixel_snap: false,
             active: true,
             order: 0,
         }
@@ -162,6 +178,11 @@ impl Camera {
         self.presentation = presentation;
         self
     }
+    /// Stores [`Self::pixel_snap`]. Orthographic views use it. Other projections keep it and do not snap.
+    pub fn with_pixel_snap(mut self, pixel_snap: bool) -> Self {
+        self.pixel_snap = pixel_snap;
+        self
+    }
 }
 
 /// A camera resolved against a viewport: everything needed to project, cull and render.
@@ -173,6 +194,10 @@ pub struct CameraView {
     pub proj: Mat4,
     /// World -> clip.
     pub view_proj: Mat4,
+    /// Eye used to build [`Self::view`].
+    ///
+    /// This matches the entity translation unless [`Camera::pixel_snap`] moved an orthographic eye
+    /// by at most half a viewport pixel in the view plane.
     pub position: Vec3,
     pub forward: Vec3,
     pub up: Vec3,
@@ -193,10 +218,18 @@ impl CameraView {
     /// [`CameraProjection::Perspective`] and [`CameraProjection::Orthographic`] rebuild `proj`
     /// from this viewport's pixel aspect. [`CameraProjection::Custom`] keeps the stored view-to-clip
     /// matrix; a resize changes pixel mapping only.
+    ///
+    /// Orthographic [`Camera::pixel_snap`] moves the eye onto the viewport pixel grid before
+    /// `look_to_lh`. The projection matrix, including reverse-Z, is not snapped. Callers that
+    /// project or cast rays from the raw `Transform`, without building this view, can disagree by
+    /// up to half a pixel.
     pub fn new(camera: &Camera, transform: &GlobalTransform, target_size: Vec2) -> Self {
         let t = transform.to_transform();
-        let (position, forward, up) = (t.position, t.forward(), t.up());
+        let (mut position, forward, up) = (t.position, t.forward(), t.up());
         let (viewport_origin, viewport) = camera.viewport.to_pixels(target_size);
+        if let Some(eye) = orthographic_pixel_eye(camera, position, forward, up, viewport) {
+            position = eye;
+        }
         let view = Mat4::look_to_lh(position, forward, up);
         let proj = camera.projection.matrix(viewport.x / viewport.y.max(1.0));
         Self { view, proj, view_proj: proj * view, position, forward, up, right: t.right(), viewport, viewport_origin }
@@ -244,4 +277,48 @@ impl CameraView {
         let (near, far) = (unproject(1.0), unproject(0.0));
         Some((near, (far - near).normalized()))
     }
+}
+
+/// Eye for an orthographic camera whose view-space X and Y translation are an integer number of
+/// viewport pixels, or `None` when snapping does not apply.
+///
+/// The scale is `viewport_height_px / orthographic_height`. That is both axes of
+/// [`Mat4::orthographic_lh`] for a symmetric window whose aspect is `viewport_width / viewport_height`:
+/// one world unit is `viewport_height / height` pixels. The basis is the same one `look_to_lh`
+/// builds from `forward` and `up`.
+///
+/// Each axis is `f32::round` of the view translation in pixels. A tie rounds away from zero.
+/// Crossing that halfway value jumps a whole pixel even when the camera moved by less than one
+/// pixel. A translation that is already an integer number of pixels is unchanged. There is no
+/// extra half-pixel bias: NDC maps through pixel centers at `n + 0.5`, and an odd viewport height
+/// already puts the optical axis on a pixel center. An even height puts it on a pixel edge.
+///
+/// The eye moves in the right/up plane, so view-space Z of every world point stays. Perspective,
+/// custom, and oblique matrices return `None`. A non-positive or non-finite height, a non-finite
+/// scale, or a forward axis parallel to `up` also returns `None`.
+fn orthographic_pixel_eye(camera: &Camera, eye: Vec3, forward: Vec3, up: Vec3, viewport: Vec2) -> Option<Vec3> {
+    if !camera.pixel_snap {
+        return None;
+    }
+    let CameraProjection::Orthographic(ortho) = camera.projection else {
+        return None;
+    };
+    if !(ortho.height.is_finite() && ortho.height > 0.0) {
+        return None;
+    }
+    let scale = viewport.y / ortho.height;
+    if !(scale.is_finite() && scale > 0.0) {
+        return None;
+    }
+    let f = forward.try_normalize()?;
+    let r = up.cross(f).try_normalize()?;
+    let u = f.cross(r);
+    let (tx, ty) = (-r.dot(eye), -u.dot(eye));
+    if !(tx.is_finite() && ty.is_finite() && u.x.is_finite()) {
+        return None;
+    }
+    let snapped_tx = (tx * scale).round() / scale;
+    let snapped_ty = (ty * scale).round() / scale;
+    let adjusted = eye - r * (snapped_tx - tx) - u * (snapped_ty - ty);
+    (adjusted.x.is_finite() && adjusted.y.is_finite() && adjusted.z.is_finite()).then_some(adjusted)
 }

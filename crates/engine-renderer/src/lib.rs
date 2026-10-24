@@ -4,6 +4,8 @@
 //! GPU:
 //!
 //! * [`projection`] and [`camera`] turn real 3D world positions into screen positions.
+//!   [`Camera::pixel_snap`] quantizes an orthographic view translation onto that camera's viewport
+//!   pixel grid. Perspective and custom projections keep the flag and do not snap.
 //! * [`components`] are the renderable things that live in the ECS next to `Transform`:
 //!   [`Sprite`], [`Mesh`], [`TileMap`], [`Light`].
 //! * [`extract_scene`] snapshots the world into a plain-data [`RenderScene`], doing visibility,

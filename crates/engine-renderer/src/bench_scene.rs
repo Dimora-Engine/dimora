@@ -213,6 +213,9 @@ pub fn cases() -> Vec<Case> {
         case("lane-lights-16", true, false, lane_lights_16),
         case("offscreen-1k", true, false, offscreen_1k),
         case("surface-2cam-1k", true, false, surface_2cam_1k),
+        // D-06A comparison rows. Not part of the historical scale table and not in the GPU harness.
+        case("sprite-opaque-10k-snap", false, false, sprite_opaque_10k_snap),
+        case("sprite-cam-2-10k-snap", false, false, sprite_cam_2_10k_snap),
     ]
 }
 
@@ -225,6 +228,12 @@ fn sprite_opaque_1k() -> Built {
 }
 fn sprite_opaque_10k() -> Built {
     sprite_grid(SpriteSpec { count: 10_000, ..SpriteSpec::opaque() })
+}
+fn sprite_opaque_10k_snap() -> Built {
+    enable_pixel_snap(sprite_opaque_10k())
+}
+fn sprite_cam_2_10k_snap() -> Built {
+    enable_pixel_snap(sprite_cam_2_10k())
 }
 fn sprite_opaque_100k() -> Built {
     sprite_grid(SpriteSpec { count: 100_000, ..SpriteSpec::opaque() })
@@ -806,6 +815,14 @@ fn spawn_sprite(world: &mut World, transform: Transform, sprite: Sprite, coplana
     }
 }
 
+fn enable_pixel_snap(built: Built) -> Built {
+    let ids: Vec<_> = built.world.query::<&Camera>().iter().map(|(entity, _)| entity).collect();
+    for id in ids {
+        built.world.component_mut::<Camera>(id).expect("camera").pixel_snap = true;
+    }
+    built
+}
+
 fn add_debug(world: &mut World, segments: u32) {
     if segments == 0 {
         return;
@@ -1004,6 +1021,25 @@ mod tests {
         assert!(cases.iter().any(|case| case.label == "offscreen-1k" && case.gpu));
         assert!(cases.iter().any(|case| case.label == "sprite-opaque-10k-move" && case.motion));
         assert!(cases.iter().any(|case| case.label == "sprite-cam-cycle-7-10k" && case.gpu));
+        assert!(cases.iter().any(|case| case.label == "sprite-opaque-10k-snap" && !case.gpu));
+    }
+
+    #[test]
+    fn pixel_snap_rows_match_the_unsnapped_scene_counts() {
+        let plain =
+            summarize(&extract_scene(&sprite_opaque_10k().world, &sprite_opaque_10k().assets, viewport()).unwrap());
+        let snapped = sprite_opaque_10k_snap();
+        assert!(snapped.world.query::<&Camera>().iter().all(|(_, camera)| camera.pixel_snap));
+        let snap = summarize(&extract_scene(&snapped.world, &snapped.assets, viewport()).unwrap());
+        assert_eq!(snap.sprite_batches, plain.sprite_batches);
+        assert_eq!(snap.visible_sprites, plain.visible_sprites);
+        assert_eq!(snap.mesh_draws, plain.mesh_draws);
+        assert_eq!(snap.passes, 1);
+        let two = sprite_cam_2_10k_snap();
+        assert_eq!(two.cameras, 2);
+        let summary = summarize(&extract_scene(&two.world, &two.assets, viewport()).unwrap());
+        assert_eq!(summary.passes, 2);
+        assert!(summary.sprite_batches >= plain.sprite_batches);
     }
 
     #[test]

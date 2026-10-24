@@ -54,6 +54,7 @@ const CAMERA_FIELDS: &[FieldDesc] = &[
     FieldDesc::new("active", "bool"),
     FieldDesc::new("order", "i32"),
     FieldDesc::new("presentation", "CameraPresentation"),
+    FieldDesc::new("pixel_snap", "bool"),
 ];
 
 const LIGHT_FIELDS: &[FieldDesc] =
@@ -169,6 +170,7 @@ fn camera_values(camera: &Camera) -> Vec<String> {
         camera.active.to_string(),
         camera.order.to_string(),
         format!("{:?}", camera.presentation),
+        camera.pixel_snap.to_string(),
     ]
 }
 
