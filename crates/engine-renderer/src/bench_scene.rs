@@ -1,13 +1,13 @@
 //! Deterministic worlds for the M6 render-scale benchmark.
 //!
 //! This is benchmark data, not a gameplay API and not a scene format. Each [`Case`] builds a
-//! fresh [`World`](engine_world::World) and [`AssetManager`](engine_assets::AssetManager). The
+//! fresh [`World`] and [`AssetManager`]. The
 //! CPU harness times [`extract_scene`](crate::extract_scene). The GPU harness submits the same
 //! worlds. Adding a later workload is a new [`Case`]; sprite sheets, skeletal poses, skinned
 //! meshes, shadows, and editor viewports are not represented here because those systems are not
 //! implemented.
 //!
-//! Visible and culled counts in [`Summary`] are summed across cameras, matching [`ExtractStats`].
+//! Visible and culled counts in [`Summary`] are summed across cameras, matching [`ExtractStats`](crate::ExtractStats).
 //! Batch counts are summed the same way. Sorting and instance building are inside extraction and
 //! are not timed apart from it.
 
