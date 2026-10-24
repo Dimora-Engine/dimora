@@ -90,7 +90,7 @@ without it.
 | 32 | Scenes and lifecycle | Absent | World is flat; `Name`, `Visibility` only | M4 |
 | 33 | Serialization (scenes) | Absent | No `serde`; no component registry | M19 |
 | 34 | Save games and persistent state | Absent, unscheduled | Distinct from scene files | add (M19+) |
-| 35 | Debugging and developer tooling | Partial | `Diagnostics` and `log` (M3a-4). Single-frame world-space debug lines, rays, wire boxes, wire spheres, and camera frusta (M6). No inspector, depth view, gizmo, or overlay | M4, M6, M10, M20 |
+| 35 | Debugging and developer tooling | Partial | `Diagnostics` and `log` (M3a-4). Single-frame world-space debug lines, rays, wire boxes, wire spheres, and camera frusta (M6). A per-camera linearized view of that camera's stored depth (`4bd591d`). No inspector, gizmo, shadow view, or overlay | M4, M6, M10, M20 |
 | 36 | Editor and inspection (core goal) | Absent | Foundations (registry, commands, ids) not yet shaped for it, R-15 | M22 |
 | 37 | Build, CI, packaging | Partial | Pinned toolchain, `check.sh`; no CI, no licence files, no release | M2, M24 |
 | 38 | Docs, examples, tests, onboarding | Partial | Accurate README and docs, 2 examples, 138 tests; no rustdoc guide, no tutorial | M24 |
@@ -342,7 +342,7 @@ Missing from the original category list and now tracked: **save games** (34), **
 * **Required.** The same behaviour of picking, culling, depth and lighting in every configuration.
   Multiple surface cameras and offscreen targets are implemented (D-08, locally). Custom matrices are
   implemented (D-25, M6-1B). Reverse-Z is settled (D-07, ADR-0019). Coplanar sprite priority is settled
-  (ADR-0020). Sprite orientation is [ADR-0021](adr/0021-sprite-orientation.md). **Done for the chunking foundation.** Tilemap extraction culls 32×32 chunks; production tile APIs stay M13. **Done for debug drawing.** Single-frame world-space lines, rays, wire boxes, wire spheres, and camera frusta. One-pixel, depth-tested, no depth write, one batch per camera. **Recorded.** Sprite, mesh, mixed-scene, lighting, and multi-camera CPU extraction, plus CPU encode and submit (`82972c2`). GPU pass timestamps are not measured. **Planned.** The rest of M6: the depth-visualisation view and gameplay orientation. D-06 stays last and opt-in.
+  (ADR-0020). Sprite orientation is [ADR-0021](adr/0021-sprite-orientation.md). **Done for the chunking foundation.** Tilemap extraction culls 32×32 chunks; production tile APIs stay M13. **Done for debug drawing.** Single-frame world-space lines, rays, wire boxes, wire spheres, and camera frusta. One-pixel, depth-tested, no depth write, one batch per camera. **Recorded.** Sprite, mesh, mixed-scene, lighting, and multi-camera CPU extraction, plus CPU encode and submit (`82972c2`). GPU pass timestamps are not measured. **Done for the depth view.** `CameraPresentation::Depth` replaces that camera's viewport with linearized stored depth (`4bd591d`). Verified on Apple M5, Metal: perspective, orthographic, side, top-down, isometric, a steep perspective, a mild reverse-Z custom matrix, two separate surface viewports, an offscreen target, a later shaded camera sampling that target's color, resize, and switching back to shaded. A singular matrix and a 0-near custom matrix fill the viewport with the unsupported color. **Planned.** Gameplay orientation. D-06 stays last and opt-in. An editor viewport and a shadow-camera view are not built.
   The configuration test scene is done (below). **Depends on.** Gameplay orientation before M7 and M8.
   D-26 is settled. D-06 is opt-in and not a dependency of other views. D-08 and D-25 are implemented locally.
 * **Integration.** UI world anchors, picking, audio listener, directional frames (D-31) and the editor
@@ -673,12 +673,21 @@ Missing from the original category list and now tracked: **save games** (34), **
   `Game::step` clears it before systems. Extraction copies it. Every camera shares the copy. The wgpu
   backend draws one one-pixel line batch per camera after transparent geometry, with the reverse-Z
   greater-than test and no depth write. Unlit vertex color. No material, texture, light, fog, or shadow.
-  An empty list adds no draw. A non-finite or degenerate primitive is omitted. There is no inspector,
-  no depth view, no gizmo, and no screen-space overlay. **Planned (incremental, ADR-0003; ROADMAP
-  "Incremental developer tooling").** Asset
-  validation (M5, M17, M21), a depth-visualisation view (M6), an on-screen overlay
+  An empty list adds no draw. A non-finite or degenerate primitive is omitted. `Camera.presentation`
+  selects shaded color or a linearized view of the depth that camera stored. `Shaded` is the default.
+  `Depth` runs one extra fullscreen pass for that camera only, after its scene pass and before the next
+  camera clears the depth image. Nearer written fragments are brighter. Unwritten pixels are purple.
+  A projection that is singular, non-finite, or not reverse-Z view depth is a rust fill, not a flipped
+  gradient and not an empty scene. Opaque, mask, and cutout fragments contribute where they survive.
+  Blended draws and debug lines do not write a new depth value. `CoplanarPriority` appears as the stored
+  depth-only bias. The view does not show fog, lighting, or shadows. Verified configurations are the
+  list in the camera section above, on Apple M5, Metal. Other backends are not verified. There is no
+  inspector, no gizmo, no shadow-camera view, and no screen-space overlay. **Planned (incremental,
+  ADR-0003; ROADMAP "Incremental developer tooling").** Asset
+  validation (M5, M17, M21), an on-screen overlay
   (M10), then M20 consolidates with an edit-capable inspector, profiling scopes (D-21) and collider, skeleton,
-  UI and script overlays. **Depends on.** M3a stages, the M4 registry, M6, M10, M19.
+  UI and script overlays. A later editor sets `Camera.presentation`. It does not keep a second depth model.
+  **Depends on.** M3a stages, the M4 registry, M6, M10, M19.
 * **Not initially.** Remote debugging, GPU profiler integration.
 
 ### 36. Editor and inspection

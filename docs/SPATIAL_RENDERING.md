@@ -263,6 +263,37 @@ lit, fogged, or shadowed, and they do not change sprite or mesh order. An empty 
 Segments are not culled on the CPU; the GPU clips them. A line exactly on a surface can z-fight,
 because there is no depth bias.
 
+**Depth presentation.** `CameraPresentation::Depth` replaces that camera's viewport with the depth
+buffer that camera just wrote. `Shaded` is the default and runs no extra pass. Extraction copies the
+field. It does not build a second scene, and it does not change materials, projection, or gameplay
+orientation. Switching back is the same field.
+
+The mapping is reverse-Z view depth (ADR-0019). Stored 1 is the near plane and stored 0 is the clear.
+A fragment at exactly 0 does not pass `Greater`, so a stored 0 is unwritten. Unwritten pixels are
+purple, linear RGBA `(0.35, 0.02, 0.45)`. Written pixels are gray. Nearer is brighter. The gray is
+`(z_far - z) / (z_far - z_near)` after unprojecting the stored value through the inverse of that
+camera's projection at the pixel's NDC. NDC +Y is up. Perspective is linearized. Orthographic is the
+same formula, and there the raw NDC already matches the linear gray. A singular matrix, a non-finite
+value, or a span that is not a positive view-space range from NDC 1 to NDC 0 fills the viewport with
+rust, `(0.62, 0.22, 0.08)`, including the clear pixels. A 0-near custom matrix is that case. A mild
+oblique reverse-Z matrix that stays invertible is linearized. An arbitrary custom matrix is not
+claimed to linearize.
+
+The image is the depth the production passes store. Opaque meshes, mask and cutout sprites, and
+tiles write where the fragment survives. A discarded mask or cutout texel keeps the depth behind it.
+Blended sprites and meshes, and debug lines, do not write depth, so they do not change the image.
+`CoplanarPriority` is the stored depth-only pull. The fallback thickness `1/256` is below one 8-bit
+level across a range of about 20. The view does not draw a special coplanar color. Meshes and tiles
+do not read the component. Fog and lighting stay in the color pass and are replaced with this image.
+
+Each camera has its own depth clear. The visualization pass runs in that camera's encoder, before
+submit, so a later camera's clear does not replace an earlier camera's picture. Two separate
+viewports each show their own camera. A shaded viewport beside a depth viewport stays color. An
+offscreen camera can present depth into its target. A later surface sprite still samples that
+target's color. Overlapping viewports follow the existing rule that the later camera paints its
+rectangle. The default perspective clip range `0.1..1000` compresses a nearby scene toward white.
+Other GPU backends are not verified. Apple M5, Metal is the verified backend.
+
 **Assigned materials (ADR-0015).** Opaque, Mask, and Blend are material classes. An assigned
 sprite uses the class instead of `SpriteBlend`. Opaque and Mask write depth and do not blend. Mask
 discards below the material cutoff. Blend sprites and blend meshes share one back-to-front list.

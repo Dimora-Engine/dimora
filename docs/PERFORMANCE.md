@@ -711,3 +711,37 @@ offscreen-1k 87167 100500 222292 316167 154167 4 4 0 2 1 2002 0 2002 155648 0 3 
 surface-2cam-1k 89834 108375 235542 2829292 186792 3 2 1 2 0 2000 0 2000 155648 0 3 0 72 0 244938 112 117671 11
 ```
 
+## Depth view
+
+Recorded 2026-10-24 in the afternoon, America/Chicago, on `feat/m6-depth-view` at the implementation that became `4bd591d`. The machine is the same Apple M5, Metal, macOS arm64, rustc 1.99.0 class as the render-scale run above. This section does not replace that table.
+
+| | |
+|---|---|
+| Command | `cargo run --release -p engine-renderer-wgpu --example depth_view_bench` |
+| Scene | 64 cutout sprites and 4 shared cuboids, 1280×720, orthographic, clip range `0.5..40`. Not the render-scale catalog |
+| Cameras | 1, or 7 side-by-side viewports of the same scene |
+| Samples | 2 warmup, then 11. Median is the middle sample. p95 is nearest-rank |
+| `encode_ns` | `SceneRenderer::render` after the previous sample's completion wait. Command recording and submit. No readback |
+| `completion_ns` | The following `device.poll(wait_indefinitely)`. GPU work plus driver synchronization. Not a pass timestamp. `timestamp_writes` stays `None` |
+
+`bind_group_creates` is cumulative on one renderer. The first shaded frame creates 3. The first depth frame creates the sample group and the counter becomes 4. Later rows stay at 4.
+
+Draws for one camera: 2 world draws shaded, 3 with the depth pass (`depth_view_draws` 1). Seven cameras: 14 world draws in both modes. Shaded is 20 draws because the six later cameras each clear their viewport. Depth is 27 draws: those 20 plus one depth pass per camera. World draws do not change.
+
+The depth image is one `Depth32Float`, `1280 * 720 * 4 = 3,686,400` bytes, created for shaded frames as well (`RENDER_ATTACHMENT | TEXTURE_BINDING`). There is no second copy. The uniform is 128 bytes, created with the renderer. The pipeline is created at init and is not bound while every camera is shaded. A shaded frame does not run the pass and does not create the sample group. The Metal heap size was not queried.
+
+Two release runs, one after the other, same binary:
+
+| Run | Mode | Cameras | encode median ns | encode p95 ns | completion median ns | completion p95 ns |
+|---|---|---|---|---|---|---|
+| 1 | shaded | 1 | 39,000 | 57,625 | 214,375 | 2,074,416 |
+| 1 | depth | 1 | 33,958 | 35,917 | 200,834 | 900,958 |
+| 1 | shaded | 7 | 195,458 | 273,750 | 359,584 | 2,972,208 |
+| 1 | depth | 7 | 251,458 | 495,250 | 491,167 | 1,891,292 |
+| 2 | shaded | 1 | 68,417 | 88,875 | 412,500 | 1,735,625 |
+| 2 | depth | 1 | 82,167 | 112,750 | 311,292 | 4,831,834 |
+| 2 | shaded | 7 | 533,209 | 890,083 | 458,875 | 3,163,875 |
+| 2 | depth | 7 | 513,458 | 810,083 | 690,500 | 3,273,167 |
+
+Draw counts and the bind-group counter matched on both runs. Encode time did not. In run 1 the one-camera depth encode was faster than shaded. In run 2 it was slower. Seven cameras swapped the same way. The difference is inside the run-to-run spread of this scene, so this checkpoint does not assign the extra pass a microsecond cost. The pass is also not free: it is one extra draw, one stored depth attachment, one sample bind group on first use, and one 128-byte uniform write per visualizing camera. GPU execution time inside the pass remains unmeasured. The completion-wait p95 is not a frame budget.
+

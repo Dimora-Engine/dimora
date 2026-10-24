@@ -233,8 +233,14 @@ and is not removed from the world. The copy is one list for every camera. It is 
 A missing resource is an empty list. `Game::step` clears the resource before systems, so a later
 extract of the same step still sees what those systems submitted, and the next step drops it.
 
-Backend: each destination has a `Depth32Float` image, cleared to 0.0 and discarded on every pass that
-writes it. The surface depth is not reused for an offscreen target. The first camera that writes a
+Backend: each destination has a `Depth32Float` image, cleared to 0.0. A shaded camera discards that
+depth. A camera whose `presentation` is `Depth` stores it. A second pass in the same encoder then
+loads color, binds no depth attachment, and samples a second view of that image inside the same
+viewport and scissor. The sample happens before this camera is submitted, because the next camera
+clears the whole depth image. The sample bind group is created the first time that image is presented
+as depth and is kept until the image is replaced. A shaded frame does not create it and does not run
+the pass. Depth images are created with `RENDER_ATTACHMENT | TEXTURE_BINDING`, so the toggle does not
+allocate a second copy. The surface depth is not reused for an offscreen target. The first camera that writes a
 destination clears that whole color image. Later cameras on it load the color. A later
 `CameraClear::Color` fills only its viewport. Opaque meshes (back-face culled), mask and cutout
 sprites and tiles write depth. Blended sprites and meshes test depth and do not write it. When
@@ -341,7 +347,8 @@ here are binding on milestone designs; open choices point to a decision in [DECI
 
 **1. Sprites and meshes under one camera and one set of conventions.**
 *Today:* true and tested. Both are entities with a `GlobalTransform`; extraction projects both with one
-`view_proj`; one `Depth32Float` buffer; GPU tests show a nearer mesh occluding a sprite and the reverse
+`view_proj`; one `Depth32Float` buffer; a depth presentation reads that same buffer after the camera's
+scene pass and does not extract a second scene; GPU tests show a nearer mesh occluding a sprite and the reverse
 (`nearer_mesh_occludes_sprite_and_farther_mesh_does_not`), blended sprites interleaving with meshes
 (`blended_sprites_interleave_with_meshes_by_depth`), and `sprites_and_meshes_share_one_spatial_world`.
 Blended meshes and blended sprites share `RenderScene.transparent` and one GPU submission order.
@@ -360,6 +367,8 @@ policies for isometric styles without building an occlusion framework now. Shado
 skinned meshes must pick a class and may not introduce a second ordering concept. Screen-space UI is
 outside this model (painter's order, no depth). Blended meshes use the bounding-sphere centre.
 Intersecting blended objects stay an accepted limit (D-05, KI-14), not a second ordering policy.
+The depth presentation displays the values those rules stored. It does not add a sort, a layer, or a
+second depth convention.
 
 **3. Character animation, attachment and world transforms.** Bones and sockets are entities in the
 world, so an attached sword or particle emitter is an ordinary child and follows `propagate_transforms`.
@@ -454,7 +463,8 @@ verified coplanar conflicts (D-48). Sprite orientation is [ADR-0021](adr/0021-sp
 
 **11. The runtime has no editor state.** Editor and developer tools consume the component registry, commands,
 events and diagnostics and live in separate crates or binaries (ADR-0003). The runtime contains no editor
-types, no `cfg(editor)` state and no code path that only the editor can reach.
+types, no `cfg(editor)` state and no code path that only the editor can reach. `CameraPresentation`
+is a camera field. A later editor viewport sets it. It is not an editor type.
 
 ### Risk register
 
@@ -464,7 +474,7 @@ systems they touch. Each cites evidence from this audit.
 | Id | Risk | Evidence | Cost if found late | Response |
 |---|---|---|---|---|
 | R-1 | **Later transparent primitives still need the shared sequence.** Blended sprites and blended meshes sort and submit together. Particles and skinned characters are not in that list yet. Opaque and mask content stays in the depth-writing passes | `scene.rs` `transparent`; the walk in `scene_renderer.rs` | Moderate for the next transparent primitive if it grows a private list | D-05 is implemented for sprites and meshes (ADR-0015, M5-5C `ab1b6f7`, M5-5D `a7efd6c`). A new blended primitive joins `transparent` instead of a second order |
-| R-2 | **Targets are explicit, not a graph.** `RenderScene.passes` is every drawable camera (D-08). A camera writes the surface or one `RenderTargetId`. A sprite samples a target only after an earlier camera in that frame has written it. There is no scheduler and no previous-frame fallback | `render_target.rs`; `extract.rs` `sprite_sample`; `scene_renderer.rs` `sync_render_targets` | High if a later effect assumes feedback or automatic ordering | D-08 is implemented locally. Do not add a second renderer or a render graph for shadows or the editor viewport |
+| R-2 | **Targets are explicit, not a graph.** `RenderScene.passes` is every drawable camera (D-08). A camera writes the surface or one `RenderTargetId`. A sprite samples a target only after an earlier camera in that frame has written it. There is no scheduler and no previous-frame fallback. The depth presentation is a second pass in the encoder of the camera that owns the destination | `render_target.rs`; `extract.rs` `sprite_sample`; `scene_renderer.rs` `sync_render_targets`, `draw_depth_view` | High if a later effect assumes feedback or automatic ordering | D-08 is implemented locally. The depth view does not add a renderer or a graph. Do not add one for shadows or the editor viewport |
 | R-3 | **No transform timeline beyond one previous local.** `Transform` is current simulation state. `Interpolate` stores one previous local for opt-in extract interpolation. There is still no dirty tracking, propagation is still a full pass, and camera-dependent animation still has a one-frame latency rule | `interpolate.rs`, `hierarchy.rs`; KI-9, KI-10, D-02 | Moderate if a later system starts reading the render matrix as simulation | M3a-5 stores the previous local and blends only at extract. Dirty tracking stays out (ADR-0009) until a profile |
 | R-4 | **Asset identity and retention.** Handles are name hashes with no recoverable name, no reference counting, ids change on rename, and the collision guard is per type | `handle.rs`, `manager.rs`; D-16 | High once scene files, sheets or bundles exist | Decide D-16 before any persisted format (sheet descriptors in M8 are the first); keep names in the manager so handles can be serialized by name or id |
 | R-5 | **Mutation model.** Systems may still mutate the world directly. Resources are `RefCell` (a double borrow panics). Commands and events exist and follow ADR-0008 | `commands.rs`, `events.rs`, `resources.rs`; KI-9 | A second mutation path, or holding the command writer across a flush, reintroduces the alias | Built in M3a-3. Direct `spawn` remains for code that holds no query. No observers |
