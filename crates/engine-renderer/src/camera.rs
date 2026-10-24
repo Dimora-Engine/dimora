@@ -57,6 +57,29 @@ pub enum CameraOutput {
     Target(RenderTargetId),
 }
 
+/// How a camera presents the scene it just drew.
+///
+/// [`CameraPresentation::Shaded`] is the ordinary color image. [`CameraPresentation::Depth`]
+/// replaces that camera's viewport with a linearized view of the depth values that camera wrote.
+/// The choice is diagnostic. It does not change the world, the projection, materials, or gameplay
+/// orientation. Switching back to [`CameraPresentation::Shaded`] does not rebuild the scene.
+///
+/// The depth pass runs only for a camera set to [`CameraPresentation::Depth`]. Other cameras in
+/// the same frame stay shaded. An editor viewport can use this same field later. This is not an
+/// editor type.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CameraPresentation {
+    /// Draw the scene's color. The depth attachment is cleared and discarded.
+    #[default]
+    Shaded,
+    /// After the scene pass, replace this camera's viewport with linearized view depth.
+    ///
+    /// Nearer written fragments are brighter. Farther written fragments are darker. Pixels this
+    /// camera did not write are a distinct empty color. A projection that cannot be linearized
+    /// as reverse-Z view depth fills the viewport with a distinct unsupported color.
+    Depth,
+}
+
 /// What a camera does to the color already in its viewport before drawing its scene.
 ///
 /// [`CameraClear::Color`] replaces that rectangle with [`Camera::clear_color`].
@@ -93,6 +116,8 @@ pub struct Camera {
     pub clear: CameraClear,
     /// Destination of this camera. [`CameraOutput::Surface`] unless [`Camera::with_output`] says otherwise.
     pub output: CameraOutput,
+    /// Color or depth presentation. The default from [`Camera::new`] is [`CameraPresentation::Shaded`].
+    pub presentation: CameraPresentation,
     pub active: bool,
     /// Draw order among active cameras. Lower draws first. Equal orders use the entity id.
     pub order: i32,
@@ -106,6 +131,7 @@ impl Camera {
             clear_color: Color::rgb(0.05, 0.06, 0.09),
             clear: CameraClear::Color,
             output: CameraOutput::Surface,
+            presentation: CameraPresentation::Shaded,
             active: true,
             order: 0,
         }
@@ -130,6 +156,10 @@ impl Camera {
     }
     pub fn with_output(mut self, output: CameraOutput) -> Self {
         self.output = output;
+        self
+    }
+    pub fn with_presentation(mut self, presentation: CameraPresentation) -> Self {
+        self.presentation = presentation;
         self
     }
 }

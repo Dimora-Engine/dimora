@@ -106,6 +106,7 @@ pub struct OrderedCamera {
     pub output: CameraOutput,
     pub clear: CameraClear,
     pub clear_color: Color,
+    pub presentation: crate::CameraPresentation,
     pub view: CameraView,
 }
 
@@ -206,6 +207,7 @@ fn ordered_cameras(world: &World, target_size: Vec2, poses: &RenderPoses) -> (Ve
             output: camera.output,
             clear: camera.clear,
             clear_color: camera.clear_color,
+            presentation: camera.presentation,
             view: CameraView::new(camera, &placed, size),
         });
     }
@@ -540,6 +542,7 @@ fn build_pass(
         output: camera.output,
         clear: camera.clear,
         clear_color: camera.clear_color,
+        presentation: camera.presentation,
         viewport_px: [view.viewport_origin.x, view.viewport_origin.y, view.viewport.x, view.viewport.y],
         lights,
         meshes: drawn_meshes,

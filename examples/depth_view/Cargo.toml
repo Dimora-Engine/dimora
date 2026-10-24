@@ -1,0 +1,12 @@
+[package]
+name = "depth_view"
+description = "Preview of the diagnostic depth presentation on one spatial camera."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+engine.workspace = true
+image = { version = "0.25", default-features = false, features = ["png"] }

@@ -8,8 +8,10 @@
 //! and are never reused, so a removed id cannot name a later target.
 //!
 //! Color images use the renderer's existing RGBA8 attachment format (`Rgba8UnormSrgb` when the
-//! surface is sRGB, `Rgba8Unorm` when the renderer was created linear). Depth is `Depth32Float`
-//! and is not sampleable. There is no format list, HDR target, or MSAA resolve.
+//! surface is sRGB, `Rgba8Unorm` when the renderer was created linear). Depth is `Depth32Float`.
+//! Sprites sample the color image only. The depth image can be sampled by the diagnostic depth
+//! presentation of a camera that writes this target. There is no format list, HDR target, or MSAA
+//! resolve.
 //!
 //! Sampling is frame-local. A sprite may sample a target only after an earlier camera in this
 //! frame has written it, and not while the sprite's own camera is writing that same target.

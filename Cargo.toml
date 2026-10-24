@@ -12,6 +12,7 @@ members = [
     "crates/engine",
     "examples/basic_2_5d",
     "examples/spatial_scene",
+    "examples/depth_view",
 ]
 
 [workspace.package]

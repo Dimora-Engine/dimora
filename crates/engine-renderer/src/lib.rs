@@ -9,6 +9,8 @@
 //! * [`extract_scene`] snapshots the world into a plain-data [`RenderScene`], doing visibility,
 //!   frustum culling, depth sorting and batching on the way.
 //! * [`DebugDraw`] is single-frame world-space line data. Extraction copies it; it is not an entity.
+//! * [`CameraPresentation::Depth`] replaces one camera's viewport with a linearized view of the
+//!   depth that camera wrote. A shaded camera does not run that pass.
 //!
 //! A GPU backend (see `engine-renderer-wgpu`) consumes a `RenderScene` and nothing else.
 
@@ -17,6 +19,7 @@ pub mod camera;
 pub mod components;
 pub mod coplanar;
 pub mod debug;
+pub mod depth_view;
 mod extract;
 pub mod frustum;
 mod interpolate;
@@ -26,7 +29,7 @@ mod registry;
 mod render_target;
 pub mod scene;
 
-pub use camera::{Camera, CameraClear, CameraOutput, CameraView, ViewportRect};
+pub use camera::{Camera, CameraClear, CameraOutput, CameraPresentation, CameraView, ViewportRect};
 pub use components::{
     AmbientLight, Fog, Light, LightKind, Material, Mesh, RenderOrder, Sprite, SpriteBlend, SpriteOrientation, TileMap,
 };
@@ -35,6 +38,10 @@ pub use coplanar::{
     MAX_COPLANAR_PRIORITY,
 };
 pub use debug::{frustum_corners, DebugDraw, DebugSegment, DEBUG_SPHERE_SEGMENTS, DEBUG_SPHERE_SEGMENT_LIMIT};
+pub use depth_view::{
+    classify_stored_depth, linear_nearness, StoredDepthClass, DEPTH_VIEW_EMPTY, DEPTH_VIEW_MIN_SPAN,
+    DEPTH_VIEW_UNSUPPORTED,
+};
 pub use extract::{
     active_surface_cameras, camera_view_of, extract_scene, top_surface_camera, OrderedCamera, SurfaceHit,
 };

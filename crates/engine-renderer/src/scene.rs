@@ -286,6 +286,9 @@ pub struct CameraPass {
     pub output: CameraOutput,
     pub clear: CameraClear,
     pub clear_color: Color,
+    /// [`crate::Camera::presentation`] copied at extraction. The backend reads this. Extraction
+    /// does not build a second scene for [`crate::CameraPresentation::Depth`].
+    pub presentation: crate::CameraPresentation,
     /// `[x, y, width, height]` in pixels (origin top-left): the part of the target this camera
     /// draws into. Equal to the whole target unless the camera has a sub-viewport.
     pub viewport_px: [f32; 4],

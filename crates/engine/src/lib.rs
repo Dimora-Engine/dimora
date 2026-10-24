@@ -74,10 +74,10 @@ pub mod prelude {
     pub use engine_core::{Actions, ButtonSource, Color, FixedTimestep, Input, Key, MouseButton, Time};
     pub use engine_math::{Mat4, Quat, Rect, Transform, Vec2, Vec3, Vec4};
     pub use engine_renderer::{
-        AmbientLight, Camera, CameraClear, CameraOutput, CameraProjection, CameraView, CoplanarPriority,
-        CoplanarSettings, DebugDraw, DebugSegment, Fog, Light, LightKind, Material, Mesh, Orthographic, Perspective,
-        Projection, ProjectionError, RenderOrder, RenderTargetId, RenderTargetStore, Sprite, SpriteBlend,
-        SpriteOrientation, TileMap, ViewportRect, CANDIDATE_COPLANAR_THICKNESS, DEBUG_SPHERE_SEGMENTS,
+        AmbientLight, Camera, CameraClear, CameraOutput, CameraPresentation, CameraProjection, CameraView,
+        CoplanarPriority, CoplanarSettings, DebugDraw, DebugSegment, Fog, Light, LightKind, Material, Mesh,
+        Orthographic, Perspective, Projection, ProjectionError, RenderOrder, RenderTargetId, RenderTargetStore, Sprite,
+        SpriteBlend, SpriteOrientation, TileMap, ViewportRect, CANDIDATE_COPLANAR_THICKNESS, DEBUG_SPHERE_SEGMENTS,
         MAX_COPLANAR_PRIORITY,
     };
     pub use engine_world::{

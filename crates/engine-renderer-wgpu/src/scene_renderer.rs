@@ -6,9 +6,11 @@ use engine_assets::{
     MeshData, MipFilter, SamplerDesc, TexelRect, Texture, TextureDimensionLimits, TextureEdit, TextureFilter,
     TexturePixelEdits,
 };
+use engine_math::Mat4;
 use engine_renderer::{
-    CameraClear, CameraOutput, CameraPass, DebugSegment, MeshDraw, MeshInstance, RenderScene, RenderTargetDesc,
-    RenderTargetId, SpriteBatch, SpriteLayer, SpritePipelineKind, TransparentBatch,
+    CameraClear, CameraOutput, CameraPass, CameraPresentation, DebugSegment, MeshDraw, MeshInstance, RenderScene,
+    RenderTargetDesc, RenderTargetId, SpriteBatch, SpriteLayer, SpritePipelineKind, TransparentBatch, DEPTH_VIEW_EMPTY,
+    DEPTH_VIEW_MIN_SPAN, DEPTH_VIEW_UNSUPPORTED,
 };
 use wgpu::util::DeviceExt;
 
@@ -31,7 +33,7 @@ const SHADER_COMMON: &str = include_str!("shaders/common.wgsl");
 /// Per-frame counters, handy for HUDs and for asserting batching in tests.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct FrameStats {
-    /// Every `draw` and `draw_indexed`, including viewport color clears.
+    /// Every `draw` and `draw_indexed`, including viewport color clears and depth-view draws.
     pub draw_calls: u32,
     /// Scene draws only. A viewport clear is not one of these.
     pub world_draw_calls: u32,
@@ -53,7 +55,12 @@ pub struct FrameStats {
     /// instances, not indices. A missing GPU mesh that is skipped is not included. A sprite drawn
     /// by two cameras counts twice. A debug line draw counts its vertices, two per segment, and
     /// counts again for each camera that draws the batch. Viewport clears are not included.
+    /// A depth-view draw is not included.
     pub submitted_instances: u32,
+    /// One per camera whose presentation is [`CameraPresentation::Depth`]. Not a world draw and
+    /// not a viewport clear. Zero when every camera is shaded, so a shaded frame's
+    /// [`Self::draw_calls`] stays the world and clear total.
+    pub depth_view_draws: u32,
 }
 
 /// GPU submission counts for one camera pass. Summed into [`FrameStats`].
@@ -64,6 +71,7 @@ pub struct PassFrameStats {
     pub sprite_instances: u32,
     pub mesh_instances: u32,
     pub submitted_instances: u32,
+    pub depth_view_draws: u32,
 }
 
 /// Frames a cached texture or mesh may go unused before it is evicted, unless configured otherwise
@@ -199,20 +207,33 @@ struct GpuMesh {
     index_count: u32,
 }
 
+/// One depth image. The attachment view is bound by the scene pass. The sample view is bound by
+/// the depth presentation pass. Those are different views of one image so the attachment is not
+/// also a binding in the same pass.
+///
+/// `sample_bind_group` is created the first time a camera presents this image as depth. A shaded
+/// camera does not create it. The texture is always `RENDER_ATTACHMENT | TEXTURE_BINDING`, so
+/// turning the presentation on does not allocate a second depth image.
+struct DepthImage {
+    #[allow(dead_code)]
+    texture: wgpu::Texture,
+    attachment: wgpu::TextureView,
+    sample: wgpu::TextureView,
+    sample_bind_group: Option<wgpu::BindGroup>,
+    size: (u32, u32),
+}
+
 /// One offscreen color image plus the depth image cleared for every pass that writes it.
 ///
-/// The depth image is not sampleable. The color view is what a later sprite binds.
+/// Sprites sample the color view. The depth image is sampled only by a depth presentation pass
+/// for a camera that writes this target.
 struct GpuRenderTarget {
     generation: u64,
     width: u32,
     height: u32,
     color: wgpu::Texture,
     view: wgpu::TextureView,
-    /// Owns the depth image for this target. The depth view is what passes bind. The image stays
-    /// on this struct so a resize can drop it with the color image. It is not sampleable.
-    #[allow(dead_code)]
-    depth: wgpu::Texture,
-    depth_view: wgpu::TextureView,
+    depth: DepthImage,
     bind_group: wgpu::BindGroup,
 }
 
@@ -262,6 +283,10 @@ impl InstanceBuffer {
 /// what lets opaque and mask geometry occlude a later blend. When the frame has debug segments,
 /// one line-list draw follows that sequence: reverse-Z depth test, no depth write, unlit vertex
 /// color. An empty debug list does not add that draw.
+///
+/// A camera whose [`CameraPresentation`] is [`CameraPresentation::Depth`] stores that depth and
+/// then draws one viewport triangle that samples it. The triangle replaces the camera rectangle.
+/// It does not run when the camera is shaded. The scene color pass still runs first.
 pub struct SceneRenderer {
     format: wgpu::TextureFormat,
     globals: wgpu::Buffer,
@@ -271,6 +296,11 @@ pub struct SceneRenderer {
     clear_pipeline: wgpu::RenderPipeline,
     clear_bind_group: wgpu::BindGroup,
     clear_uniform: wgpu::Buffer,
+    /// Fullscreen depth presentation. No depth state: its pass has no depth attachment.
+    /// Created with the renderer. A shaded frame does not bind it.
+    depth_view_pipeline: wgpu::RenderPipeline,
+    depth_view_layout: wgpu::BindGroupLayout,
+    depth_view_uniform: wgpu::Buffer,
     texture_layout: wgpu::BindGroupLayout,
     /// Shared samplers keyed by the effective GPU descriptor, not by entity or asset.
     samplers: HashMap<SamplerKey, wgpu::Sampler>,
@@ -317,7 +347,7 @@ pub struct SceneRenderer {
     debug_vertices: InstanceBuffer,
     /// Vertices uploaded for this frame's debug lines. Zero skips the line draw in every camera.
     debug_vertex_count: u32,
-    depth: Option<(wgpu::TextureView, (u32, u32))>,
+    depth: Option<DepthImage>,
     stats: FrameStats,
     pass_stats: Vec<PassFrameStats>,
     /// Number of `render` calls so far; the clock for idle eviction.
@@ -600,6 +630,67 @@ impl SceneRenderer {
             cache: None,
         });
 
+        let depth_view_uniform = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("depth view"),
+            size: core::mem::size_of::<DepthViewUniform>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let depth_view_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("depth view layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+        let depth_view_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("depth view"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/depth_view.wgsl").into()),
+        });
+        let depth_view_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("depth view"),
+            layout: Some(&device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("depth view layout"),
+                bind_group_layouts: &[Some(&depth_view_layout)],
+                immediate_size: 0,
+            })),
+            vertex: wgpu::VertexState {
+                module: &depth_view_shader,
+                entry_point: Some("vs_depth"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &depth_view_shader,
+                entry_point: Some("fs_depth"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState { format, blend: None, write_mask: wgpu::ColorWrites::ALL })],
+            }),
+            primitive: wgpu::PrimitiveState { cull_mode: None, ..Default::default() },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+
         let downlevel = gpu.adapter.get_downlevel_capabilities().flags;
         let anisotropic_filtering = downlevel.contains(wgpu::DownlevelFlags::ANISOTROPIC_FILTERING);
         let npot_mipmaps = downlevel.contains(wgpu::DownlevelFlags::NON_POWER_OF_TWO_MIPMAPPED_TEXTURES);
@@ -649,6 +740,9 @@ impl SceneRenderer {
             clear_pipeline,
             clear_bind_group,
             clear_uniform,
+            depth_view_pipeline,
+            depth_view_layout,
+            depth_view_uniform,
             white,
             missing,
             target_sampler: default_sampler,
@@ -814,9 +908,11 @@ impl SceneRenderer {
     /// clear color, whether the policy is [`CameraClear::Color`] or [`CameraClear::Load`]. A
     /// destination has no defined previous image. Later `Color` cameras on that same destination
     /// fill only their viewport. Later `Load` cameras do not. An offscreen target does not receive
-    /// a surface camera's clear. Every pass clears its own depth image to 0.0 and discards it.
-    /// Surface depth is not reused for a target of a different size. One full-surface camera is
-    /// still a single pass with no viewport-clear draw.
+    /// a surface camera's clear. Every pass clears its own depth image to 0.0. A shaded camera
+    /// discards that depth and does not run a depth-view pass. A depth presentation stores it
+    /// and replaces that camera's viewport in a second pass with no depth attachment. Surface
+    /// depth is not reused for a target of a different size. One full-surface shaded camera is
+    /// still a single pass with no viewport-clear draw and no depth-view draw.
     ///
     /// Offscreen images are allocated or resized from [`RenderScene::targets`] before any pass.
     /// A resize drops the previous image. Pixels in the replacement are undefined until a camera
@@ -940,20 +1036,24 @@ impl SceneRenderer {
                 ClearUniform { color: [camera.clear_color.r, camera.clear_color.g, camera.clear_color.b, 1.0] };
             gpu.queue.write_buffer(&self.clear_uniform, 0, bytemuck::bytes_of(&uniform));
         }
+        // Depth presentation samples the depth this camera is about to store. The uniform is
+        // written before the encoder so this submit sees it. The next camera has its own submit.
+        let visualize = camera.presentation == CameraPresentation::Depth;
+        if visualize {
+            self.prepare_depth_view(gpu, camera);
+        }
 
         let mut one = PassFrameStats::default();
         let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("camera") });
         {
-            let surface_depth = self.depth.as_ref().expect("depth created above");
-            let offscreen = match camera.output {
-                CameraOutput::Target(id) => self.render_targets.get(&id),
-                CameraOutput::Surface => None,
-            };
             let (color_view, depth_view, size) = match camera.output {
-                CameraOutput::Surface => (target, &surface_depth.0, surface_depth.1),
-                CameraOutput::Target(_) => {
-                    let image = offscreen.expect("missing targets return before the encoder");
-                    (&image.view, &image.depth_view, (image.width, image.height))
+                CameraOutput::Surface => {
+                    let surface_depth = self.depth.as_ref().expect("depth created above");
+                    (target, &surface_depth.attachment, surface_depth.size)
+                }
+                CameraOutput::Target(id) => {
+                    let image = self.render_targets.get(&id).expect("missing targets return before the encoder");
+                    (&image.view, &image.depth.attachment, (image.width, image.height))
                 }
             };
             let color_load = if first {
@@ -971,7 +1071,10 @@ impl SceneRenderer {
                 })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                     view: depth_view,
-                    depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(0.0), store: wgpu::StoreOp::Discard }),
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(0.0),
+                        store: if visualize { wgpu::StoreOp::Store } else { wgpu::StoreOp::Discard },
+                    }),
                     stencil_ops: None,
                 }),
                 timestamp_writes: None,
@@ -1020,8 +1123,104 @@ impl SceneRenderer {
                 record_world(stats, &mut one, self.debug_vertex_count);
             }
         }
+        if visualize {
+            self.draw_depth_view(&mut encoder, camera, target, stats, &mut one);
+        }
         gpu.queue.submit([encoder.finish()]);
         one
+    }
+
+    /// Writes this camera's inverse projection and creates the depth sample group once.
+    ///
+    /// The group is not created for a shaded camera. Resizing the image drops it with the image.
+    fn prepare_depth_view(&mut self, gpu: &GpuContext, camera: &CameraPass) {
+        let size = match camera.output {
+            CameraOutput::Surface => self.depth.as_ref().expect("depth created above").size,
+            CameraOutput::Target(id) => {
+                let image = &self.render_targets[&id];
+                (image.width, image.height)
+            }
+        };
+        let (x, y, w, h) = clamp_viewport(camera.viewport_px, size);
+        let uniform = DepthViewUniform::from_projection(camera.view.proj, [x, y, w, h]);
+        gpu.queue.write_buffer(&self.depth_view_uniform, 0, bytemuck::bytes_of(&uniform));
+        let missing = match camera.output {
+            CameraOutput::Surface => self.depth.as_ref().expect("depth created above").sample_bind_group.is_none(),
+            CameraOutput::Target(id) => self.render_targets[&id].depth.sample_bind_group.is_none(),
+        };
+        if !missing {
+            return;
+        }
+        let group = match camera.output {
+            CameraOutput::Surface => depth_sample_bind_group(
+                &gpu.device,
+                &self.depth_view_layout,
+                &self.depth.as_ref().expect("depth created above").sample,
+                &self.depth_view_uniform,
+            ),
+            CameraOutput::Target(id) => depth_sample_bind_group(
+                &gpu.device,
+                &self.depth_view_layout,
+                &self.render_targets[&id].depth.sample,
+                &self.depth_view_uniform,
+            ),
+        };
+        match camera.output {
+            CameraOutput::Surface => {
+                self.depth.as_mut().expect("depth created above").sample_bind_group = Some(group);
+            }
+            CameraOutput::Target(id) => {
+                self.render_targets.get_mut(&id).expect("target").depth.sample_bind_group = Some(group);
+            }
+        }
+        self.resource_stats.bind_group_creates += 1;
+    }
+
+    /// Second pass for one depth presentation. It has no depth attachment, so it can sample the
+    /// depth the scene pass stored. The viewport and scissor stay this camera's rectangle.
+    /// A later camera has not cleared that depth yet: this runs before the submit below.
+    fn draw_depth_view(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        camera: &CameraPass,
+        surface: &wgpu::TextureView,
+        stats: &mut FrameStats,
+        one: &mut PassFrameStats,
+    ) {
+        let (sample, color_view, size) = match camera.output {
+            CameraOutput::Surface => {
+                let depth = self.depth.as_ref().expect("depth created above");
+                (depth.sample_bind_group.as_ref().expect("depth sample"), surface, depth.size)
+            }
+            CameraOutput::Target(id) => {
+                let image = &self.render_targets[&id];
+                (
+                    image.depth.sample_bind_group.as_ref().expect("depth sample"),
+                    &image.view,
+                    (image.width, image.height),
+                )
+            }
+        };
+        let (x, y, w, h) = clamp_viewport(camera.viewport_px, size);
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("depth view"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: color_view,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        pass.set_pipeline(&self.depth_view_pipeline);
+        pass.set_bind_group(0, sample, &[]);
+        pass.set_viewport(x, y, w, h, 0.0, 1.0);
+        pass.set_scissor_rect(x as u32, y as u32, w as u32, h as u32);
+        pass.draw(0..3, 0..1);
+        record_depth_view(stats, one);
     }
 
     fn sprite_bind_group<'a>(&'a self, batch: &SpriteBatch) -> &'a wgpu::BindGroup {
@@ -1246,17 +1445,7 @@ impl SceneRenderer {
             view_formats: &[],
         });
         let view = color.create_view(&wgpu::TextureViewDescriptor::default());
-        let depth = gpu.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("render target depth"),
-            size,
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: DEPTH_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            view_formats: &[],
-        });
-        let depth_view = depth.create_view(&wgpu::TextureViewDescriptor::default());
+        let depth = DepthImage::allocate(&gpu.device, (desc.width, desc.height), "render target depth");
         let bind_group =
             texture_bind_group(&gpu.device, &self.texture_layout, &view, &self.target_sampler, "render target");
         self.resource_stats.bind_group_creates += 1;
@@ -1269,27 +1458,16 @@ impl SceneRenderer {
                 color,
                 view,
                 depth,
-                depth_view,
                 bind_group,
             },
         );
     }
 
     fn ensure_depth(&mut self, gpu: &GpuContext, size: (u32, u32)) {
-        if matches!(&self.depth, Some((_, s)) if *s == size) {
+        if matches!(&self.depth, Some(depth) if depth.size == size) {
             return;
         }
-        let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("depth"),
-            size: wgpu::Extent3d { width: size.0.max(1), height: size.1.max(1), depth_or_array_layers: 1 },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: DEPTH_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            view_formats: &[],
-        });
-        self.depth = Some((texture.create_view(&wgpu::TextureViewDescriptor::default()), size));
+        self.depth = Some(DepthImage::allocate(&gpu.device, size, "depth"));
     }
 
     /// Drops GPU copies whose asset is gone from the manager and copies no frame has used for
@@ -1601,6 +1779,12 @@ fn record_clear(stats: &mut FrameStats, pass: &mut PassFrameStats) {
     pass.clear_draw_calls += 1;
 }
 
+fn record_depth_view(stats: &mut FrameStats, pass: &mut PassFrameStats) {
+    stats.draw_calls += 1;
+    stats.depth_view_draws += 1;
+    pass.depth_view_draws += 1;
+}
+
 fn attachment_clear(r: f32, g: f32, b: f32) -> wgpu::Color {
     wgpu::Color { r: r as f64, g: g as f64, b: b as f64, a: 1.0 }
 }
@@ -1616,6 +1800,70 @@ fn clamp_viewport(viewport_px: [f32; 4], size: (u32, u32)) -> (f32, f32, f32, f3
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct ClearUniform {
     color: [f32; 4],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct DepthViewUniform {
+    inv_proj: [f32; 16],
+    viewport: [f32; 4],
+    empty_color: [f32; 4],
+    unsupported_color: [f32; 4],
+    mode: u32,
+    min_span: f32,
+    _pad: [u32; 2],
+}
+
+impl DepthViewUniform {
+    fn from_projection(proj: Mat4, viewport: [f32; 4]) -> Self {
+        let (inv_proj, mode) = match proj.inverse() {
+            Some(inverse) => (inverse.to_cols_array(), 1),
+            None => ([0.0; 16], 0),
+        };
+        Self {
+            inv_proj,
+            viewport,
+            empty_color: DEPTH_VIEW_EMPTY,
+            unsupported_color: DEPTH_VIEW_UNSUPPORTED,
+            mode,
+            min_span: DEPTH_VIEW_MIN_SPAN,
+            _pad: [0; 2],
+        }
+    }
+}
+
+impl DepthImage {
+    fn allocate(device: &wgpu::Device, size: (u32, u32), label: &str) -> Self {
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some(label),
+            size: wgpu::Extent3d { width: size.0.max(1), height: size.1.max(1), depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: DEPTH_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let attachment = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let sample = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        Self { texture, attachment, sample, sample_bind_group: None, size }
+    }
+}
+
+fn depth_sample_bind_group(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    view: &wgpu::TextureView,
+    uniform: &wgpu::Buffer,
+) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("depth view"),
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(view) },
+            wgpu::BindGroupEntry { binding: 1, resource: uniform.as_entire_binding() },
+        ],
+    })
 }
 
 fn shader(device: &wgpu::Device, label: &str, body: &str) -> wgpu::ShaderModule {
