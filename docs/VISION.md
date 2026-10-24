@@ -96,7 +96,7 @@ Primary use cases, in the order the roadmap proves them:
 
 ## Camera configurations and visual styles
 
-*Confirmed direction (owner, 2026-10-13); mechanism decisions (presets as constructors, style as per-level policy, gameplay orientation as data, coplanar ordering amended) accepted 2026-10-13 and recorded in [ADR-0004](adr/0004-one-spatial-world-many-camera-configurations.md). The test scene demonstrates seven configurations with example-local constructors (2026-10-14, plus `custom` in M6-1C). An engine preset API, an oblique builder, style policies beyond per-sprite orientation and per-texture filtering, and gameplay-orientation data are not implemented. Coplanar sprite priority is implemented (ADR-0020, 2026-10-23). Tilemap extraction culls 32×32 chunks (2026-10-23); production tile editing, collision, and layers are still future work. Single-frame world-space debug lines exist (2026-10-24). A per-camera presentation of stored depth exists (2026-10-24). Gizmos and collision or lighting visualization are not implemented.*
+*Confirmed direction (owner, 2026-10-13); mechanism decisions (presets as constructors, style as per-level policy, gameplay orientation as data, coplanar ordering amended) accepted 2026-10-13 and recorded in [ADR-0004](adr/0004-one-spatial-world-many-camera-configurations.md). The test scene demonstrates seven configurations (2026-10-14, plus `custom` in M6-1C). Public camera constructors and an oblique projection builder exist (2026-10-24). Style policies beyond per-sprite orientation and per-texture filtering, and gameplay-orientation data, are not implemented. Coplanar sprite priority is implemented (ADR-0020, 2026-10-23). Tilemap extraction culls 32×32 chunks (2026-10-23); production tile editing, collision, and layers are still future work. Single-frame world-space debug lines exist (2026-10-24). A per-camera presentation of stored depth exists (2026-10-24). Gizmos and collision or lighting visualization are not implemented.*
 
 Dimora's defining principle is the unified spatial world, not a look. It must support these views as
 **intended capabilities**, not as a promise to build every one in the next milestone:
@@ -105,10 +105,10 @@ Dimora's defining principle is the unified spatial world, not a look. It must su
 |---|---|---|
 | Perspective | `Perspective` projection, any camera placement | Implemented and tested |
 | Orthographic | `Orthographic` projection, any camera placement | Implemented and tested |
-| Isometric | Orthographic camera rotated by its transform; custom axes through a custom projection | **Demonstrated** by an example-local constructor in `spatial_scene`. Not an engine preset, and not a projection type |
-| Top-down | Camera looking along the world's down axis | **Demonstrated.** `Upright` sprites are edge-on (ADR-0021). `Billboard` stays face-on. Coplanar priority is ADR-0020 |
-| Side-scrolling | Camera looking along the depth axis | **Demonstrated as a camera placement.** Not demonstrated as a 2D-style game |
-| Custom | A view-to-clip matrix supplied by game code | **Implemented** as `CameraProjection::Custom` (M6-1B, `a38cb30`, D-25). `spatial_scene` demonstrates one oblique example constructor (M6-1C, committed locally, not pushed). Not an engine preset and not an oblique builder. The matrix stays fixed across resize |
+| Isometric | Orthographic camera rotated by its transform; custom axes through a custom projection | **Public constructor** `PlacedCamera::isometric`. Not a projection type. The example still chooses the scene's height and distance |
+| Top-down | Camera looking along the world's down axis | **Public constructor** `PlacedCamera::top_down`. `Upright` sprites are edge-on (ADR-0021). `Billboard` stays face-on. Coplanar priority is ADR-0020 |
+| Side-scrolling | Camera looking along the depth axis | **Public constructor** `PlacedCamera::side`. Not demonstrated as a 2D-style game |
+| Custom | A view-to-clip matrix supplied by game code | **Implemented** as `CameraProjection::Custom` (M6-1B, `a38cb30`, D-25). `oblique_orthographic` and `oblique_perspective` build that matrix (2026-10-24) and do not convert one already stored. The matrix stays fixed across resize |
 
 Three things are kept separate, and none may be implemented as another: **camera projection** (how the world
 becomes pixels), **gameplay orientation** (which way is up, where the ground plane is, what "facing" means),

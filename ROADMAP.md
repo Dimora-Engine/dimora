@@ -43,14 +43,14 @@ record is a later documentation commit. Localized mip-texel regeneration is not 
 projection (M6-1B, `a38cb30`), the example `custom` camera (M6-1C, `795bd95`), M6-2B surface cameras
 (`6a47882`, committed locally), and M6-2C offscreen targets and camera-to-texture (committed locally,
 not pushed). D-07 is settled ([ADR-0019](docs/adr/0019-reverse-z.md)): finite reverse-Z, compare `Greater`, clear 0, verified on Apple M5, Metal. Other backends are not verified.
-Coplanar sprite priority is settled ([ADR-0020](docs/adr/0020-coplanar-priority.md)): opt-in, depth-only, fallback thickness `1/256`, Apple M5, Metal only. Gameplay orientation is not decided. D-26 is settled in [ADR-0021](docs/adr/0021-sprite-orientation.md). Tilemap extraction culls 32×32 chunks. The baseline and the comparison are in [docs/PERFORMANCE.md](docs/PERFORMANCE.md). Debug drawing is implemented locally (`b7ec684`): one-pixel world-space lines, rays, wire boxes, wire spheres, and camera frusta, depth-tested and not depth-writing. Sprite, mesh, mixed-scene, lighting, and multi-camera CPU extraction, plus CPU encode and submit, are recorded in [docs/PERFORMANCE.md](docs/PERFORMANCE.md) (`82972c2`). GPU pass timestamps are not measured. The depth-visualisation view is implemented locally (`4bd591d`): one camera can replace its viewport with linearized stored depth. M6 is not complete and is not pulled into M5.
+Coplanar sprite priority is settled ([ADR-0020](docs/adr/0020-coplanar-priority.md)): opt-in, depth-only, fallback thickness `1/256`, Apple M5, Metal only. Gameplay orientation is not decided. D-26 is settled in [ADR-0021](docs/adr/0021-sprite-orientation.md). Tilemap extraction culls 32×32 chunks. The baseline and the comparison are in [docs/PERFORMANCE.md](docs/PERFORMANCE.md). Debug drawing is implemented locally (`b7ec684`): one-pixel world-space lines, rays, wire boxes, wire spheres, and camera frusta, depth-tested and not depth-writing. Sprite, mesh, mixed-scene, lighting, and multi-camera CPU extraction, plus CPU encode and submit, are recorded in [docs/PERFORMANCE.md](docs/PERFORMANCE.md) (`82972c2`). GPU pass timestamps are not measured. The depth-visualisation view is implemented locally (`4bd591d`): one camera can replace its viewport with linearized stored depth. Public camera constructors and an oblique projection builder are implemented locally (`16ed495`): `PlacedCamera` returns an ordinary `Camera` and `Transform`, and `CameraProjection::oblique_orthographic` / `oblique_perspective` store `Custom`. M6 is not complete and is not pulled into M5.
 
 **M5 is complete locally and accepted.** The implementation checkpoint is
 `92286ce0546a4d94bb0365581ae7469fe2ad3260`. M5-2A through M5-6 are the local commits
 `c687d5b`, `11b914f`, `622ef80`, `b51f1fb`, `84d5ab1`, `bf4d9bb`, `1666695`, `e0c29ef`,
 `3b3cd4a`, `ab1b6f7`, `a7efd6c`, and `92286ce`. None of them is pushed. Localized mip-texel
 regeneration is deferred and has no milestone. M6-2B surface cameras are commit `6a47882` and are not pushed.
-M6-2C camera-to-texture is committed locally and is not pushed. Coplanar sprite priority is [ADR-0020](docs/adr/0020-coplanar-priority.md). Sprite orientation is [ADR-0021](docs/adr/0021-sprite-orientation.md). Tilemap chunking is in extraction, with the baseline and comparison in [docs/PERFORMANCE.md](docs/PERFORMANCE.md). Debug drawing is implemented locally (`b7ec684`). The sprite, mesh, and mixed-scene benchmark is recorded (`82972c2`). The depth-visualisation view is implemented locally (`4bd591d`). Gameplay orientation and D-06 have not
+M6-2C camera-to-texture is committed locally and is not pushed. Coplanar sprite priority is [ADR-0020](docs/adr/0020-coplanar-priority.md). Sprite orientation is [ADR-0021](docs/adr/0021-sprite-orientation.md). Tilemap chunking is in extraction, with the baseline and comparison in [docs/PERFORMANCE.md](docs/PERFORMANCE.md). Debug drawing is implemented locally (`b7ec684`). The sprite, mesh, and mixed-scene benchmark is recorded (`82972c2`). The depth-visualisation view is implemented locally (`4bd591d`). Public camera constructors and the oblique projection builder are implemented locally (`16ed495`). Gameplay orientation and D-06 have not
 started.
 
 **Implemented and tested, beyond the 2026-10-13 audit.** Named stages, commands and events, the `log`
@@ -96,7 +96,7 @@ first" tiers in [docs/DECISIONS.md](docs/DECISIONS.md#what-to-resolve-first).
   `92286ce0546a4d94bb0365581ae7469fe2ad3260`. The acceptance record is the documentation commit that
   follows it. Decisions are ADR-0015, ADR-0016, ADR-0017, and ADR-0018. Localized mip-texel
   regeneration is deferred, with no milestone. It is not implemented.
-* **M6 stays after M5.** Custom projection, surface cameras, camera-to-texture, reverse-Z, coplanar sprite priority, sprite orientation, the tilemap chunking foundation, and debug drawing are implemented locally and are not pushed. The sprite, mesh, and mixed-scene benchmark is recorded (`82972c2`); GPU pass time is not. The depth-visualisation view is implemented locally (`4bd591d`). Gameplay orientation and D-06 are not started. M6 is not complete.
+* **M6 stays after M5.** Custom projection, surface cameras, camera-to-texture, reverse-Z, coplanar sprite priority, sprite orientation, the tilemap chunking foundation, and debug drawing are implemented locally and are not pushed. The sprite, mesh, and mixed-scene benchmark is recorded (`82972c2`); GPU pass time is not. The depth-visualisation view is implemented locally (`4bd591d`). Public camera constructors and the oblique projection builder are implemented locally (`16ed495`). Gameplay orientation and D-06 are not started. M6 is not complete.
   M7 and M8 can proceed in parallel after M3a, M4, M5, and M6 as stated below. M9 freezes the foundational
   gameplay, scene, and component-integration contracts. Later milestones may add public APIs through a
   recorded decision. That freeze does not forbid every future public type.
@@ -559,11 +559,13 @@ baseline. Camera projection stays separate from gameplay orientation and visual 
 **Tasks.**
 - **Custom projections (D-25). Implemented in M6-1B, commit `a38cb30`, not pushed.** `CameraProjection::Custom(Mat4)`
   stores a caller-supplied view-to-clip matrix on the existing `Camera`. Extraction, culling, picking
-  and the wgpu uniform use that matrix. It is not rebuilt when the viewport changes. No second renderer
-  and no engine preset. M6 is not complete.
+  and the wgpu uniform use that matrix. It is not rebuilt when the viewport changes. No second renderer.
+  Public constructors that fill this variant are the later preset checkpoint (`16ed495`). They do not
+  convert a matrix already stored with `custom`. M6 is not complete.
 - **Example custom camera (M6-1C, committed locally, not pushed).** `spatial_scene` adds `custom` after the original six
-  constructors. It is an example-local oblique matrix on `CameraProjection::Custom`, selected with
-  `--camera custom` and the `C` key. It is not an engine preset and not an oblique builder.
+  constructors, selected with `--camera custom` and the `C` key. It now calls
+  `CameraProjection::oblique_orthographic` with the scene's shear `(0.14, 0.04)`, height 400, aspect 16/9,
+  and clip `1..4000` (`16ed495`). The pose stays on `Transform`. It is not a projection type.
 - **Surface cameras (D-08, M6-2B, commit `6a47882`, not pushed).** Every active camera renders in ascending
   `(order, entity id)`, with its own viewport, projection, clear or load, depth clear, culling, and
   transparent order. One full-surface camera stays on the historical attachment clear.
@@ -573,10 +575,11 @@ baseline. Camera projection stays separate from gameplay orientation and visual 
   render graph and no previous-frame fallback. M6 is not complete.
 - **Camera-configuration test scene. Done and verified (2026-10-14), with a seventh constructor in M6-1C (committed locally, not pushed).** `spatial_scene` is one world (sprites
   at several depths, overlapping and coplanar decals, cutout foliage, meshes, a ground, a moving sprite)
-  viewed through seven example-local constructors: perspective, orthographic, isometric (orthographic, yawed and
+  viewed through seven constructors: perspective, orthographic, isometric (orthographic, yawed and
   pitched), top-down, steep, side, and custom. Each returns a `Camera` and a `Transform` and stays editable; isometric
-  is not a projection type; custom is an oblique matrix, not an engine preset; the scene prescribes no visual style. Evidence is in TASKS.md. **Not done, and
-  not an engine feature:** an engine-level preset API or a public oblique builder.
+  is not a projection type; custom is an oblique matrix stored as `Custom`; the scene prescribes no visual style.
+  Those placements and that matrix are public constructors (`16ed495`). The example still owns the scene framing,
+  the sky clear, and the clip `1..4000`. Evidence is in TASKS.md.
 - Camera configurations (D-48). The owner decided the principles (ADR-0004, 2026-10-13): gameplay orientation
   is data and not derived only from the camera or sprite; spatial depth, transparency sorting, render layers or
   queues and explicit order stay distinct; no occlusion framework until a scene needs one. The `+Y` up / `XZ`
@@ -650,9 +653,8 @@ part of the configuration bullet. **Surface cameras (M6-2B, `6a47882`).** Two vi
 picture-in-picture, `CameraClear::Color` and `Load`, and a per-camera depth clear are implemented and
 covered by GPU readback. **Camera-to-texture (M6-2C, committed locally, not pushed).** An offscreen camera's image is
 sampled by a later surface sprite, with resize, material and alpha class, invalid dependencies, and
-several writers covered by GPU readback. D-08 is implemented locally. **Coplanar sprite priority is met** ([ADR-0020](docs/adr/0020-coplanar-priority.md)). **Sprite orientation is met** ([ADR-0021](docs/adr/0021-sprite-orientation.md)). **Tilemap chunking is met for this foundation:** `set` rebuilds one chunk (`tile_chunk` tests), and a 1000×1000 map's extraction cost is recorded in [docs/PERFORMANCE.md](docs/PERFORMANCE.md). A partial view reads accepted chunks. A full view still reads every visible tile. A direct write to `tiles` does not drop a tile a camera can see; `invalidate` refreshes only the rejected-chunk cull count. The allocation column is cumulative traffic, not resident memory. **Debug drawing is met for this slice (`b7ec684`):** world-space lines, rays, wire boxes, wire spheres, and frusta, one batch per camera, depth-tested, no depth write. **The depth-visualisation view is met (`4bd591d`):** one camera presents linearized stored depth, and switching back restores color. Enabled and disabled costs are in [docs/PERFORMANCE.md](docs/PERFORMANCE.md). **CPU extraction and CPU encode/submit benchmarks are met (`82972c2`):** sprites, meshes, a mixed lane, lights, and one to seven cameras, including one offscreen target. Numbers and the machine are in [docs/PERFORMANCE.md](docs/PERFORMANCE.md). GPU pass time is not met. **Not met:** gameplay orientation;
-an engine preset API; a public oblique builder. M6 is not complete.
-The blended-sprite-versus-mesh assertion was not repeated per example configuration. The constructors are example-local.
+several writers covered by GPU readback. D-08 is implemented locally. **Coplanar sprite priority is met** ([ADR-0020](docs/adr/0020-coplanar-priority.md)). **Sprite orientation is met** ([ADR-0021](docs/adr/0021-sprite-orientation.md)). **Tilemap chunking is met for this foundation:** `set` rebuilds one chunk (`tile_chunk` tests), and a 1000×1000 map's extraction cost is recorded in [docs/PERFORMANCE.md](docs/PERFORMANCE.md). A partial view reads accepted chunks. A full view still reads every visible tile. A direct write to `tiles` does not drop a tile a camera can see; `invalidate` refreshes only the rejected-chunk cull count. The allocation column is cumulative traffic, not resident memory. **Debug drawing is met for this slice (`b7ec684`):** world-space lines, rays, wire boxes, wire spheres, and frusta, one batch per camera, depth-tested, no depth write. **The depth-visualisation view is met (`4bd591d`):** one camera presents linearized stored depth, and switching back restores color. Enabled and disabled costs are in [docs/PERFORMANCE.md](docs/PERFORMANCE.md). **CPU extraction and CPU encode/submit benchmarks are met (`82972c2`):** sprites, meshes, a mixed lane, lights, and one to seven cameras, including one offscreen target. Numbers and the machine are in [docs/PERFORMANCE.md](docs/PERFORMANCE.md). GPU pass time is not met. **Public camera constructors and the oblique builder are met (`16ed495`).** `PlacedCamera` returns an ordinary `Camera` and `Transform`. `CameraProjection::oblique_orthographic` and `oblique_perspective` store `Custom`. The example calls those constructors and keeps its own framing. No preset adds an enum variant or a backend branch. **Not met:** gameplay orientation; D-06. M6 is not complete.
+The blended-sprite-versus-mesh assertion was not repeated per example configuration.
 
 **Tests/examples.** `spatial_scene` has `--camera <name>`. The GPU tests for the scene are
 `examples/spatial_scene/tests/configurations.rs`. Surface cameras, including picture-in-picture, are
@@ -660,7 +662,9 @@ The blended-sprite-versus-mesh assertion was not repeated per example configurat
 Offscreen targets are `crates/engine-renderer/tests/render_target.rs` and
 `crates/engine-renderer-wgpu/tests/render_target.rs`. The depth presentation is
 `crates/engine-renderer/src/depth_view.rs` and `crates/engine-renderer-wgpu/tests/depth_view.rs`.
-The preview is `examples/depth_view`.
+The preview is `examples/depth_view`. Public constructors are `crates/engine-renderer/src/presets.rs`
+and `CameraProjection::oblique_orthographic` / `oblique_perspective` in `projection.rs`. GPU coverage is
+`crates/engine-renderer-wgpu/tests/presets.rs`.
 
 **Deferred.** Render graph, deferred shading, HDR/post-processing, compute-driven culling.
 

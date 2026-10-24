@@ -745,3 +745,9 @@ Two release runs, one after the other, same binary:
 
 Draw counts and the bind-group counter matched on both runs. Encode time did not. In run 1 the one-camera depth encode was faster than shaded. In run 2 it was slower. Seven cameras swapped the same way. The difference is inside the run-to-run spread of this scene, so this checkpoint does not assign the extra pass a microsecond cost. The pass is also not free: it is one extra draw, one stored depth attachment, one sample bind group on first use, and one 128-byte uniform write per visualizing camera. GPU execution time inside the pass remains unmeasured. The completion-wait p95 is not a frame budget.
 
+## Camera presets
+
+Recorded 2026-10-24 with the public constructors (`16ed495`). `PlacedCamera` and `CameraProjection::oblique_orthographic` / `oblique_perspective` build a `Camera`, a `Transform`, or a `Custom` matrix before extract. Extraction, batching, and the wgpu backend are the same path as a hand-built camera. This checkpoint did not change that work, so it records no new timing run and does not reuse the render-scale table as a preset benchmark.
+
+The release screenshots that compare against the historical baselines kept their draw counts: `basic_2_5d` 10 draws, `basic_2_5d --ortho` 10 draws, `spatial_scene --camera perspective` 10 draws, and `spatial_scene --camera orthographic` 8 draws. `depth_view_draws` stayed 0. A GPU test of `PlacedCamera::perspective` against `Camera::perspective` with the same transform and clip matched pixels and draw counts.
+

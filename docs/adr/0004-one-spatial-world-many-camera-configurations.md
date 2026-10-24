@@ -62,6 +62,12 @@ GPU tests. Current status is in [../CAPABILITIES.md](../CAPABILITIES.md) and
 [../SPATIAL_RENDERING.md](../SPATIAL_RENDERING.md). An engine preset API and a coplanar mechanism are still
 not implemented. `Upright` under steep and top-down views was measured and is not accepted as the final design.
 
+**Later status (2026-10-24).** The sentences above are the 2026-10-14 note. Coplanar sprite priority is
+[ADR-0020](0020-coplanar-priority.md). Sprite orientation, including edge-on top-down `Upright`, is
+[ADR-0021](0021-sprite-orientation.md). Public constructors implement decision 1 below: `PlacedCamera`, and
+`CameraProjection::oblique_orthographic` / `oblique_perspective`. They are not a new camera model. Living
+status stays in [../CAPABILITIES.md](../CAPABILITIES.md).
+
 ### Mechanism decisions (owner, 2026-10-13)
 
 The engineering recommendations that followed the direction were answered one by one. 1 to 3 are accepted with
@@ -320,3 +326,9 @@ view-specific code path in extraction or the backend.
 isometric, top-down and side, and records the coplanar cases and the `Upright` measurements in
 [../SPATIAL_RENDERING.md](../SPATIAL_RENDERING.md) and D-48. The constructors are example-local, so "any preset"
 as an engine API is still missing, as are decisions 2 to 4 as implementations. No view needed a second code path.
+
+**Evidence added 2026-10-24.** Public constructors implement decision 1. `PlacedCamera` and
+`CameraProjection::oblique_orthographic` / `oblique_perspective` store an ordinary camera, a transform, or
+`CameraProjection::Custom`. No view needed a second code path. Decision 4 is
+[ADR-0020](0020-coplanar-priority.md). Decisions 2 and 3 are still not implemented as a style-policy API or
+as gameplay-orientation components. The 2026-10-14 paragraph above is that date's evidence.
