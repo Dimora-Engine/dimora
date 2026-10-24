@@ -11,6 +11,10 @@
 //! * [`DebugDraw`] is single-frame world-space line data. Extraction copies it; it is not an entity.
 //! * [`CameraPresentation::Depth`] replaces one camera's viewport with a linearized view of the
 //!   depth that camera wrote. A shaded camera does not run that pass.
+//! * [`PlacedCamera`] builds a [`Camera`] and a `Transform` for the common placements.
+//!   Isometric, top-down, steep, and side are those two values, not projection types.
+//!   [`CameraProjection::oblique_orthographic`] and [`CameraProjection::oblique_perspective`]
+//!   store a reverse-Z shear as [`CameraProjection::Custom`].
 //!
 //! A GPU backend (see `engine-renderer-wgpu`) consumes a `RenderScene` and nothing else.
 
@@ -24,6 +28,7 @@ mod extract;
 pub mod frustum;
 mod interpolate;
 mod missing;
+pub mod presets;
 pub mod projection;
 mod registry;
 mod render_target;
@@ -47,6 +52,7 @@ pub use extract::{
 };
 pub use frustum::Frustum;
 pub use missing::{MissingAssetWarnings, MISSING_ASSET_WARNING_CAPACITY};
+pub use presets::PlacedCamera;
 pub use projection::{CameraProjection, Orthographic, Perspective, Projection, ProjectionError, ScreenPosition};
 pub use registry::register_render_components;
 pub use render_target::{

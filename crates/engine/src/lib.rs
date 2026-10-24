@@ -76,9 +76,9 @@ pub mod prelude {
     pub use engine_renderer::{
         AmbientLight, Camera, CameraClear, CameraOutput, CameraPresentation, CameraProjection, CameraView,
         CoplanarPriority, CoplanarSettings, DebugDraw, DebugSegment, Fog, Light, LightKind, Material, Mesh,
-        Orthographic, Perspective, Projection, ProjectionError, RenderOrder, RenderTargetId, RenderTargetStore, Sprite,
-        SpriteBlend, SpriteOrientation, TileMap, ViewportRect, CANDIDATE_COPLANAR_THICKNESS, DEBUG_SPHERE_SEGMENTS,
-        MAX_COPLANAR_PRIORITY,
+        Orthographic, Perspective, PlacedCamera, Projection, ProjectionError, RenderOrder, RenderTargetId,
+        RenderTargetStore, Sprite, SpriteBlend, SpriteOrientation, TileMap, ViewportRect, CANDIDATE_COPLANAR_THICKNESS,
+        DEBUG_SPHERE_SEGMENTS, MAX_COPLANAR_PRIORITY,
     };
     pub use engine_world::{
         Children, CommandError, CommandFailure, CommandWriter, ComponentDesc, ComponentInfo, ComponentRegistry,

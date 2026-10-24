@@ -1,10 +1,10 @@
 //! Named camera configurations for the test scene.
 //!
-//! Each one is a plain function returning the same `Camera` component and a `Transform` that the caller may
-//! edit afterwards. They live in the example on purpose: the engine does not have camera presets yet, and
-//! their signatures and defaults are a deferred decision (ADR-0004, D-25). Isometric is an orthographic
-//! camera that is yawed and pitched, not a projection of its own. `custom` is an example-local oblique
-//! matrix on [`CameraProjection::Custom`]. It is not an engine preset and not an oblique builder.
+//! Each one returns the same `Camera` and `Transform` a caller may edit afterwards. The placements
+//! and the oblique matrix come from [`PlacedCamera`] and [`CameraProjection::oblique_orthographic`].
+//! This file only supplies the scene's framing: where the camera sits, how large the view is, the
+//! sky clear, and the clip range `1..4000`. Isometric is still an orthographic camera. `custom`
+//! stores the public oblique matrix on [`CameraProjection::Custom`].
 
 use engine::prelude::*;
 
@@ -15,8 +15,8 @@ pub const ORTHO_HEIGHT: f32 = 400.0;
 pub const SKY: Color = Color::rgb(0.62, 0.74, 0.88);
 /// The world point the framed configurations look at.
 pub const FOCUS: Vec3 = Vec3::new(0.0, 60.0, 300.0);
-/// Pitch of a true isometric camera: `atan(1 / sqrt(2))`.
-pub const ISOMETRIC_PITCH: f32 = 0.615_479_7;
+/// Pitch of a true isometric camera: [`PlacedCamera::ISOMETRIC_PITCH`].
+pub const ISOMETRIC_PITCH: f32 = PlacedCamera::ISOMETRIC_PITCH;
 
 pub type CameraConfig = fn() -> (Camera, Transform);
 
@@ -51,15 +51,15 @@ pub fn config_from_args(camera: Option<&str>, ortho: bool) -> Result<usize, Stri
     }
 }
 
-fn camera(projection: CameraProjection) -> Camera {
-    Camera::new(projection.with_clip_range(1.0, 4000.0)).with_clear_color(SKY)
+fn finish(mut placed: PlacedCamera) -> (Camera, Transform) {
+    placed.camera.projection = placed.camera.projection.with_clip_range(1.0, 4000.0);
+    placed.camera = placed.camera.with_clear_color(SKY);
+    (placed.camera, placed.transform)
 }
 
-/// Camera `distance` back from [`FOCUS`], turned by `yaw` about +Y and then `pitch` about the camera's X.
-fn framed(yaw: f32, pitch: f32, distance: f32) -> Transform {
-    let rotation = Quat::from_rotation_y(yaw) * Quat::from_rotation_x(pitch);
-    let forward = Transform::from_position(Vec3::ZERO).with_rotation(rotation).forward();
-    Transform::from_position(FOCUS - forward * distance).with_rotation(rotation)
+fn home() -> (Vec3, f32, f32) {
+    let rig = CameraRig::HOME;
+    (rig.position, rig.yaw, rig.pitch)
 }
 
 pub fn home_transform() -> Transform {
@@ -68,32 +68,34 @@ pub fn home_transform() -> Transform {
 
 /// Perspective, slightly above the scene and pitched down. The default view.
 pub fn perspective() -> (Camera, Transform) {
-    (camera(CameraProjection::perspective(FOV_DEGREES)), home_transform())
+    let (eye, yaw, pitch) = home();
+    finish(PlacedCamera::perspective(eye, yaw, pitch, FOV_DEGREES).expect("home perspective"))
 }
 
 /// The same placement as [`perspective`] with an orthographic projection.
 pub fn orthographic() -> (Camera, Transform) {
-    (camera(CameraProjection::orthographic(ORTHO_HEIGHT)), home_transform())
+    let (eye, yaw, pitch) = home();
+    finish(PlacedCamera::orthographic(eye, yaw, pitch, ORTHO_HEIGHT).expect("home orthographic"))
 }
 
 /// Orthographic, yawed 45 degrees and pitched by the true isometric angle.
 pub fn isometric() -> (Camera, Transform) {
-    (camera(CameraProjection::orthographic(900.0)), framed(core::f32::consts::FRAC_PI_4, ISOMETRIC_PITCH, 1500.0))
+    finish(PlacedCamera::isometric(FOCUS, 1500.0, 900.0).expect("isometric"))
 }
 
 /// Orthographic, looking straight down -Y with +Z at the top of the image.
 pub fn top_down() -> (Camera, Transform) {
-    (camera(CameraProjection::orthographic(1000.0)), framed(0.0, core::f32::consts::FRAC_PI_2, 1000.0))
+    finish(PlacedCamera::top_down(FOCUS, 1000.0, 1000.0).expect("top-down"))
 }
 
-/// Perspective, pitched 60 degrees: steeper than the default, short of straight down.
+/// Perspective, pitched by [`PlacedCamera::STEEP_PITCH`]: steeper than the default, short of straight down.
 pub fn steep() -> (Camera, Transform) {
-    (camera(CameraProjection::perspective(FOV_DEGREES)), framed(0.0, 1.05, 1000.0))
+    finish(PlacedCamera::steep(FOCUS, 1000.0, FOV_DEGREES).expect("steep"))
 }
 
 /// Orthographic, level, looking along +Z: the side-scrolling placement.
 pub fn side() -> (Camera, Transform) {
-    (camera(CameraProjection::orthographic(ORTHO_HEIGHT)), framed(0.0, 0.0, 1000.0))
+    finish(PlacedCamera::side(FOCUS, 1000.0, ORTHO_HEIGHT).expect("side"))
 }
 
 /// Aspect stored in [`custom`]. [`CameraProjection::Custom`] ignores later viewport aspect.
@@ -106,37 +108,15 @@ pub const CUSTOM_ASPECT: f32 = 16.0 / 9.0;
 /// figures inside a frame of height [`ORTHO_HEIGHT`].
 pub const OBLIQUE_SHEAR: Vec2 = Vec2::new(0.14, 0.04);
 
-/// Oblique view-to-clip matrix used only by this example.
+/// The same placement as [`orthographic`], with [`CameraProjection::oblique_orthographic`].
 ///
-/// Column vectors, applied as `clip = proj * view * world`:
-///
-/// 1. The camera [`Transform`] is the view. This matrix does not contain the world pose.
-/// 2. A view-space shear maps `(x, y, z, 1)` to `(x + z * shear.x, y + z * shear.y, z, 1)`.
-///    View `z` is unchanged, so a smaller view z still writes the larger depth.
-/// 3. [`Mat4::orthographic_lh`] then maps that sheared view into clip space: height
-///    [`ORTHO_HEIGHT`], near 1, far 4000, aspect [`CUSTOM_ASPECT`]. Those clip distances are
-///    inside the matrix. [`CameraProjection::with_clip_range`] does not edit `Custom`.
-///
-/// Left-handed, +Y up, +Z forward, NDC depth `[0, 1]` with 1 at near and 0 at far. This is not a public
-/// oblique constructor.
-fn oblique_orthographic(shear: Vec2) -> Mat4 {
-    let half_height = ORTHO_HEIGHT * 0.5;
-    let half_width = half_height * CUSTOM_ASPECT;
-    let ortho = Mat4::orthographic_lh(-half_width, half_width, -half_height, half_height, 1.0, 4000.0);
-    let shear = Mat4::from_cols(
-        Vec4::new(1.0, 0.0, 0.0, 0.0),
-        Vec4::new(0.0, 1.0, 0.0, 0.0),
-        Vec4::new(shear.x, shear.y, 1.0, 0.0),
-        Vec4::new(0.0, 0.0, 0.0, 1.0),
-    );
-    ortho * shear
-}
-
-/// The same placement as [`orthographic`], with the example's oblique projection.
+/// Height [`ORTHO_HEIGHT`], near 1, far 4000, and aspect [`CUSTOM_ASPECT`] are inside the matrix.
+/// [`CameraProjection::with_clip_range`] does not edit it. The pose stays on the transform.
 pub fn custom() -> (Camera, Transform) {
-    let projection =
-        CameraProjection::custom(oblique_orthographic(OBLIQUE_SHEAR)).expect("showcase oblique matrix is finite");
-    (camera(projection), home_transform())
+    let (eye, yaw, pitch) = home();
+    let projection = CameraProjection::oblique_orthographic(ORTHO_HEIGHT, CUSTOM_ASPECT, 1.0, 4000.0, OBLIQUE_SHEAR)
+        .expect("showcase oblique matrix is finite");
+    finish(PlacedCamera::at(eye, yaw, pitch, projection).expect("home pose"))
 }
 
 /// Free-fly pose used by the example: a position and two angles. Every configuration above is expressible as

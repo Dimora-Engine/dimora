@@ -109,6 +109,8 @@ impl Projection for Perspective {
 ///
 /// Isometric, top-down and side view are placements of [`Orthographic`] or [`Perspective`], not
 /// extra variants. [`Custom`](Self::Custom) is a view-to-clip matrix supplied by game code.
+/// [`Self::oblique_orthographic`] and [`Self::oblique_perspective`] build one shear in front of
+/// the reverse-Z helpers. They do not reinterpret a matrix that was already stored.
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[non_exhaustive]
 pub enum CameraProjection {
@@ -160,6 +162,51 @@ impl CameraProjection {
     pub fn perspective(fov_y_degrees: f32) -> Self {
         Self::Perspective(Perspective { fov_y: fov_y_degrees.to_radians(), ..Default::default() })
     }
+    /// View-space shear in front of a reverse-Z orthographic projection, stored as [`Custom`](Self::Custom).
+    ///
+    /// `(x, y, z)` becomes `(x + z * shear.x, y + z * shear.y, z)` before [`Mat4::orthographic_lh`].
+    /// View `z` is unchanged, so a smaller view `z` still writes the larger depth. `height` is the
+    /// vertical world size, `aspect` is width / height, and `near` / `far` are view-space distances.
+    /// Those values are baked into the matrix. A later viewport resize does not rebuild it, and
+    /// [`Self::with_clip_range`] does not edit it. `near` may be 0. A negative aspect or height is
+    /// refused; pass a finished matrix to [`Self::custom`] when that flip is intentional.
+    ///
+    /// This does not convert a matrix already stored with [`Self::custom`].
+    pub fn oblique_orthographic(
+        height: f32,
+        aspect: f32,
+        near: f32,
+        far: f32,
+        shear: Vec2,
+    ) -> Result<Self, ProjectionError> {
+        let half_height = check_window(height, aspect)?;
+        check_clip(near, far, true)?;
+        check_shear(shear)?;
+        let half_width = half_height * aspect;
+        let ortho = Mat4::orthographic_lh(-half_width, half_width, -half_height, half_height, near, far);
+        Self::custom(ortho * view_shear(shear))
+    }
+
+    /// View-space shear in front of a reverse-Z perspective projection, stored as [`Custom`](Self::Custom).
+    ///
+    /// The shear is the same as [`Self::oblique_orthographic`]. `fov_y_degrees` is the vertical
+    /// field of view. `near` must be greater than 0. Aspect, field of view, and clip distances are
+    /// baked into the matrix and are not rebuilt on resize.
+    pub fn oblique_perspective(
+        fov_y_degrees: f32,
+        aspect: f32,
+        near: f32,
+        far: f32,
+        shear: Vec2,
+    ) -> Result<Self, ProjectionError> {
+        let fov_y = check_fov_degrees(fov_y_degrees)?;
+        check_aspect(aspect)?;
+        check_clip(near, far, false)?;
+        check_shear(shear)?;
+        let perspective = Mat4::perspective_lh(fov_y, aspect, near, far);
+        Self::custom(perspective * view_shear(shear))
+    }
+
     /// Stores `matrix` as a view-to-clip projection.
     ///
     /// Refuses NaN and infinity. A singular or oblique matrix is accepted; see
@@ -198,17 +245,110 @@ fn column_is_finite(column: Vec4) -> bool {
     column.x.is_finite() && column.y.is_finite() && column.z.is_finite() && column.w.is_finite()
 }
 
-/// Why [`CameraProjection::custom`] refused a matrix.
+fn view_shear(shear: Vec2) -> Mat4 {
+    Mat4::from_cols(
+        Vec4::new(1.0, 0.0, 0.0, 0.0),
+        Vec4::new(0.0, 1.0, 0.0, 0.0),
+        Vec4::new(shear.x, shear.y, 1.0, 0.0),
+        Vec4::new(0.0, 0.0, 0.0, 1.0),
+    )
+}
+
+pub(crate) fn check_finite(value: f32) -> Result<(), ProjectionError> {
+    if value.is_finite() {
+        Ok(())
+    } else {
+        Err(ProjectionError::NonFinite)
+    }
+}
+
+pub(crate) fn check_vec3(value: Vec3) -> Result<(), ProjectionError> {
+    if value.x.is_finite() && value.y.is_finite() && value.z.is_finite() {
+        Ok(())
+    } else {
+        Err(ProjectionError::NonFinite)
+    }
+}
+
+fn check_aspect(aspect: f32) -> Result<(), ProjectionError> {
+    check_finite(aspect)?;
+    if aspect > 0.0 {
+        Ok(())
+    } else {
+        Err(ProjectionError::InvalidRange)
+    }
+}
+
+fn check_window(height: f32, aspect: f32) -> Result<f32, ProjectionError> {
+    check_finite(height)?;
+    check_aspect(aspect)?;
+    if height > 0.0 {
+        Ok(height * 0.5)
+    } else {
+        Err(ProjectionError::InvalidRange)
+    }
+}
+
+pub(crate) fn check_height(height: f32) -> Result<(), ProjectionError> {
+    check_window(height, 1.0).map(|_| ())
+}
+
+pub(crate) fn check_fov_degrees(fov_y_degrees: f32) -> Result<f32, ProjectionError> {
+    check_finite(fov_y_degrees)?;
+    if fov_y_degrees > 0.0 && fov_y_degrees < 180.0 {
+        Ok(fov_y_degrees.to_radians())
+    } else {
+        Err(ProjectionError::InvalidRange)
+    }
+}
+
+/// `allow_zero_near` is the orthographic rule. Perspective requires `near > 0`.
+fn check_clip(near: f32, far: f32, allow_zero_near: bool) -> Result<(), ProjectionError> {
+    check_finite(near)?;
+    check_finite(far)?;
+    let near_ok = if allow_zero_near { near >= 0.0 } else { near > 0.0 };
+    if near_ok && far > near {
+        Ok(())
+    } else {
+        Err(ProjectionError::InvalidRange)
+    }
+}
+
+fn check_shear(shear: Vec2) -> Result<(), ProjectionError> {
+    check_finite(shear.x)?;
+    check_finite(shear.y)
+}
+
+pub(crate) fn check_distance(distance: f32) -> Result<(), ProjectionError> {
+    check_finite(distance)?;
+    if distance >= 0.0 {
+        Ok(())
+    } else {
+        Err(ProjectionError::InvalidRange)
+    }
+}
+
+/// Why a projection constructor refused its arguments.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProjectionError {
-    /// At least one element was NaN or infinite.
+    /// A matrix element or constructor argument was NaN or infinite.
     NonFinite,
+    /// A size, field of view, aspect, distance, or clip range cannot form this projection.
+    ///
+    /// Height and aspect must be greater than 0. Vertical field of view must be greater than 0
+    /// and less than 180 degrees. `far` must be greater than `near`. Orthographic `near` may be 0.
+    /// Perspective `near` must be greater than 0. A placed camera's distance back from its target
+    /// must be at least 0.
+    InvalidRange,
 }
 
 impl core::fmt::Display for ProjectionError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            ProjectionError::NonFinite => write!(f, "custom projection matrix contains NaN or infinity"),
+            ProjectionError::NonFinite => write!(f, "a projection argument is NaN or infinity"),
+            ProjectionError::InvalidRange => {
+                write!(f, "a projection size, field of view, aspect, distance, or clip range is not usable")
+            }
         }
     }
 }
