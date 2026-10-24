@@ -721,6 +721,21 @@ impl SceneRenderer {
         self.resource_stats
     }
 
+    /// Bytes reserved by the per-frame instance and debug-vertex buffers.
+    ///
+    /// Each buffer starts at 4,096 bytes and grows to the next power of two when a frame does not
+    /// fit. Empty uploads do not shrink it. This is reserved GPU buffer size, not a copy of the
+    /// CPU `Vec` capacity and not measured bandwidth.
+    pub fn instance_buffer_capacity_bytes(&self) -> u64 {
+        self.opaque_instances.capacity
+            + self.mask_instances.capacity
+            + self.cutout_instances.capacity
+            + self.blend_instances.capacity
+            + self.mesh_instances.capacity
+            + self.blend_mesh_instances.capacity
+            + self.debug_vertices.capacity
+    }
+
     /// Samplers currently retained. Shared entries stay while any cached image or placeholder uses them.
     pub fn sampler_cache_len(&self) -> usize {
         self.samplers.len()

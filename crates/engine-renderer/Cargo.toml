@@ -22,5 +22,9 @@ path = "src/bin/tilemap_extract_bench.rs"
 name = "debug_draw_bench"
 path = "src/bin/debug_draw_bench.rs"
 
+[[bin]]
+name = "render_scale_bench"
+path = "src/bin/render_scale_bench.rs"
+
 [dev-dependencies]
 log.workspace = true

@@ -12,6 +12,7 @@
 //!
 //! A GPU backend (see `engine-renderer-wgpu`) consumes a `RenderScene` and nothing else.
 
+pub mod bench_scene;
 pub mod camera;
 pub mod components;
 pub mod coplanar;
