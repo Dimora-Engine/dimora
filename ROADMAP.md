@@ -97,7 +97,7 @@ first" tiers in [docs/DECISIONS.md](docs/DECISIONS.md#what-to-resolve-first).
   `92286ce0546a4d94bb0365581ae7469fe2ad3260`. The acceptance record is the documentation commit that
   follows it. Decisions are ADR-0015, ADR-0016, ADR-0017, and ADR-0018. Localized mip-texel
   regeneration is deferred, with no milestone. It is not implemented.
-* **M6 stays after M5.** Custom projection, surface cameras, camera-to-texture, reverse-Z, coplanar sprite priority, sprite orientation, and tilemap chunking are in progress locally and are not pushed. Gameplay orientation and debug draw are not started.
+* **M6 stays after M5.** Custom projection, surface cameras, camera-to-texture, reverse-Z, coplanar sprite priority, sprite orientation, and the tilemap chunking foundation are implemented locally and are not pushed. Gameplay orientation, debug draw, broader benchmarks, and D-06 are not started. M6 is not complete.
   M7 and M8 can proceed in parallel after M3a, M4, M5, and M6 as stated below. M9 freezes the foundational
   gameplay, scene, and component-integration contracts. Later milestones may add public APIs through a
   recorded decision. That freeze does not forbid every future public type.
@@ -587,9 +587,13 @@ baseline. Camera projection stays separate from gameplay orientation and visual 
   **Sprite orientation is settled** in [ADR-0021](docs/adr/0021-sprite-orientation.md): `Billboard`,
   `Upright`, and `Fixed`, including edge-on top-down `Upright`. Gameplay-orientation
   components wait for M7 and M8 requirements.
-- Tilemap chunking, the rendering foundation only: chunk-based extraction, cached render instances,
-  dirty-chunk invalidation, and an update that touches the affected chunks. Production tile APIs stay in
-  M13, which reuses this chunking and does not build a second one.
+- Tilemap chunking, the rendering foundation only. **Met** (`4cc0b08` baseline, `c752395` chunks).
+  Extraction divides a map into 32×32 squares, tests each square's transformed bounds, and reads
+  tiles only in squares the camera can see. `set` dirties one square. A direct write to `tiles`
+  still shows on the next extract; `invalidate` refreshes the rejected-square occupancy count.
+  Sprite instances are built every frame for visible tiles and are not cached. A camera that sees
+  the whole map still reads every visible tile. Production tile APIs stay in M13, which reuses
+  this chunking and does not build a second extractor.
 - Render debugging, first slice: debug draw (lines, boxes, spheres, rays, camera frusta; depth-tested) and a
   depth-visualisation view, as the minimal debugging primitives for M7.
 - Depth convention (D-07). Settled in [ADR-0019](docs/adr/0019-reverse-z.md): finite reverse-Z in the projection helpers, compare `Greater`, clear 0. It does not close M6. Cross-platform verification is still outstanding.
@@ -633,7 +637,7 @@ part of the configuration bullet. **Surface cameras (M6-2B, `6a47882`).** Two vi
 picture-in-picture, `CameraClear::Color` and `Load`, and a per-camera depth clear are implemented and
 covered by GPU readback. **Camera-to-texture (M6-2C, committed locally, not pushed).** An offscreen camera's image is
 sampled by a later surface sprite, with resize, material and alpha class, invalid dependencies, and
-several writers covered by GPU readback. D-08 is implemented locally. **Coplanar sprite priority is met** ([ADR-0020](docs/adr/0020-coplanar-priority.md)). **Sprite orientation is met** ([ADR-0021](docs/adr/0021-sprite-orientation.md)). **Tilemap chunking is met for this foundation:** `set` rebuilds one chunk (`tile_chunk` tests), and a 1000×1000 map's extraction cost is recorded in [docs/PERFORMANCE.md](docs/PERFORMANCE.md). A partial view reads accepted chunks. A full view still reads every visible tile. **Not met:** gameplay orientation; debug draw;
+several writers covered by GPU readback. D-08 is implemented locally. **Coplanar sprite priority is met** ([ADR-0020](docs/adr/0020-coplanar-priority.md)). **Sprite orientation is met** ([ADR-0021](docs/adr/0021-sprite-orientation.md)). **Tilemap chunking is met for this foundation:** `set` rebuilds one chunk (`tile_chunk` tests), and a 1000×1000 map's extraction cost is recorded in [docs/PERFORMANCE.md](docs/PERFORMANCE.md). A partial view reads accepted chunks. A full view still reads every visible tile. A direct write to `tiles` does not drop a tile a camera can see; `invalidate` refreshes only the rejected-chunk cull count. The allocation column is cumulative traffic, not resident memory. **Not met:** gameplay orientation; debug draw;
 an engine preset API; a public oblique builder. M6 is not complete.
 The blended-sprite-versus-mesh assertion was not repeated per example configuration. The constructors are example-local.
 
@@ -995,7 +999,8 @@ compression, skinned crowds through vertex-animation textures, glTF extensions, 
 **Objective.** Production tilemap APIs on the chunking foundation M6 provides. M13 does not implement a
 second chunk extractor.
 
-**Prerequisites.** M6 (chunk extraction, cached instances, dirty chunks), M7 (collision layer hook), M5
+**Prerequisites.** M6 chunk extraction (32×32 cull squares and a per-chunk occupancy count; visible
+tiles are instanced every frame and are not cached), M7 (collision layer hook), M5
 (atlas). Independent of the character and UI milestones. It does not start before M6's chunking exists.
 
 **Tasks.**

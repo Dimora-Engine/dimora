@@ -145,6 +145,92 @@ fn changing_one_tile_rebuilds_one_chunk_and_a_second_camera_does_not_rebuild_it_
 }
 
 #[test]
+fn a_direct_write_stays_visible_when_the_camera_moves_and_only_the_cull_count_goes_stale() {
+    let edge = TileMap::CHUNK_EDGE;
+    let mut map = TileMap::new("tiles", 4, 4, Vec2::ONE, edge * 2, edge);
+    for y in 0..edge {
+        for x in 0..edge {
+            map.set(x, y, 0);
+        }
+    }
+    let assets = assets();
+    let mut world = World::new();
+    let near = world.spawn((Camera::orthographic(8.0), Transform::from_xyz(2.0, 2.0, -40.0)));
+    world.spawn((Camera { order: 1, ..Camera::orthographic(8.0) }, Transform::from_xyz(10_000.0, 0.0, -40.0)));
+    let entity = world.spawn((Transform::IDENTITY, map));
+
+    let warmed = extract(&mut world, &assets);
+    assert_eq!(extract(&mut world, &assets).stats.chunks_rebuilt, 0);
+    let seen = Vec3::new(2.0, 2.0, 0.0);
+    let boundary = Vec3::new(edge as f32, 0.0, 0.0);
+    assert!(origins_of(&warmed.passes[0]).iter().any(|origin| origin.approx_eq(seen, 1e-3)));
+    assert!(origins_of(&warmed.passes[0]).iter().all(|origin| origin.x < edge as f32));
+    let offscreen_culled = warmed.passes[1].stats.sprites_culled;
+    assert_eq!(offscreen_culled, edge * edge);
+    assert_eq!(warmed.passes[1].stats.sprites_visible, 0);
+
+    {
+        let mut map = world.component_mut::<TileMap>(entity).unwrap();
+        map.tiles[edge as usize] = 1;
+    }
+    let painted = extract(&mut world, &assets);
+    assert_eq!(painted.stats.chunks_rebuilt, 0, "a direct write does not dirty a chunk");
+    assert!(origins_of(&painted.passes[0]).iter().any(|origin| origin.approx_eq(seen, 1e-3)));
+    assert!(
+        origins_of(&painted.passes[0]).iter().all(|origin| !origin.approx_eq(boundary, 1e-3)),
+        "a camera that cannot see the edited chunk does not draw it"
+    );
+    assert_eq!(
+        painted.passes[1].stats.sprites_culled, offscreen_culled,
+        "the rejected chunk still reports the old occupancy"
+    );
+
+    world.component_mut::<Transform>(near).unwrap().position = Vec3::new(edge as f32 + 0.5, 0.5, -40.0);
+    let moved = extract(&mut world, &assets);
+    assert_eq!(moved.stats.chunks_rebuilt, 0);
+    assert!(
+        origins_of(&moved.passes[0]).iter().any(|origin| origin.approx_eq(boundary, 1e-3)),
+        "the same write appears once the camera can see that chunk"
+    );
+    assert_eq!(moved.passes[1].stats.sprites_culled, offscreen_culled);
+
+    world.component_mut::<TileMap>(entity).unwrap().invalidate();
+    let fresh = extract(&mut world, &assets);
+    assert!(fresh.stats.chunks_rebuilt >= 1);
+    assert!(origins_of(&fresh.passes[0]).iter().any(|origin| origin.approx_eq(boundary, 1e-3)));
+    assert_eq!(fresh.passes[1].stats.sprites_culled, offscreen_culled + 1);
+
+    {
+        let mut map = world.component_mut::<TileMap>(entity).unwrap();
+        let width = map.width;
+        map.tiles[(2 * width + 2) as usize] = TileMap::EMPTY;
+        map.tiles[(width + edge - 1) as usize] = TileMap::EMPTY;
+    }
+    world.component_mut::<Transform>(near).unwrap().position = Vec3::new(2.0, 2.0, -40.0);
+    let hole = extract(&mut world, &assets);
+    assert_eq!(hole.stats.chunks_rebuilt, 0);
+    assert!(origins_of(&hole.passes[0]).iter().all(|origin| !origin.approx_eq(seen, 1e-3)));
+    assert!(origins_of(&hole.passes[0]).iter().all(|origin| origin.x < edge as f32));
+
+    world.component_mut::<Transform>(near).unwrap().position = Vec3::new(edge as f32 - 0.5, 0.5, -40.0);
+    let across = extract(&mut world, &assets);
+    let across_origins = origins_of(&across.passes[0]);
+    assert!(across_origins.iter().any(|origin| origin.approx_eq(boundary, 1e-3)));
+    assert!(across_origins.iter().all(|origin| !origin.approx_eq(Vec3::new(edge as f32 - 1.0, 1.0, 0.0), 1e-3)));
+    assert_eq!(across.passes[1].stats.sprites_culled, offscreen_culled + 1, "the cleared cells are not recounted yet");
+
+    world.component_mut::<TileMap>(entity).unwrap().invalidate();
+    let recounted = extract(&mut world, &assets);
+    assert!(origins_of(&recounted.passes[0]).iter().any(|origin| origin.approx_eq(boundary, 1e-3)));
+    assert!(origins_of(&recounted.passes[0]).iter().all(|origin| !origin.approx_eq(seen, 1e-3)));
+    assert_eq!(recounted.passes[1].stats.sprites_culled, offscreen_culled + 1 - 2);
+}
+
+fn origins_of(pass: &engine_renderer::CameraPass) -> Vec<Vec3> {
+    pass.cutout_sprites.instances.iter().map(|instance| instance.model.translation()).collect()
+}
+
+#[test]
 fn a_direct_tile_write_is_visible_immediately_and_invalidate_refreshes_rejected_counts() {
     let assets = assets();
     let mut world = World::new();

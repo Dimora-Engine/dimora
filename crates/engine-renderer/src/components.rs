@@ -258,11 +258,14 @@ impl Mesh {
 /// depth-tested, so a map costs no sorting. They do not read [`crate::CoplanarPriority`].
 ///
 /// Extraction groups cells into [`Self::CHUNK_EDGE`] squares and skips a square the camera cannot
-/// see. [`Self::set`] dirties one square. [`Self::invalidate`] dirties every square after a direct
-/// write to [`Self::tiles`] or a change to `width` or `height`. The occupancy counts are extraction
-/// bookkeeping, not authored data, and they are not part of the component registry. The index sits
-/// behind a mutex because a component must be `Sync` and extraction updates it through a shared
-/// borrow. The engine runs that extraction on one thread.
+/// see. The skip is the frustum test. It does not consult the occupancy count, so a direct write
+/// to [`Self::tiles`] is in the next picture for every camera that can see that cell.
+/// [`Self::set`] dirties one square, which keeps the rejected-chunk cull count honest.
+/// [`Self::invalidate`] does that for every square after a direct write. Changing `width` or
+/// `height` rebuilds the index on the next extract and does not need [`Self::invalidate`]. The
+/// occupancy counts are extraction bookkeeping, not authored scene data, and they are not part of
+/// the component registry. The index sits behind a mutex because a component must be `Sync` and
+/// extraction updates it through a shared borrow. The engine runs that extraction on one thread.
 #[derive(Debug)]
 pub struct TileMap {
     pub texture: AssetHandle<Texture>,
@@ -344,8 +347,12 @@ impl TileMap {
         self.mark_chunk(x, y);
     }
 
-    /// Marks every chunk dirty. [`Self::set`] already covers one cell. A direct write to
-    /// [`Self::tiles`], or a change to [`Self::width`] or [`Self::height`], does not.
+    /// Marks every chunk dirty so the next extract recounts occupancy.
+    ///
+    /// The picture does not wait on this. A camera that can see a cell reads [`Self::tiles`].
+    /// Call this after a direct write when a rejected chunk's culled-tile count must match.
+    /// [`Self::set`] already dirties the square it writes. A change to [`Self::width`] or
+    /// [`Self::height`] is picked up by the next extract.
     pub fn invalidate(&mut self) {
         let mut index = self.chunk_index();
         if index.matches(self) {
@@ -561,5 +568,23 @@ mod tests {
         assert_eq!((height - 1) / edge, 1);
         // Tile indices are `u32`. A negative index is not a cell. Negative world positions are a
         // transform, covered by the chunk extraction tests.
+    }
+
+    #[test]
+    fn a_thousand_square_occupancy_index_is_eight_kibibytes_at_the_default_edge() {
+        let record = core::mem::size_of::<ChunkRecord>();
+        assert_eq!(record, 8, "bool plus u32, with padding up to the u32 alignment");
+        let edge = TileMap::CHUNK_EDGE;
+        let chunks = 1000u32.div_ceil(edge);
+        let bytes = (chunks * chunks) as usize * record;
+        let tiles = 1000usize * 1000 * core::mem::size_of::<u16>();
+        assert_eq!(tiles, 2_000_000);
+        if edge == 32 {
+            assert_eq!(chunks, 32);
+            assert_eq!(bytes, 8_192);
+        }
+        // `docs/PERFORMANCE.md` turns this size into the allocation-traffic breakdown.
+        assert_eq!(core::mem::size_of::<crate::SpriteInstance>(), 152);
+        assert_eq!(core::mem::align_of::<crate::SpriteInstance>(), 8);
     }
 }

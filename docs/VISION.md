@@ -96,7 +96,7 @@ Primary use cases, in the order the roadmap proves them:
 
 ## Camera configurations and visual styles
 
-*Confirmed direction (owner, 2026-10-13); mechanism decisions (presets as constructors, style as per-level policy, gameplay orientation as data, coplanar ordering amended) accepted 2026-10-13 and recorded in [ADR-0004](adr/0004-one-spatial-world-many-camera-configurations.md). The test scene demonstrates seven configurations with example-local constructors (2026-10-14, plus `custom` in M6-1C). An engine preset API, an oblique builder, style policies beyond per-sprite orientation and per-texture filtering, gameplay-orientation data and a coplanar mechanism are not implemented.*
+*Confirmed direction (owner, 2026-10-13); mechanism decisions (presets as constructors, style as per-level policy, gameplay orientation as data, coplanar ordering amended) accepted 2026-10-13 and recorded in [ADR-0004](adr/0004-one-spatial-world-many-camera-configurations.md). The test scene demonstrates seven configurations with example-local constructors (2026-10-14, plus `custom` in M6-1C). An engine preset API, an oblique builder, style policies beyond per-sprite orientation and per-texture filtering, and gameplay-orientation data are not implemented. Coplanar sprite priority is implemented (ADR-0020, 2026-10-23). Tilemap extraction culls 32×32 chunks (2026-10-23); production tile editing, collision, and layers are still future work.*
 
 Dimora's defining principle is the unified spatial world, not a look. It must support these views as
 **intended capabilities**, not as a promise to build every one in the next milestone:

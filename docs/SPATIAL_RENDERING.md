@@ -123,6 +123,21 @@ TileMap    a grid of cutout quads                  (same instanced path as sprit
 (Skeleton parts are Sprites in a bone hierarchy; particles are future)
 ```
 
+`TileMap` is an entity with a real `Transform`. Cells live in its local XY plane. Rotating the entity
+lays the map on the ground, or on a wall, with the same camera as every other renderable. Extraction
+splits the grid into 32×32 chunks. Each chunk's bounds are the sphere of its four corners after the
+tilemap's global transform, so a rotated or scaled map is not treated as an axis-aligned world box.
+A camera rejects a chunk before reading its cells. Accepted chunks still emit cutout sprites in
+row-major order on the shared sprite path, one batch per texture, with real depth. Tiles do not read
+`CoplanarPriority`. A direct write to `tiles` is visible to the next extract of any camera that can
+see the cell. `set` dirties one chunk's occupancy count. `invalidate` dirties them all. That count is
+internal. It is not authored scene data, and a future serializer must not be required to store it.
+Editor painting should call `set`, or `invalidate` after replacing the tile vector, so a rejected
+chunk's cull count stays honest. Collision and shadow casters are not built. When they are, they
+should reuse `TileMap::CHUNK_EDGE` and this grid rather than a second extractor. Dynamic lights
+already shade a lit tile in world space. A future shadow pass would see the same depth as the color
+pass. Nothing here adds a tilemap camera or a second render pass.
+
 An enum or trait would force dynamic dispatch or one giant match on the hot path. Components keep
 each kind in its own archetype and its own tight extraction loop, while *all* of them share the same
 spatial inputs: `GlobalTransform`, `Visibility`, the active `CameraView`, and the frustum.

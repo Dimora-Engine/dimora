@@ -300,9 +300,12 @@ Each is verified by reading the code or by a test run; identifiers refer to the 
 10. **Per-frame CPU cost.** Extraction walks sprites and meshes each frame. A tilemap is divided
     into 32×32 cull squares. A camera tests every square, then reads tiles only inside squares that
     meet the frustum. Rejected squares add a stored occupancy count and do not build matrices.
-    A camera that sees the whole map still reads every cell. `set` rebuilds one square's count.
-    The release numbers are in [PERFORMANCE.md](PERFORMANCE.md). GPU frame time is not part of that
-    record (KI-19).
+    A direct write to `tiles` is still read on the next extract; only that occupancy count goes
+    stale until `invalidate`. Instances are not cached. A camera that sees the whole map still
+    reads every cell. `set` rebuilds one square's count. The release numbers, and the reading of
+    the allocation column as traffic rather than resident memory, are in
+    [PERFORMANCE.md](PERFORMANCE.md). GPU frame time is not part of that record (KI-19). The
+    full-view instance traffic is KI-31.
 11. **Verification gaps (KI-1..3).** Mostly closed by T1: the toolchain is pinned, the MSRV is 1.90, and
     `scripts/check.sh` with `DIMORA_REQUIRE_GPU=1` turns a missing GPU adapter into a failure. Also done: a CI workflow
     runs the check on Windows, macOS and Linux and the MSRV job passes on all three (TASKS.md "CI results"). Still open: it uses
@@ -419,7 +422,7 @@ takes. That is the existing storage leak, not a new `hecs` type. The render-pose
 
 **10. One world, many camera configurations** ([ADR-0004](adr/0004-one-spatial-world-many-camera-configurations.md);
 confirmed owner direction; mechanism decisions accepted or amended 2026-10-13. The test scene demonstrates seven
-views with example-local constructors; an engine preset API, an oblique builder, and a coplanar mechanism are not implemented). A camera is a
+views with example-local constructors; an engine preset API and an oblique builder are not implemented. Coplanar sprite priority is implemented (ADR-0020). Tilemap extraction culls 32×32 chunks). A camera is a
 `Transform` plus a projection; perspective, orthographic, isometric (orthographic, rotated), top-down,
 side-scrolling and custom views are configurations of that one model with no per-view renderer, extraction path
 or world representation. Presets for common views are constructors that return a `Camera` and a `Transform` and

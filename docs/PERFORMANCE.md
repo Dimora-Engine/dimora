@@ -27,7 +27,7 @@ The map uses 1-unit tiles, a 4×4 atlas, and one 64×64 texture. It is rotated 9
 
 ### What the baseline shows
 
-A camera that sees the whole map pays for every occupied tile. One orthographic camera on a dense 1000×1000 map takes a median of 37.1 ms and builds one million instances in one batch, asking the allocator for about 395 MB. Seven such cameras take 234 ms orthographic and 295 ms perspective, build seven million instances in seven batches, and ask for about 2.76 GB. The seven-camera cost is several times one camera because each camera repeats the grid walk and owns its own instances.
+A camera that sees the whole map pays for every occupied tile. One orthographic camera on a dense 1000×1000 map takes a median of 37.1 ms and builds one million instances in one batch. The allocator column for that row is 394,768,856 bytes. Seven such cameras take 234 ms orthographic and 295 ms perspective, build seven million instances in seven batches, and record about 2.76 GB in that same column. Those figures are cumulative allocation traffic for one `extract_scene`, not peak resident memory. The breakdown is under "What the allocation column measures". The seven-camera cost is several times one camera because each camera repeats the grid walk and owns its own instances.
 
 A partial view still walks the whole grid. The orthographic partial camera sees about 27 percent of a dense 1000×1000 map and takes 18.0 ms, about half of the full view, not 27 percent of it. Culled tiles still pay for a matrix and a sphere test. Perspective partial sees about 49 percent and takes 21.8 ms against a 31.2 ms full view.
 
@@ -239,9 +239,29 @@ Median milliseconds. A positive change is faster. Instance and batch counts are 
 | 1 | orthographic | partial | sparse | 2.2 | 1.2 | 46% | 330,752 | 1,024 | 701 |
 | 7 | orthographic | partial | sparse | 17.2 | 10.3 | 40% | 2,347,264 | 7,168 | 4,872 |
 
-The sparse pattern fills every 32×32 square, so a fully visible sparse map still walks every cell. Its one-camera time is unchanged. Partial sparse maps skip the rejected squares. Allocation bytes for a full view stay about 395 MB for one camera and about 2.76 GB for seven. The occupancy index is a few hundred bytes on top of that and does not show up at this scale. Batches stay at one per camera.
+The sparse pattern fills every 32×32 square, so a fully visible sparse map still walks every cell. Its one-camera time is unchanged. Partial sparse maps skip the rejected squares. The one-camera dense full view records 394,769,896 allocation bytes after chunking, 1,040 more than the baseline. Seven dense full views record 2,763,382,296. Batches stay at one per camera.
 
-Limits of this measurement: GPU time is not included. The sphere test is conservative, so a partial view visits some tiles the per-tile test then culls (330,752 cells visited for 269,000 drawn on the orthographic partial map). A direct write to `tiles` updates a visible chunk on the next extract and leaves a rejected chunk's occupancy count stale until `invalidate`. Tiles have no material asset. `CoplanarPriority` on the entity is ignored. Future tile painting should call `set` or `invalidate`. Future collision can reuse `CHUNK_EDGE` and should not add a second extractor. Those systems are not built here.
+### What the allocation column measures
+
+`alloc_bytes` is the sum of `Layout::size` for every `alloc` and `realloc` during one `extract_scene` after the timed samples. A reallocation counts the new size and does not subtract the freed buffer. The counter is reset immediately before that extract, so storage that already exists is not included. The column is not peak resident memory, not retained capacity, and not a GPU allocation. The harness has no GPU.
+
+`SpriteInstance` is 152 bytes, aligned to 8 (`a_thousand_square_occupancy_index_is_eight_kibibytes_at_the_default_edge`). For one million instances Rust 1.99 grows the vector through capacities 4, 8, …, 1,048,576. The sum of those capacities is 2,097,148 elements, which is 318,766,496 bytes of traffic. The vector that survives the extract holds a capacity of 1,048,576 elements: 159,383,552 bytes live, of which 152,000,000 are the million instances and the rest is spare capacity. The earlier, smaller buffers have been freed.
+
+`cutout.sort_by_key` then runs driftsort. For this length the scratch buffer is `len - len / 2` = 500,000 instances, because `8_000_000 / 152` is smaller than that half. That is one allocation of 76,000,000 bytes, freed when the sort returns. During the sort the live set is the finished instance vector plus that scratch, about 235 MB, and then the scratch is gone. The returned `RenderScene` keeps the instance vector.
+
+Those two requests are 394,766,496 bytes. The recorded one-camera row is 394,769,896, so about 3.4 KB is everything else in that extract: the pass list, the prepared tile, the batch list, and, after chunking, the 1,024-byte chunk-visibility bit vector. Seven cameras repeat the instance vector and the sort scratch, 7 × 394,766,496 = 2,763,365,472 bytes, against a recorded 2,763,382,296. The gap is about 17 KB of the same small requests. At the end of the seven-camera extract the scene is holding seven instance vectors at once, 1,064 MiB of capacity, until the scene is dropped. The 2.76 GB figure is the traffic that built them, including buffers that have already been freed. It is not 2.76 GB resident.
+
+Not in that column, because they are allocated earlier or on another device:
+
+| Source | Where it lives | 1000×1000 dense, one full camera |
+|---|---|---|
+| Tile storage | `TileMap.tiles`, allocated with the world, before the counter starts | 2,000,000 bytes |
+| Chunk occupancy | `ChunkRecord` is 8 bytes (`bool` plus `u32`). 32×32 chunks of a 1000×1000 map is 1,024 records. Built on the first extract, so warmup has already paid for it | 8,192 bytes |
+| GPU instance upload | Not run by this binary. `GpuSpriteInstance` is 112 bytes. The backend copies instances into a buffer that starts at 4,096 bytes, grows to the next power of two of the upload, and does not shrink | Not measured |
+
+A fully visible million-tile camera therefore spends most of its allocation traffic on short-lived instance storage, and a seven-camera frame keeps 1,064 MiB of that capacity until the scene drops. That cost is unchanged by chunk culling, because a full view still emits every tile. It is recorded as follow-up KI-31. This checkpoint does not add a retained tile world to avoid it.
+
+Limits of this measurement: GPU time is not included. The sphere test is conservative, so a partial view visits some tiles the per-tile test then culls (330,752 cells visited for 269,000 drawn on the orthographic partial map). A direct write to `tiles` does not hide a tile from a camera that can see it; the next extract reads the cell. The rejected chunk's culled-tile count stays stale until `invalidate`. `width` and `height` changes rebuild the index without `invalidate`. Tiles have no material asset. `CoplanarPriority` on the entity is ignored. Future tile painting should call `set` for one cell, or `invalidate` after replacing `tiles`. Future collision can reuse `CHUNK_EDGE` and should not add a second extractor. Those systems are not built here. The full-view instance traffic above is the remaining extraction-cost risk.
 
 GPU submit time was not measured. The GPU tests and the release screenshots check the picture, not the frame time.
 

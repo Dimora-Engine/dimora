@@ -340,7 +340,7 @@ Missing from the original category list and now tracked: **save games** (34), **
 * **Required.** The same behaviour of picking, culling, depth and lighting in every configuration.
   Multiple surface cameras and offscreen targets are implemented (D-08, locally). Custom matrices are
   implemented (D-25, M6-1B). Reverse-Z is settled (D-07, ADR-0019). Coplanar sprite priority is settled
-  (ADR-0020). Sprite orientation is [ADR-0021](adr/0021-sprite-orientation.md). **Planned.** The rest of M6: gameplay orientation, chunking, debug draw, and benchmarks.
+  (ADR-0020). Sprite orientation is [ADR-0021](adr/0021-sprite-orientation.md). **Done for the chunking foundation.** Tilemap extraction culls 32×32 chunks; production tile APIs stay M13. **Planned.** The rest of M6: gameplay orientation, debug draw, and benchmarks beyond the tilemap harness.
   The configuration test scene is done (below). **Depends on.** Gameplay orientation before M7 and M8.
   D-26 is settled. D-06 is opt-in and not a dependency of other views. D-08 and D-25 are implemented locally.
 * **Integration.** UI world anchors, picking, audio listener, directional frames (D-31) and the editor
@@ -462,16 +462,22 @@ Missing from the original category list and now tracked: **save games** (34), **
 
 ### 15. Tilemaps
 * **Now.** `TileMap` expands to cutout quads through the shared sprite path. Extraction tests 32×32
-  chunks and reads tiles only in chunks the camera can see. `set` dirties one chunk. `invalidate`
-  dirties every chunk after a direct write to `tiles`. Instances are built each frame for visible
-  tiles and are not cached. No flip flags, layers, animation, collision, or loader. Tile indices are
-  `u32`. `CoplanarPriority` is not read. Costs for 64² through 1000², before and after chunking, are
-  in [PERFORMANCE.md](PERFORMANCE.md).
+  chunks and reads tiles only in chunks the camera can see. The skip is the frustum test, so a
+  direct write to `tiles` is in the next picture for any camera that can see the cell.
+  `invalidate` refreshes the rejected-chunk cull count after that write. `set` dirties one chunk.
+  Changing `width` or `height` rebuilds the index on the next extract. Instances are built each
+  frame for visible tiles and are not cached. The occupancy index is not authored scene data and
+  is not in the component registry. No flip flags, layers, animation, collision, or loader. Tile
+  indices are `u32`. `CoplanarPriority` is not read. Costs for 64² through 1000², before and after
+  chunking, are in [PERFORMANCE.md](PERFORMANCE.md). The allocation figures there are cumulative
+  allocator traffic, not peak resident memory.
 * **Planned.** M13: chunked storage, layers, collision layer. **Depends on.** M6, M7, M5.
 * **Integration.** Tiles live in world space (a map is an entity with a `Transform`), so physics and
   queries use world coordinates and a map can be rotated or stacked at depth.
 * **Performance.** A partial view reads the tiles in accepted 32×32 chunks, not the whole grid. A fully
-  visible map still reads every cell. The 1000×1000 numbers are in [PERFORMANCE.md](PERFORMANCE.md).
+  visible map still reads every cell and builds one sprite instance per visible tile per camera.
+  The 1000×1000 numbers, including the allocation-traffic reading, are in [PERFORMANCE.md](PERFORMANCE.md).
+  Reusing that instance storage across frames is KI-31, not this row.
 * **Not initially.** Hex/isometric grids, auto-tiling, infinite maps.
 
 ### 16. Particles
