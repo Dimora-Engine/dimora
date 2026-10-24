@@ -12,7 +12,7 @@ Four kinds of statement appear in these documents and are never mixed: **confirm
 recorded run), and **future requirements**. This file is intent; what exists is in
 [CAPABILITIES.md](CAPABILITIES.md).
 
-> **2.5D is a spatial world, not a fake 2D layer system.** Sprites, tilemaps, skeletal 2D characters,
+> **2.5D is a spatial world, not a fake 2D layer system.** Sprites, tilemaps, Sprite characters, skeletal 2D characters,
 > 3D meshes and 3D characters live in one coherent world and share compatible transforms, camera
 > behaviour, depth and resource infrastructure.
 
@@ -24,14 +24,15 @@ model, one depth and ordering story, one lifetime model for resources.
 
 Dimora is a Rust game engine built around a unified spatial model for 2.5D game development.
 
-Dimora brings 2D sprites, tilemaps, skeletal 2D characters, 3D meshes, and fully 3D characters into a
-shared world with coherent transforms, cameras, depth, and rendering.
+Dimora brings 2D sprites, tilemaps, skeletal 2D characters, 2D sprite characters, 3D meshes, and fully 3D characters into a shared world with coherent transforms, cameras, depth, and rendering.
 
 Rather than treating 2.5D as a collection of layered 2D elements or a restricted form of 3D, Dimora makes
 spatial interaction between different visual representations a foundational part of the engine.
 
 Its goal is to make hybrid 2D/3D games natural to build through an integrated development experience
-combining powerful programming APIs with purpose-built visual tools.
+combining powerful programming APIs with purpose-built visual tools. Making hybrid 2D/3D games should feel natural and intuitive, rather than forcing developers to choose between 2D and 3D paradigms. The editor is designed to support this vision by providing a seamless interface for working with both 2D and 3D content. The goal is to make the development process as fluid and integrated as possible, allowing creators to focus on their game's design rather than the technical constraints of the engine in a user-friendly environment for developers and designers.
+
+Building a game in Dimora means working with a consistent spatial model, regardless of whether the content is 2D or 3D.
 
 **Typical games:** Isometric and top-down RPGs, side-scrollers, HD-2D adventures, paper-cutout and diorama worlds, 2D characters in 3D environments, and hybrid games combining 2D and 3D elements across orthographic, perspective, and custom camera configurations.
 
