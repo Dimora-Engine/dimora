@@ -84,7 +84,7 @@ the risk register). **Prototype where the answer depends on a measurement; do no
 | D-18 | Scene format, serde, component registry | M4 (registry shape), M19 | M4, M18, M19, M22 | Decided in part, [ADR-0014](adr/0014-scene-model-and-component-registry.md) (2026-10-16). Registry, scene model, membership, load, unload, replace, deferred scene operations, the `spatial_scene` switch, and one code-defined prefab are settled for M4. Phase 1 is `cdb5ec3`. Phase 2 is `2c76f71`. Phase 3 is `f9a4aab`. M4-4A is `302622b`. M4-4B is `128c70e`. M4-4C is `e12fb5b`. M4-4D is `8398e49`. M4-4E is `d58c66b`. M4-5 is `2b79806`. None is pushed. No scene file in M4. D-16 stays open |
 | D-27 | Units and pixels per unit | M5 | M5, M8, M9, M13 | Decided, [ADR-0016](adr/0016-per-sprite-pixels-per-unit.md) (2026-10-16). Per-sprite `pixels_per_unit`, default 16. Not a code change |
 | D-05 | Materials, alpha modes, blended meshes | M5 | M5, M14 | Decided, [ADR-0015](adr/0015-material-alpha-classes.md) (2026-10-16). Three classes, one blended sort, and the bounding-sphere-centre depth for a blended mesh. CPU `MaterialAsset` is `e0c29ef`. M5-5B is `3b3cd4a`. M5-5C is `ab1b6f7`. M5-5D is `a7efd6c`. Procedural meshes are [ADR-0018](adr/0018-procedural-mesh-generators.md) (M5-6, `92286ce`). M5 is accepted locally |
-| D-06 | Pixel-art filtering, texel snapping, MSAA: policies at the level of each technique, **not a default or a foundation** | M6 (after D-25 and D-08) | M6, M8, M9, M13 | Principles accepted (ADR-0004); API ownership and defaults **deferred pending a rendering prototype** |
+| D-06 | Pixel-art filtering, texel snapping, MSAA: policies at the level of each technique, **not a default or a foundation** | M6 (after D-25 and D-08) | M6, M8, M9, M13 | Principles accepted (ADR-0004). D-06A view snap is proposed in [ADR-0022](adr/0022-orthographic-pixel-snap.md) (`4a87bb0`): orthographic camera translation only, default off. Integer-resolution output, letterboxing, nearest upscaling, and MSAA stay open. D-06 is not closed |
 | D-07 | Depth convention (reverse-Z) | M6 | M6, M14 shadows | Decided, [ADR-0019](adr/0019-reverse-z.md) (2026-10-23). Finite reverse-Z, compare `Greater`, clear 0. Verified on Apple M5, Metal. Vulkan, DirectX, OpenGL, and lavapipe are not verified |
 | D-08 | Multi-camera and render targets | M6 | M6, M14, M22 | Implemented locally. M6-2B is `6a47882` (surface cameras). M6-2C is committed locally and not pushed (offscreen targets and camera-to-texture). No render graph. M6 is not complete. D-07 is decided. Coplanar ordering is [ADR-0020](adr/0020-coplanar-priority.md). Gameplay orientation and D-06 stay open. D-26 is [ADR-0021](adr/0021-sprite-orientation.md) |
 | D-25 | Custom projections inside `Camera` | M6 (**first in M6**, [ADR-0004](adr/0004-one-spatial-world-many-camera-configurations.md)) | M6, M13 (oblique tiles) | Implemented in M6-1B (`a38cb30`, not pushed): `CameraProjection::Custom(Mat4)`. The example `custom` camera is M6-1C (committed locally, not pushed). Public oblique builders (`16ed495`) store that same variant and do not change this matrix contract. Coplanar ordering is [ADR-0020](adr/0020-coplanar-priority.md). D-26 is [ADR-0021](adr/0021-sprite-orientation.md) |
@@ -246,16 +246,17 @@ Decided in [ADR-0015](adr/0015-material-alpha-classes.md). Opaque, Mask, and Ble
 
 ### D-06 Pixel-art policy
 
-* **Problem.** There is no policy for texel snapping, integer scaling or MSAA, and the nearest-neighbour
-  look at fractional camera positions can shimmer.
+* **Problem.** A nearest-neighbour image can shimmer when an orthographic camera sits between pixels.
+  Integer scaling and MSAA still have no policy.
 * **Options.** Opt-in snapping per camera; integer-scale viewport mode; MSAA off for pixel-art cameras.
 * **Guidance accepted (ADR-0004, 2026-10-13).** Sampling configuration (filter, wrap, anisotropy) belongs at the
   texture or sampler level where appropriate. A pixel-art look may need coordinated settings across materials,
   sprites, cameras and renderer configuration. Texel snapping is implemented at the level its technique needs
   (view-level for camera snapping, object or shader level otherwise). There is no universal style abstraction;
   a convenience preset may configure several settings together while each stays independently settable.
-* **Deferred.** Exact API ownership and defaults, until a rendering prototype validates the requirements.
-* **Needed by.** M6 (lowest priority there). **Blocks.** M8 and M9 visual quality (frame shimmer), M13 tile seams.
+* **Prototype (D-06A, proposed [ADR-0022](adr/0022-orthographic-pixel-snap.md), `4a87bb0`, 2026-10-24).** `Camera.pixel_snap` defaults to `false`. An orthographic camera quantizes its view-space X and Y translation onto that viewport's pixel grid inside `CameraView::new`. View-space Z, rotation, the projection, and the entity transform stay. Perspective and `Custom`, including oblique builders, keep the flag and do not snap. Presets do not enable it. Sprites, tiles, meshes, and debug lines share that view. This is not integer-resolution output and it does not close D-06.
+* **Still open.** Integer-resolution output, letterboxing, nearest-neighbor upscaling, and MSAA as its own renderer setting, defaulting off. Per-object snap is not built. Accepting ADR-0022, or replacing it, is still an owner decision.
+* **Needed by.** M6 (lowest priority there). **Blocks.** M8 and M9 visual quality (frame shimmer), M13 tile seams. The view-snap prototype does not by itself remove those blocks.
 
 ### D-07 Depth convention (reverse-Z)
 

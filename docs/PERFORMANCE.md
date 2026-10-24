@@ -751,3 +751,32 @@ Recorded 2026-10-24 with the public constructors (`16ed495`). `PlacedCamera` and
 
 The release screenshots that compare against the historical baselines kept their draw counts: `basic_2_5d` 10 draws, `basic_2_5d --ortho` 10 draws, `spatial_scene --camera perspective` 10 draws, and `spatial_scene --camera orthographic` 8 draws. `depth_view_draws` stayed 0. A GPU test of `PlacedCamera::perspective` against `Camera::perspective` with the same transform and clip matched pixels and draw counts.
 
+## Orthographic pixel snap
+
+Recorded 2026-10-24 in the evening, America/Chicago, on `feat/m6-d06a-pixel-snap` at `4a87bb0`, before the 6:44 PM check. The machine is Apple M5, Metal, macOS arm64, `rustc 1.99.0`. This section does not replace the render-scale table above. The two snap rows are comparison cases (`gpu: false`). They are not part of that historical TSV.
+
+| | |
+|---|---|
+| Command | `DIMORA_SCALE_CASES=sprite-opaque-10k,sprite-opaque-10k-snap,sprite-cam-2-10k,sprite-cam-2-10k-snap cargo run --release -p engine-renderer --bin render_scale_bench` |
+| Scene | The existing 10,000 opaque-sprite world, viewport 1280×720, one orthographic camera, or the same sprites under two cameras |
+| Snap | The `-snap` rows set `pixel_snap` on those cameras. The plain rows leave the default `false` |
+| Samples | 4 warmup, then 11. Median is the middle sample. p95 is the slowest sample |
+| What is timed | `extract_scene` plus dropping the `RenderScene`. Not a GPU timestamp. `timestamp_writes` stays `None` |
+
+`alloc_bytes` counts allocator requests, including a realloc at its new size, and does not subtract frees. It is not resident memory and not GPU memory. Draw and batch counts are the extract stats: one sprite batch and one pass for 10,000 sprites, two batches and two passes for two cameras. Snap does not add a pass, a batch, or a draw.
+
+Two release runs, the second on the binary the first had just built. Allocation bytes, allocation count, visible sprites, batches, and passes matched inside each pair on both runs.
+
+| Run | Row | extract median ns | extract p95 ns | first extract ns | alloc_bytes | alloc_count | sprite_batches | passes |
+|---|---|---|---|---|---|---|---|---|
+| 1 | sprite-opaque-10k | 2,076,583 | 2,363,792 | 2,919,792 | 12,850,736 | 10,030 | 1 | 1 |
+| 1 | sprite-opaque-10k-snap | 1,512,750 | 1,589,875 | 1,715,750 | 12,850,736 | 10,030 | 1 | 1 |
+| 1 | sprite-cam-2-10k | 1,994,167 | 2,044,000 | 2,151,584 | 19,351,680 | 10,045 | 2 | 2 |
+| 1 | sprite-cam-2-10k-snap | 2,091,166 | 2,113,375 | 2,091,875 | 19,351,680 | 10,045 | 2 | 2 |
+| 2 | sprite-opaque-10k | 2,157,042 | 2,749,416 | 3,337,416 | 12,850,736 | 10,030 | 1 | 1 |
+| 2 | sprite-opaque-10k-snap | 1,637,334 | 1,674,833 | 1,876,375 | 12,850,736 | 10,030 | 1 | 1 |
+| 2 | sprite-cam-2-10k | 1,965,250 | 2,045,875 | 2,280,042 | 19,351,680 | 10,045 | 2 | 2 |
+| 2 | sprite-cam-2-10k-snap | 2,110,000 | 2,178,458 | 2,179,375 | 19,351,680 | 10,045 | 2 | 2 |
+
+The one-camera snap row ran second and was faster both times (about 1.51 ms and 1.64 ms, against 2.08 ms and 2.16 ms). That matches the catalog's known first-row effect and is not a snap speedup. The two-camera rows ran after that warmup. Snap was slower by about 97 µs on run 1 and about 145 µs on run 2, on a median near 2.0 ms. A few percent, one machine, two runs. This checkpoint does not assign snapping a CPU budget. The added work is a few vector operations inside `CameraView::new`, once per orthographic camera. GPU execution time was not measured. No new pipeline, texture, or render pass exists for the flag.
+

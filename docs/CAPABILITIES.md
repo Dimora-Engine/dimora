@@ -337,15 +337,17 @@ Missing from the original category list and now tracked: **save games** (34), **
   D-25 chose the matrix. The builders fill that matrix. They do not add a projection variant.
 * **Presets and style policy (ADR-0004; accepted 2026-10-13).** Camera presets are constructors
   over the one camera model and stay editable. Style policies sit at the object, material, camera, renderer or
-  scene level with no universal style type. Today: sprite orientation is per `Sprite`, filtering per `Texture`.
-  There is no camera-level or renderer-level style policy, and a preset does not set one. The constructor name
-  is not stored on the camera.
+  scene level with no universal style type. Today: sprite orientation is per `Sprite`, filtering per `Texture`. An orthographic camera can set
+  `pixel_snap` (D-06A, `4a87bb0`, proposed [ADR-0022](adr/0022-orthographic-pixel-snap.md)): view-translation
+  quantization on that camera's viewport, default false. Perspective and custom projections store the flag
+  and do not snap. Presets do not turn it on. There is no renderer-level style policy and no pixel-art camera
+  type. The constructor name is not stored on the camera.
 * **Required.** The same behaviour of picking, culling, depth and lighting in every configuration.
   Multiple surface cameras and offscreen targets are implemented (D-08, locally). Custom matrices are
   implemented (D-25, M6-1B). Reverse-Z is settled (D-07, ADR-0019). Coplanar sprite priority is settled
-  (ADR-0020). Sprite orientation is [ADR-0021](adr/0021-sprite-orientation.md). **Done for the chunking foundation.** Tilemap extraction culls 32×32 chunks; production tile APIs stay M13. **Done for debug drawing.** Single-frame world-space lines, rays, wire boxes, wire spheres, and camera frusta. One-pixel, depth-tested, no depth write, one batch per camera. **Recorded.** Sprite, mesh, mixed-scene, lighting, and multi-camera CPU extraction, plus CPU encode and submit (`82972c2`). GPU pass timestamps are not measured. **Done for the depth view.** `CameraPresentation::Depth` replaces that camera's viewport with linearized stored depth (`4bd591d`). Verified on Apple M5, Metal: perspective, orthographic, side, top-down, isometric, a steep perspective, a mild reverse-Z custom matrix, two separate surface viewports, an offscreen target, a later shaded camera sampling that target's color, resize, and switching back to shaded. A singular matrix and a 0-near custom matrix fill the viewport with the unsupported color. **Done for the public constructors (`16ed495`).** `PlacedCamera` and the two oblique builders. Verified on Apple M5, Metal, including the example configurations after they call that API. **Planned.** Gameplay orientation. D-06 stays last and opt-in. An editor viewport and a shadow-camera view are not built. A preset name is not stored, and a `Custom` matrix is not decomposed.
+  (ADR-0020). Sprite orientation is [ADR-0021](adr/0021-sprite-orientation.md). **Done for the chunking foundation.** Tilemap extraction culls 32×32 chunks; production tile APIs stay M13. **Done for debug drawing.** Single-frame world-space lines, rays, wire boxes, wire spheres, and camera frusta. One-pixel, depth-tested, no depth write, one batch per camera. **Recorded.** Sprite, mesh, mixed-scene, lighting, and multi-camera CPU extraction, plus CPU encode and submit (`82972c2`). GPU pass timestamps are not measured. **Done for the depth view.** `CameraPresentation::Depth` replaces that camera's viewport with linearized stored depth (`4bd591d`). Verified on Apple M5, Metal: perspective, orthographic, side, top-down, isometric, a steep perspective, a mild reverse-Z custom matrix, two separate surface viewports, an offscreen target, a later shaded camera sampling that target's color, resize, and switching back to shaded. A singular matrix and a 0-near custom matrix fill the viewport with the unsupported color. **Done for the public constructors (`16ed495`).** `PlacedCamera` and the two oblique builders. Verified on Apple M5, Metal, including the example configurations after they call that API. **Done for D-06A (`4a87bb0`).** Orthographic `Camera.pixel_snap`, default false. Verified on Apple M5, Metal: fractional translation, rounding bins, zoom and viewport size, a split origin, side, top-down, and isometric, roll, perspective and custom left unchanged, stored transforms, interpolation, two cameras, picking, reverse-Z, occlusion, tiles, lighting, blend, an offscreen target, resize, depth presentation, and debug lines. **Planned.** Gameplay orientation. The rest of D-06 (integer-resolution output, letterboxing, nearest upscaling, MSAA) stays opt-in and unfinished. An editor viewport and a shadow-camera view are not built. A preset name is not stored, and a `Custom` matrix is not decomposed.
   The configuration test scene is done (below). **Depends on.** Gameplay orientation before M7 and M8.
-  D-26 is settled. D-06 is opt-in and not a dependency of other views. D-08 and D-25 are implemented locally.
+  D-26 is settled. D-06A is the orthographic view-snap prototype and is not a dependency of other views. Integer-resolution output, letterboxing, nearest-neighbor upscaling, and MSAA stay open inside D-06. D-08 and D-25 are implemented locally.
 * **Integration.** UI world anchors, picking, audio listener, directional frames (D-31) and the editor
   viewport all read the active camera's view.
 * **Performance.** Each camera builds its own instances and submits its own pass. The sprite prepare walk is once per extract. Seven cameras over 10,000 opaque sprites take about 2.4× one camera's extract time and keep 7× the instance-vector capacity ([PERFORMANCE.md](PERFORMANCE.md)).
@@ -368,7 +370,7 @@ Missing from the original category list and now tracked: **save games** (34), **
   size in place. Extracted, culled by bounding sphere, and batched by pipeline, material id and
   revision, and the sampled image (5,000 unassigned sprites one draw in a test; 1,000 assigned opaque
   sprites one draw). Tint and UV stay per instance. The cutoff copied there is the one value on the shared material.
-* **Required.** Atlases, sheets, trim/pivot handling, pixel-art policy, consistent size units.
+* **Required.** Atlases, sheets, trim/pivot handling, pixel-art policy, consistent size units. D-06A snaps the orthographic camera view, not each sprite.
 * **Planned.** Atlas builder and sub-region update (M5), sheets (M8). **Depends on.** D-27, D-06.
 * **Integration.** Sprites are bones' children, tiles' sibling path, particles' target path.
 * **Performance.** One instanced quad path; CPU extraction per frame.
@@ -445,7 +447,7 @@ Missing from the original category list and now tracked: **save games** (34), **
   is M5-3A (`b51f1fb`). Proved rectangle uploads and whole-chain mip rebuilds are M5-3B (`84d5ab1`).
   The CPU shelf packer is M5-4A (`bf4d9bb`). GPU atlas acceptance is M5-4B (`1666695`).
   **Depends on.** ADR-0016.
-  D-06 (snapping) stays M6.
+  D-06A view snap is the M6 prototype (`4a87bb0`). Integer scale and MSAA stay open inside D-06.
 * **Integration.** The glyph atlas (M10), sheets (M8), normal maps (M14), render targets (M6).
 * **Tests/examples.** GPU tests in M5's acceptance list.
 * **Not initially.** Texture streaming, compression, virtual textures.

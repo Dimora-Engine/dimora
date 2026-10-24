@@ -108,10 +108,19 @@ is exact only for uniform scale.
   Position and orientation come from the entity's `Transform`. `CameraClear::Color` is the default.
   `Load` keeps the color already in a later camera's viewport on that same destination.
   `CameraOutput::Surface` is the default. `CameraOutput::Target` names a `RenderTargetId`.
+  `pixel_snap` defaults to `false` and is a registered camera field.
 * `CameraProjection` is a `#[non_exhaustive]` enum: `Orthographic`, `Perspective`, and
   `Custom(Mat4)` (D-25, M6-1B). `CameraView::new(camera, global_transform, target_size)` resolves the
   view matrix (inverse of the camera's world transform), projection matrix, viewport pixels, and basis
   vectors. The same `view_proj` is used for CPU projection, picking rays, culling and the GPU.
+  When `pixel_snap` is set and the projection is orthographic, that constructor shifts the eye in the
+  camera's right/up plane so the view-space X and Y translation land on the viewport pixel grid, then
+  builds one `look_to_lh` (proposed [ADR-0022](adr/0022-orthographic-pixel-snap.md)). `CameraView.position`
+  is that eye. `forward`, `up`, and `right` stay the entity basis. The projection, including reverse-Z,
+  is not snapped, and the entity transform is not written. Perspective and `Custom` skip the shift and
+  keep the flag. Frustum culling, sprites, tiles, meshes, debug lines, depth presentation, and
+  `ray_from_pixels` use this view. A ray built from the raw transform, without `CameraView::new`, can
+  disagree by at most half a pixel. There is no second camera and no shader snap.
 * The `Projection` trait (`matrix(aspect)`, default `project()`) is implemented by `Orthographic`,
   `Perspective` and the enum. A caller-supplied matrix is `CameraProjection::Custom`, not a trait
   object.
@@ -223,6 +232,7 @@ one matrix, for every sprite orientation and every camera placement. An unmarked
 
 Extraction (`extract_scene`): collect every active camera in `(order, entity id)` order. Materials,
 textures, and mesh assets are resolved once for the frame. Each camera then builds its `CameraView`,
+including the orthographic pixel snap when that camera's flag is set,
 frustum, and visible instances. Billboard and upright quads use that camera's basis. Lights above 16
 keep directionals and the positional lights nearest to that camera. Blended sprites and blended meshes
 sort per camera by `(RenderOrder.layer, view depth far->near, RenderOrder.order, extraction order)`.

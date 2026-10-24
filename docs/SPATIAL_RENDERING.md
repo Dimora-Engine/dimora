@@ -153,6 +153,7 @@ Camera.viewport    ViewportRect: the part of the render target it draws into
 Camera.clear       Color (default) or Load
 Camera.output      Surface (default) or Target(RenderTargetId)
 Camera.order       draw order among active cameras
+Camera.pixel_snap  orthographic view-translation snap; default false; ignored by perspective and custom
 ```
 
 Every active camera with a drawable destination is a pass. Passes sort by ascending `(order, entity id)`
@@ -207,6 +208,12 @@ Parallel projection. X and Y map linearly to the screen, Z only affects depth (w
 and clipping. Two objects at different Z with the same X/Y land on the same pixel, and objects keep
 their apparent size at any depth. Moving the camera shifts every object by the same amount: no
 parallax, because there is no per-object parallax value to apply.
+
+`Camera.pixel_snap` (default `false`, proposed [ADR-0022](adr/0022-orthographic-pixel-snap.md)) can quantize that shift. The scale is `viewport_height_px / orthographic_height`, which is both axes of the symmetric orthographic window. View-space X and Y translation are rounded to an integer number of those pixels with `f32::round` (a tie rounds away from zero) and the eye is moved in the right/up plane. View-space Z and the rotation stay. The projection is the existing reverse-Z matrix. An already-integer translation does not move. There is no extra half-pixel bias: an odd viewport height puts the optical axis on a pixel center, and an even height puts it on a pixel edge. The correction is at most half a pixel. Crossing the halfway value jumps a whole pixel even when the camera moved by less than one pixel. A translation that stays inside one rounding bin does not change the view.
+
+The grid is that camera's viewport from `ViewportRect::to_pixels`, not the window. A split origin, a resize, and an offscreen target each use their own height. Side, top-down, and isometric placements are orthographic, so they snap along the view axes when the flag is set. Roll does too. Perspective, `CameraProjection::Custom`, and the oblique builders do not snap. The flag remains editable. Presets leave it off.
+
+Sprites, tilemaps, meshes, and debug lines of that camera share the snapped view, so they occlude one another as before. The snap does not pixelate mesh shading and does not allocate a low-resolution image. Nearest and linear filtering stay on the texture. It also does not freeze independent sprite motion, a sprite animation, camera rotation, a fractional zoom, a sheared custom matrix, a non-integer texel-to-pixel ratio, a rotated or perspective-projected face, or mixed-resolution art. An integer-aligned nearest sprite often keeps the same covered pixels for any camera shift inside the same half-pixel coverage bin as the snapped pose. A sub-pixel pose is therefore not a promise of a different framebuffer, and it is not a promise of an unchanged one once an edge crosses a pixel center.
 
 ### Perspective
 
@@ -478,6 +485,8 @@ of view, clip `1..4000`, and the sky clear. Isometric is an orthographic camera,
 `custom` stores the public oblique matrix as `CameraProjection::Custom`. Switching among the seven functions
 changes only the camera and the transform. Extraction and the wgpu backend have no branch on the name.
 A preset does not set gameplay orientation: which way a character faces is not read from the camera.
+D-06A (`4a87bb0`) can snap an orthographic view translation. These rows leave `pixel_snap` off.
+`perspective`, `steep`, and `custom` would ignore the flag if it were set. Integer-resolution scaling and MSAA are not part of this table.
 
 | Name | Projection | Placement | Holds in the tests | Does not |
 |---|---|---|---|---|
