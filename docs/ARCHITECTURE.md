@@ -115,7 +115,7 @@ is exact only for uniform scale.
   vectors. The same `view_proj` is used for CPU projection, picking rays, culling and the GPU.
   When `pixel_snap` is set and the projection is orthographic, that constructor shifts the eye in the
   camera's right/up plane so the view-space X and Y translation land on the viewport pixel grid, then
-  builds one `look_to_lh` (proposed [ADR-0022](adr/0022-orthographic-pixel-snap.md)). `CameraView.position`
+  builds one `look_to_lh` ([ADR-0022](adr/0022-orthographic-pixel-snap.md), settled for D-06A only). `CameraView.position`
   is that eye. `forward`, `up`, and `right` stay the entity basis. The projection, including reverse-Z,
   is not snapped, and the entity transform is not written. Perspective and `Custom` skip the shift and
   keep the flag. Frustum culling, sprites, tiles, meshes, debug lines, depth presentation, and

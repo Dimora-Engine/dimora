@@ -1,9 +1,9 @@
 # ADR-0022: Orthographic camera views can snap their translation to pixels
 
-* **Status:** Proposed
-* **Date:** 2026-10-24
-* **Backlog id:** The view-snapping slice of D-06 (D-06A). This does not close D-06. Integer-resolution output, letterboxing, nearest-neighbor upscaling, and MSAA stay open.
-* **Decided by:** Proposed from the D-06A prototype (`4a87bb0`). Not an acceptance of the rest of D-06.
+* **Status:** Settled for D-06A only. This does not close D-06.
+* **Date:** 2026-10-25
+* **Backlog id:** The view-snapping slice of D-06 (D-06A). Integer-resolution output, letterboxing, nearest-neighbor upscaling, MSAA, and per-object snapping stay open.
+* **Decided by:** Cal, 2026-10-25, accepting the verified behavior of the D-06A prototype (`4a87bb0`, recorded 2026-10-24). Not an acceptance of the rest of D-06.
 * **Affects:** `Camera.pixel_snap` and `CameraView::new`. Not shaders, not `Transform`, not texture filtering, not [ADR-0004](0004-one-spatial-world-many-camera-configurations.md)'s policy that snapping is opt-in and not a foundation.
 
 ## Context and problem
@@ -41,7 +41,7 @@ D-06 also names integer scaling and MSAA. Those are different mechanisms. This r
 
 ## Decision and rationale
 
-Option A, as a proposed prototype. `Camera.pixel_snap` defaults to `false`. `Camera::with_pixel_snap` stores it. The component registry lists the field as a bool.
+Option A, settled for D-06A. `Camera.pixel_snap` defaults to `false`. `Camera::with_pixel_snap` stores it. The component registry lists the field as a bool.
 
 When the flag is set and the projection is orthographic, with a finite height greater than zero, `CameraView::new` measures `viewport_height_px / orthographic_height`. That scale is both axes of the symmetric `orthographic_lh` window whose aspect is the viewport's. The view-space X and Y translation, on the same right/up basis as `look_to_lh`, is `f32::round` in pixel units and converted back. A tie rounds away from zero. The eye moves in that plane and one `look_to_lh` is built. View-space Z and the rotation are unchanged. `CameraView.position` is the adjusted eye, so lights use it. `forward`, `up`, and `right` stay the entity basis, which billboards use.
 
@@ -61,6 +61,6 @@ Perspective, custom, oblique, a non-positive height, a non-finite scale, and a f
 
 ## Evidence and revisit conditions
 
-`4a87bb0` on `feat/m6-d06a-pixel-snap`. CPU coverage is `crates/engine-renderer/tests/pixel_snap.rs` (19 tests). GPU coverage is `crates/engine-renderer-wgpu/tests/pixel_snap.rs` (12 tests), Apple M5, Metal, `Rgba8Unorm`. `DIMORA_REQUIRE_GPU=1 scripts/check.sh` on 2026-10-24 at 6:44 PM America/Chicago: exit 0, 837 passed, 0 failed, 0 ignored, 73 suites, `rustc 1.99.0`. The four historical 1280×720 screenshot hashes matched, with `depth_view_draws` 0. Release extract of 10,000 sprites is in [../PERFORMANCE.md](../PERFORMANCE.md): allocation traffic and batch counts match the unsnapped rows. GPU pass time was not measured.
+`4a87bb0` on `feat/m6-d06a-pixel-snap`. CPU coverage is `crates/engine-renderer/tests/pixel_snap.rs` (19 tests). GPU coverage is `crates/engine-renderer-wgpu/tests/pixel_snap.rs` (12 tests), Apple M5, Metal, `Rgba8Unorm`. `DIMORA_REQUIRE_GPU=1 scripts/check.sh` on 2026-10-24 at 6:44 PM America/Chicago: exit 0, 837 passed, 0 failed, 0 ignored, 73 suites, `rustc 1.99.0`. The four historical 1280×720 screenshot hashes matched, with `depth_view_draws` 0. Release extract of 10,000 sprites is in [../PERFORMANCE.md](../PERFORMANCE.md). Allocation traffic and batch counts match the unsnapped rows. A later off/on/on/off order on the same scene does not show a consistent extract-time difference. GPU pass time was not measured. Vulkan, DirectX, OpenGL, and lavapipe are not verified.
 
-Reopen this proposal if a scene needs per-object snap, if the half-away-from-zero tie is the wrong pixel-center rule, or if integer-resolution output replaces view snapping. Accepting the rest of D-06 is a separate decision. This status stays Proposed until that acceptance.
+Reopen D-06A if a scene needs per-object snap, if the half-away-from-zero tie is the wrong pixel-center rule, or if integer-resolution output replaces view snapping. The rest of D-06 is a separate decision.

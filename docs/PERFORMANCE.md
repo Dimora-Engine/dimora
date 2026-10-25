@@ -780,3 +780,20 @@ Two release runs, the second on the binary the first had just built. Allocation 
 
 The one-camera snap row ran second and was faster both times (about 1.51 ms and 1.64 ms, against 2.08 ms and 2.16 ms). That matches the catalog's known first-row effect and is not a snap speedup. The two-camera rows ran after that warmup. Snap was slower by about 97 µs on run 1 and about 145 µs on run 2, on a median near 2.0 ms. A few percent, one machine, two runs. This checkpoint does not assign snapping a CPU budget. The added work is a few vector operations inside `CameraView::new`, once per orthographic camera. GPU execution time was not measured. No new pipeline, texture, or render pass exists for the flag.
 
+### Order-controlled comparison
+
+Recorded 2026-10-25 in the afternoon, America/Chicago, on the same Apple M5 and the same release binary of `4a87bb0`. One orthographic camera, 10,000 opaque sprites, viewport 1280×720. The case list was `sprite-opaque-10k`, `sprite-opaque-10k-snap`, `sprite-opaque-10k-snap`, `sprite-opaque-10k`, then that sequence again. 4 warmup and 11 samples inside each row. `alloc_bytes` stayed 12,850,736 and `alloc_count` stayed 10,030. Visible sprites stayed 10,000. Sprite batches stayed 1 and passes stayed 1.
+
+| Sequence | Order | extract median ns | extract p95 ns |
+|---|---|---|---|
+| 1 | off | 1,644,583 | 2,205,125 |
+| 1 | on | 1,593,166 | 1,976,166 |
+| 1 | on | 1,660,417 | 2,994,958 |
+| 1 | off | 1,796,917 | 1,870,375 |
+| 2 | off | 1,894,083 | 3,146,000 |
+| 2 | on | 1,871,417 | 2,680,875 |
+| 2 | on | 2,282,125 | 2,512,125 |
+| 2 | off | 2,339,083 | 3,111,375 |
+
+The medians do not move in one direction. In the first sequence the first snap row is about 51 µs under the opening unsnapped row, and the closing unsnapped row is the slowest. In the second sequence the rows rise from about 1.89 ms to about 2.34 ms across both settings. Several p95 values sit hundreds of microseconds above their medians. The earlier two-camera gap of about 0.1 ms is inside this spread. No extract-time improvement or regression is claimed. No renderer change follows from these numbers. GPU pass time remains unmeasured.
+

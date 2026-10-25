@@ -229,6 +229,9 @@ Architectural guidance, extending decision 2:
 * Exact API ownership and defaults wait for a rendering prototype that validates the requirements (for example a
   pixel-art scene under fractional camera movement, with and without rotation and perspective). D-06 stays Open and
   below the foundations other views need.
+* Follow-up, 2026-10-25. [ADR-0022](0022-orthographic-pixel-snap.md) settles orthographic view-translation snapping
+  as D-06A only. Integer-resolution output, nearest-neighbor upscaling, letterboxing, MSAA, and per-object snapping
+  stay open. D-06 stays open.
 
 ### 3. Coordinate conventions and gameplay orientation
 
