@@ -112,7 +112,10 @@ is exact only for uniform scale.
   `internal_resolution` defaults to `None`. `letterbox_color` defaults to black. Both are registered.
   `None` draws directly into the destination viewport. `Some` renders that whole view at the given
   size and presents it with integer nearest scaling ([ADR-0023](adr/0023-integer-resolution-camera-presentation.md),
-  Proposed). The private color and depth images are not `RenderTargetId`s.
+  settled for D-06B only). The private color and depth images are not `RenderTargetId`s. They are keyed by the
+  live entity index, cleared when that index is reused for a scaled camera, and dropped when the camera is not
+  scaled. `CameraClear::Load` with an internal resolution is rejected. A future editor must show that rejection
+  and must not present the skipped camera as a successful composite.
 * `CameraProjection` is a `#[non_exhaustive]` enum: `Orthographic`, `Perspective`, and
   `Custom(Mat4)` (D-25, M6-1B). `CameraView::new(camera, global_transform, target_size)` resolves the
   view matrix (inverse of the camera's world transform), projection matrix, viewport pixels, and basis

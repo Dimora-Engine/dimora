@@ -843,3 +843,5 @@ One renderer, after the timed rows. Counters are cumulative on that renderer.
 
 The second 320×180 frame reuses the images. The size change reallocates once and retains the new size only. Disabling the feature drops the private images and adds no presentation draw. World draws stay 2. A disabled camera therefore adds no private image and no presentation draw on this path.
 
+Acceptance on 2026-10-25 did not change fit, batching, or the blit. The table was not re-run. GPU tests in `internal_resolution.rs` cover index reuse, sixteen create-and-remove cycles, reorder, and a move onto an offscreen target. Those tests count creates, drops, and bytes. They are not timings. GPU pass timestamps are still unmeasured.
+

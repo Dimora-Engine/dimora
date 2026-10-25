@@ -1,9 +1,9 @@
 # ADR-0023: A camera may present an integer-scaled internal image
 
-* **Status:** Proposed. This does not close D-06.
+* **Status:** Settled for the current D-06B contract. This does not close D-06.
 * **Date:** 2026-10-25
 * **Backlog id:** The integer-resolution slice of D-06 (D-06B). MSAA and per-object snapping stay open.
-* **Decided by:** Not accepted. Written for review after `d491bda`.
+* **Decided by:** Cal, 2026-10-25, accepting the verified behavior of `d491bda` and the acceptance tests in `18257d4`. Not an acceptance of the rest of D-06.
 * **Affects:** `Camera.internal_resolution`, `Camera.letterbox_color`, presentation of that camera's image, and window-pixel picking. Not [ADR-0004](0004-one-spatial-world-many-camera-configurations.md)'s one-camera model, and not the [ADR-0022](0022-orthographic-pixel-snap.md) snap.
 
 ## Context and problem
@@ -45,7 +45,7 @@ D-06A snaps an orthographic view translation onto the image that camera renders.
 
 ## Decision and rationale
 
-Option A, proposed for D-06B.
+Option A, settled for D-06B.
 
 `Camera::with_internal_resolution` stores the size. `without_internal_resolution` clears it. `with_letterbox_color` stores the bar color. The default bar color is `Color::BLACK`. The registry lists `internal_resolution` as `none` or `{width}x{height}`, and `letterbox_color` as a color.
 
@@ -63,13 +63,15 @@ The wgpu backend keeps one color image and one `Depth32Float` image per camera i
 * Scale 0 is a defined letterbox, not a fractional or cropped picture. Those small-window policies are not implemented.
 * MSAA remains a renderer setting to add later. The blit must sample a resolved color image. This slice does not allocate a multisample image.
 * Per-object snap is not added. Sprite samplers are unchanged.
-* The editor is not built. The fields are plain camera data, and the presented image includes the bars, so a later viewport can show both without a second coordinate system.
+* The editor is not built. The fields are plain camera data, and the presented image includes the bars, so a later viewport can show both without a second coordinate system. That editor must show a `Load` plus internal-resolution rejection and must not present the skipped camera as a successful composite. The private images are renderer resources keyed by the live entity index. They are not a public target and they are not a stable entity id.
 * Native-resolution UI is a different camera or a later UI pass over the same destination. This field does not make UI low-resolution.
 * Vulkan, DirectX, OpenGL, and lavapipe are not verified.
 * The cache key is the live entity index. Images are cleared every frame and dropped when that camera is absent, so a reused index does not keep another camera's picture. This is not a new stable-id system.
 
 ## Evidence and revisit conditions
 
-`d491bda` on `feat/m6-d06b-internal-resolution`, from `3c7ccfb`. CPU coverage is `crates/engine-renderer/tests/internal_resolution.rs` (20 tests). GPU coverage is `crates/engine-renderer-wgpu/tests/internal_resolution.rs` (15 tests), Apple M5, Metal, `Rgba8Unorm`. `DIMORA_REQUIRE_GPU=1 scripts/check.sh` on 2026-10-25 at 3:08 PM America/Chicago: exit 0, 872 passed, 0 failed, 0 ignored, 76 suites, `rustc 1.99.0`. The four historical 1280×720 screenshot hashes matched, with `presentation_draws` 0 and `depth_view_draws` 0. Release extract and encode of the 64-sprite depth-view scene are in [../PERFORMANCE.md](../PERFORMANCE.md). GPU pass timestamps were not measured.
+`d491bda` on `feat/m6-d06b-internal-resolution`, from `3c7ccfb`. Acceptance tests are `18257d4`. CPU coverage is `crates/engine-renderer/tests/internal_resolution.rs` (21 tests). GPU coverage is `crates/engine-renderer-wgpu/tests/internal_resolution.rs` (23 tests), Apple M5, Metal. Fifteen of those GPU tests use `Rgba8Unorm`. Two use `Rgba8UnormSrgb`: an unlit opaque sprite, a half-yellow blend over red, and a lit sprite each match the direct sRGB path within one 8-bit channel, and the center is more than eight channels away from a second sRGB encode. Nearest 2× blocks stay flat and match one IEC encode of the linear color within one channel, including the clear pixel on the next internal texel. The blit is `textureLoad` with no manual gamma. The output-color contract is unchanged. Vulkan, DirectX, OpenGL, and lavapipe are not verified.
 
-Reopen this proposal if `Load` must composite through the internal image, if a small viewport should scale fractionally or crop, or if MSAA cannot resolve before the blit without a second color path. Accepting the proposal does not close D-06.
+The same GPU file checks private-image lifetime. A steady frame reuses the images. A size change reallocates once. Disabling drops them. Despawn drops them. A respawn that reuses the entity index clears the new image and does not show the previous camera's pixels. Sixteen create-and-remove cycles create 16 images and drop 16. Two cameras keep distinct images when their order changes. Moving one camera from the surface to an offscreen target reuses its image, and the public target receives the presented color. A rejected `Load` camera does not write; the next real writer attachment-clears the destination. A direct `Load` camera still composites. `DIMORA_REQUIRE_GPU=1 scripts/check.sh` on 2026-10-25 at 4:16 PM America/Chicago: exit 0, 881 passed, 0 failed, 0 ignored, 76 suites, `rustc 1.99.0`. The four historical 1280×720 screenshot hashes matched at implementation (`d491bda`) and were compared again at this acceptance. Release extract and encode of the 64-sprite depth-view scene are in [../PERFORMANCE.md](../PERFORMANCE.md). That bench was not repeated: the acceptance did not change fit, batching, or the blit. GPU pass timestamps were not measured.
+
+Reopen this record if `Load` must composite through the internal image, if a small viewport should scale fractionally or crop, or if MSAA cannot resolve before the blit without a second color path. Settling it does not close D-06.
