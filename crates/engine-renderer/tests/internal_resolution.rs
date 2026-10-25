@@ -7,6 +7,10 @@ use engine_math::{Transform, Vec2, Vec3};
 use engine_renderer::*;
 use engine_world::{propagate_transforms, ComponentRegistry, GlobalTransform, World};
 
+mod capture {
+    include!("../../log_capture.rs");
+}
+
 fn view(camera: Camera, eye: Vec3, target: Vec2) -> CameraView {
     let transform = Transform::from_xyz(eye.x, eye.y, eye.z);
     CameraView::new(&camera, &GlobalTransform { matrix: transform.to_matrix() }, target)
@@ -299,4 +303,27 @@ fn an_offscreen_camera_fits_against_the_target_and_not_the_surface() {
     assert_eq!(image.scale, 8);
     assert_eq!(built.render_viewport, Vec2::new(8.0, 4.0));
     assert_eq!(built.viewport, Vec2::new(64.0, 32.0));
+}
+
+#[test]
+fn load_with_internal_resolution_is_omitted_and_the_warning_names_the_reason() {
+    capture::begin();
+    let mut world = World::new();
+    world.spawn((
+        ortho(4.0).with_clear(CameraClear::Load).with_internal_resolution(8, 4),
+        Transform::from_xyz(0.0, 0.0, -4.0),
+    ));
+    propagate_transforms(&mut world);
+    let scene = extract_scene(&world, &engine_assets::AssetManager::in_memory(), Vec2::new(32.0, 16.0));
+    assert!(scene.is_none(), "a sole rejected camera does not produce a frame of undefined pixels");
+    let records = capture::records();
+    assert!(
+        records.iter().any(|record| {
+            record.level == log::Level::Warn
+                && record.message.contains("CameraClear::Load")
+                && record.message.contains("was not drawn")
+        }),
+        "rejection warning missing: {:?}",
+        capture::messages()
+    );
 }

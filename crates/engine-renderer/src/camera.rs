@@ -91,6 +91,12 @@ pub enum CameraPresentation {
 /// policy is `Load`, so the frame never loads an uninitialized image. `Load` and `Color` differ
 /// from the second camera on that same destination. A surface camera and an offscreen target do
 /// not share that first clear.
+///
+/// [`CameraClear::Load`] combined with [`Camera::internal_resolution`] is rejected. It is not
+/// drawn, and it is not converted into [`CameraClear::Color`]. The private image does not contain
+/// the earlier camera's pixels, so an opaque blit cannot keep them. A direct camera's `Load` is
+/// unchanged. An editor must show that rejection. It must not present the skipped camera as a
+/// successful composite.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CameraClear {
     /// Replace this camera's viewport with [`Camera::clear_color`] before its scene.
@@ -147,6 +153,7 @@ pub struct Camera {
     /// integer factor, centered, with nearest sampling. Bars use [`Self::letterbox_color`].
     /// A size of zero or above the render-target extent is rejected at view build and is not
     /// replaced with the destination size. Presets do not set this.
+    /// [`CameraClear::Load`] with this set is rejected and the camera is not drawn.
     pub internal_resolution: Option<(u32, u32)>,
     /// Color of the bars around an integer-scaled image, and of a viewport that is too small
     /// to hold one copy of that image. The default from [`Camera::new`] is [`Color::BLACK`].

@@ -520,3 +520,318 @@ fn changing_the_internal_size_reallocates_once_and_a_direct_frame_allocates_noth
     assert_eq!(renderer.resource_stats().internal_target_creates, before);
     assert_eq!(renderer.internal_targets().cameras, 0);
 }
+
+fn srgb_renderer(gpu: &GpuContext) -> SceneRenderer {
+    SceneRenderer::new(gpu, wgpu::TextureFormat::Rgba8UnormSrgb)
+}
+
+fn srgb_channel(linear: f32) -> u8 {
+    let encoded = if linear <= 0.0031308 { 12.92 * linear } else { 1.055 * linear.powf(1.0 / 2.4) - 0.055 };
+    (encoded.clamp(0.0, 1.0) * 255.0).round() as u8
+}
+
+fn srgb_pixel(color: Color) -> [u8; 4] {
+    [srgb_channel(color.r), srgb_channel(color.g), srgb_channel(color.b), 255]
+}
+
+fn assert_images_close(got: &[u8], expected: &[u8], tolerance: i16, what: &str) {
+    assert_eq!(got.len(), expected.len(), "{what} byte length");
+    let mut worst = 0i16;
+    let mut index = 0usize;
+    for (offset, (left, right)) in got.iter().zip(expected).enumerate() {
+        let delta = (*left as i16 - *right as i16).abs();
+        if delta > worst {
+            worst = delta;
+            index = offset;
+        }
+    }
+    let pixel = index / 4 * 4;
+    assert!(
+        worst <= tolerance,
+        "{what} differs by {worst} at byte {index}: {:?} vs {:?}",
+        &got[pixel..pixel + 4],
+        &expected[pixel..pixel + 4]
+    );
+}
+
+fn covered(clear: Color, material: AssetHandle<MaterialAsset>) -> World {
+    let mut world =
+        world_with([(Camera::orthographic(4.0).with_clear_color(clear).with_internal_resolution(16, 8), pose())]);
+    world.spawn((Transform::IDENTITY, sprite("white", material, Vec2::new(8.0, 4.0))));
+    world
+}
+
+#[test]
+fn srgb_presentation_matches_one_encode_of_the_direct_path() {
+    let Some(gpu) = gpu() else { return };
+    let mut renderer = srgb_renderer(&gpu);
+    let mut assets = AssetManager::in_memory();
+    insert_sprite(&mut assets, "white", [255, 255, 255, 255]);
+    let paint = Color::rgb(0.5, 0.2, 0.8);
+    let unlit = assets.insert("paint", MaterialAsset::unlit(paint)).unwrap();
+    let glass = assets
+        .insert("glass", MaterialAsset::unlit(Color::rgba(1.0, 1.0, 0.0, 0.5)).with_alpha_mode(AlphaMode::Blend))
+        .unwrap();
+    let lit = assets.insert("lit", MaterialAsset::color(Color::WHITE)).unwrap();
+
+    let mut unlit_world = covered(Color::BLACK, unlit);
+    let (internal, _) = draw(&gpu, &mut renderer, &mut unlit_world, &assets, 16, 8);
+    {
+        let mut query = unlit_world.query::<&mut Camera>();
+        query.iter().next().unwrap().1.internal_resolution = None;
+    }
+    let (direct, _) = draw(&gpu, &mut renderer, &mut unlit_world, &assets, 16, 8);
+    assert_images_close(&internal, &direct, 1, "unlit sRGB presentation");
+    let expected = srgb_pixel(paint);
+    let doubled =
+        srgb_pixel(Color::rgb(expected[0] as f32 / 255.0, expected[1] as f32 / 255.0, expected[2] as f32 / 255.0));
+    expect_px(&internal, 16, 8, 4, expected, 1, "one sRGB encode of the linear material");
+    let center = px(&internal, 16, 8, 4);
+    let double_gap = center.iter().zip(doubled).map(|(got, bad)| (*got as i16 - bad as i16).abs()).max().unwrap();
+    assert!(double_gap > 8, "presentation applied a second gamma, got {center:?} near {doubled:?}");
+    assert_eq!(renderer.stats().presentation_draws, 0, "the comparison frame is the direct path");
+
+    let mut blend_world = covered(Color::rgb(1.0, 0.0, 0.0), glass);
+    let (internal, _) = draw(&gpu, &mut renderer, &mut blend_world, &assets, 16, 8);
+    {
+        let mut query = blend_world.query::<&mut Camera>();
+        query.iter().next().unwrap().1.internal_resolution = None;
+    }
+    let (direct, _) = draw(&gpu, &mut renderer, &mut blend_world, &assets, 16, 8);
+    assert_images_close(&internal, &direct, 1, "blended sRGB presentation");
+
+    let mut lit_world = World::new();
+    lit_world.insert_resource(AmbientLight { color: Color::WHITE, intensity: 0.0 });
+    lit_world.spawn((Camera::orthographic(4.0).with_clear_color(Color::BLACK).with_internal_resolution(16, 8), pose()));
+    lit_world.spawn((Transform::IDENTITY, sprite("white", lit, Vec2::new(8.0, 4.0))));
+    lit_world.spawn((Transform::from_xyz(0.0, 0.0, -2.0), Light::point(Color::rgb(1.0, 0.0, 0.0), 4.0, 8.0)));
+    let (internal, _) = draw(&gpu, &mut renderer, &mut lit_world, &assets, 16, 8);
+    {
+        let mut query = lit_world.query::<&mut Camera>();
+        query.iter().next().unwrap().1.internal_resolution = None;
+    }
+    let (direct, _) = draw(&gpu, &mut renderer, &mut lit_world, &assets, 16, 8);
+    assert_images_close(&internal, &direct, 1, "lit sRGB presentation");
+    let lit_pixel = px(&internal, 16, 8, 4);
+    assert!(lit_pixel[0] > lit_pixel[1] + 20 && lit_pixel[0] > 40, "lit red survived presentation, got {lit_pixel:?}");
+}
+
+#[test]
+fn srgb_nearest_blocks_keep_one_encoded_color() {
+    let Some(gpu) = gpu() else { return };
+    let mut renderer = srgb_renderer(&gpu);
+    let mut assets = AssetManager::in_memory();
+    insert_sprite(&mut assets, "white", [255, 255, 255, 255]);
+    let paint = Color::rgb(0.4, 0.15, 0.7);
+    let unlit = assets.insert("paint", MaterialAsset::unlit(paint)).unwrap();
+    let mut world = world_with([(
+        Camera::orthographic(2.0).with_clear_color(Color::rgb(0.05, 0.1, 0.2)).with_internal_resolution(4, 2),
+        pose(),
+    )]);
+    world.spawn((Transform::from_xyz(-1.0, 0.0, 0.0), sprite("white", unlit, Vec2::splat(2.0))));
+    let (image, _) = draw(&gpu, &mut renderer, &mut world, &assets, 8, 4);
+    let sprite_px = srgb_pixel(paint);
+    let clear_px = srgb_pixel(Color::rgb(0.05, 0.1, 0.2));
+    expect_px(&image, 8, 0, 0, sprite_px, 1, "sRGB block origin");
+    expect_px(&image, 8, 1, 1, sprite_px, 1, "sRGB block stays flat");
+    expect_px(&image, 8, 3, 1, sprite_px, 1, "end of the sprite blocks");
+    expect_px(&image, 8, 4, 0, clear_px, 1, "next internal pixel is the clear, not a filtered mix");
+    assert_eq!(px(&image, 8, 0, 0), px(&image, 8, 1, 1));
+}
+
+#[test]
+fn a_reused_entity_index_clears_the_previous_private_image() {
+    let Some(gpu) = gpu() else { return };
+    let mut renderer = renderer(&gpu);
+    let assets = AssetManager::in_memory();
+    let mut world = World::new();
+    world.insert_resource(AmbientLight { color: Color::WHITE, intensity: 1.0 });
+    let first = world.spawn((
+        Camera::orthographic(4.0).with_clear_color(Color::rgb(1.0, 0.0, 0.0)).with_internal_resolution(4, 2),
+        pose(),
+    ));
+    let (image, _) = draw(&gpu, &mut renderer, &mut world, &assets, 8, 4);
+    expect_px(&image, 8, 1, 1, [255, 0, 0, 255], 2, "first camera");
+    assert_eq!(renderer.internal_targets().cameras, 1);
+    world.despawn(first).unwrap();
+    let second = world.spawn((
+        Camera::orthographic(4.0).with_clear_color(Color::rgb(0.0, 0.0, 1.0)).with_internal_resolution(4, 2),
+        pose(),
+    ));
+    assert_eq!(first.id(), second.id(), "the live index is reused; the private image must not keep the old picture");
+    let (image, scene) = draw(&gpu, &mut renderer, &mut world, &assets, 8, 4);
+    expect_px(&image, 8, 1, 1, [0, 0, 255, 255], 2, "reused index presents the new clear");
+    let internal = renderer.read_internal(&gpu, scene.passes[0].camera_id).unwrap();
+    expect_px(&internal, 4, 0, 0, [0, 0, 255, 255], 2, "reused image was cleared");
+    assert_eq!(renderer.resource_stats().internal_target_creates, 1);
+    assert_eq!(renderer.resource_stats().internal_target_reallocs, 0);
+    assert_eq!(renderer.internal_targets().cameras, 1);
+
+    {
+        let mut query = world.query::<&mut Camera>();
+        query.iter().next().unwrap().1.internal_resolution = None;
+    }
+    let _ = draw(&gpu, &mut renderer, &mut world, &assets, 8, 4);
+    assert_eq!(renderer.internal_targets().cameras, 0);
+    assert_eq!(renderer.stats().presentation_draws, 0);
+    assert!(renderer.resource_stats().internal_target_drops >= 1);
+}
+
+#[test]
+fn replacing_cameras_does_not_retain_a_private_image_per_generation() {
+    let Some(gpu) = gpu() else { return };
+    let mut renderer = renderer(&gpu);
+    let assets = AssetManager::in_memory();
+    let mut world = World::new();
+    world.insert_resource(AmbientLight { color: Color::WHITE, intensity: 1.0 });
+    for step in 0..16 {
+        let red = step % 2 == 0;
+        let color = if red { Color::rgb(1.0, 0.0, 0.0) } else { Color::rgb(0.0, 0.0, 1.0) };
+        let entity =
+            world.spawn((Camera::orthographic(4.0).with_clear_color(color).with_internal_resolution(4, 2), pose()));
+        let (image, _) = draw(&gpu, &mut renderer, &mut world, &assets, 8, 4);
+        let expected = if red { [255, 0, 0, 255] } else { [0, 0, 255, 255] };
+        expect_px(&image, 8, 2, 1, expected, 2, "this generation");
+        assert_eq!(renderer.internal_targets().cameras, 1);
+        world.despawn(entity).unwrap();
+        world.spawn((Camera::orthographic(4.0).with_clear_color(Color::BLACK), pose()));
+        let _ = draw(&gpu, &mut renderer, &mut world, &assets, 8, 4);
+        assert_eq!(renderer.internal_targets().cameras, 0);
+        assert_eq!(renderer.stats().presentation_draws, 0);
+        let direct = {
+            let mut query = world.query::<&Camera>();
+            query.iter().next().unwrap().0
+        };
+        world.despawn(direct).unwrap();
+    }
+    assert_eq!(renderer.resource_stats().internal_target_creates, 16);
+    assert_eq!(renderer.resource_stats().internal_target_drops, 16);
+    assert_eq!(renderer.internal_targets().color_bytes, 0);
+}
+
+#[test]
+fn two_cameras_keep_distinct_private_images_when_reordered() {
+    let Some(gpu) = gpu() else { return };
+    let mut renderer = renderer(&gpu);
+    let assets = AssetManager::in_memory();
+    let mut world = world_with([
+        (Camera::orthographic(4.0).with_clear_color(Color::rgb(1.0, 0.0, 0.0)).with_internal_resolution(4, 2), pose()),
+        (
+            Camera {
+                order: 1,
+                ..Camera::orthographic(4.0).with_clear_color(Color::rgb(0.0, 1.0, 0.0)).with_internal_resolution(4, 2)
+            },
+            pose(),
+        ),
+    ]);
+    let (image, scene) = draw(&gpu, &mut renderer, &mut world, &assets, 8, 4);
+    expect_px(&image, 8, 1, 1, [0, 255, 0, 255], 2, "later camera covers the destination");
+    let red = renderer.read_internal(&gpu, scene.passes[0].camera_id).unwrap();
+    let green = renderer.read_internal(&gpu, scene.passes[1].camera_id).unwrap();
+    expect_px(&red, 4, 0, 0, [255, 0, 0, 255], 2, "first private image");
+    expect_px(&green, 4, 0, 0, [0, 255, 0, 255], 2, "second private image");
+    assert_eq!(renderer.internal_targets().cameras, 2);
+    assert_eq!(renderer.resource_stats().internal_target_creates, 2);
+
+    {
+        let mut query = world.query::<&mut Camera>();
+        for camera in query.iter() {
+            if camera.1.clear_color == Color::rgb(1.0, 0.0, 0.0) {
+                camera.1.order = 2;
+            }
+        }
+    }
+    let (image, scene) = draw(&gpu, &mut renderer, &mut world, &assets, 8, 4);
+    expect_px(&image, 8, 1, 1, [255, 0, 0, 255], 2, "reordered red camera draws last");
+    let first = renderer.read_internal(&gpu, scene.passes[0].camera_id).unwrap();
+    let second = renderer.read_internal(&gpu, scene.passes[1].camera_id).unwrap();
+    expect_px(&first, 4, 0, 0, [0, 255, 0, 255], 2, "green image after reorder");
+    expect_px(&second, 4, 0, 0, [255, 0, 0, 255], 2, "red image after reorder");
+    assert_eq!(renderer.resource_stats().internal_target_creates, 2);
+    assert_eq!(renderer.resource_stats().internal_target_reallocs, 0);
+}
+
+#[test]
+fn moving_a_camera_to_an_offscreen_target_reuses_its_private_image() {
+    let Some(gpu) = gpu() else { return };
+    let mut renderer = renderer(&gpu);
+    let assets = AssetManager::in_memory();
+    let mut world = world_with([(
+        Camera::orthographic(4.0).with_clear_color(Color::rgb(0.0, 1.0, 0.0)).with_internal_resolution(4, 2),
+        pose(),
+    )]);
+    let _ = draw(&gpu, &mut renderer, &mut world, &assets, 8, 4);
+    assert_eq!(renderer.resource_stats().internal_target_creates, 1);
+    let mut store = RenderTargetStore::new();
+    let target = store.create(8, 4).unwrap();
+    world.insert_resource(store);
+    {
+        let mut query = world.query::<&mut Camera>();
+        query.iter().next().unwrap().1.output = CameraOutput::Target(target);
+    }
+    let _ = draw(&gpu, &mut renderer, &mut world, &assets, 8, 4);
+    let image = renderer.read_render_target(&gpu, target).unwrap();
+    expect_px(&image, 8, 1, 1, [0, 255, 0, 255], 2, "presented target");
+    expect_px(&image, 8, 6, 2, [0, 255, 0, 255], 2, "presented target far side");
+    assert_eq!(renderer.resource_stats().internal_target_creates, 1);
+    assert_eq!(renderer.resource_stats().internal_target_reallocs, 0);
+    assert_eq!(renderer.internal_targets().cameras, 1);
+    assert_eq!(renderer.stats().presentation_draws, 1);
+}
+
+#[test]
+fn a_rejected_load_camera_leaves_the_next_writer_s_clear_defined() {
+    let Some(gpu) = gpu() else { return };
+    let mut renderer = renderer(&gpu);
+    let assets = AssetManager::in_memory();
+    let mut world = world_with([
+        (
+            Camera::orthographic(4.0)
+                .with_clear(CameraClear::Load)
+                .with_clear_color(Color::rgb(0.0, 0.0, 1.0))
+                .with_internal_resolution(4, 4),
+            pose(),
+        ),
+        (
+            Camera {
+                order: 1,
+                ..Camera::orthographic(4.0)
+                    .with_clear_color(Color::rgb(0.0, 1.0, 0.0))
+                    .with_viewport(ViewportRect::new(0.5, 0.0, 0.5, 1.0))
+            },
+            pose(),
+        ),
+    ]);
+    let (image, scene) = draw(&gpu, &mut renderer, &mut world, &assets, 16, 16);
+    assert_eq!(scene.passes.len(), 1);
+    assert_eq!(scene.stats.presentation_skipped, 1);
+    expect_px(&image, 16, 1, 1, [0, 255, 0, 255], 2, "outside the later viewport is that camera's attachment clear");
+    expect_px(&image, 16, 12, 8, [0, 255, 0, 255], 2, "inside the later viewport");
+    assert_eq!(renderer.internal_targets().cameras, 0);
+    assert_eq!(renderer.stats().presentation_draws, 0);
+}
+
+#[test]
+fn a_direct_load_camera_still_composites_over_the_first_clear() {
+    let Some(gpu) = gpu() else { return };
+    let mut renderer = renderer(&gpu);
+    let mut assets = AssetManager::in_memory();
+    insert_sprite(&mut assets, "white", [255, 255, 255, 255]);
+    let glass = assets
+        .insert("glass", MaterialAsset::unlit(Color::rgba(1.0, 1.0, 0.0, 0.5)).with_alpha_mode(AlphaMode::Blend))
+        .unwrap();
+    let mut world = world_with([
+        (Camera::orthographic(4.0).with_clear_color(Color::rgb(1.0, 0.0, 0.0)), Transform::from_xyz(40.0, 0.0, -4.0)),
+        (
+            Camera { order: 1, clear: CameraClear::Load, ..Camera::orthographic(4.0).with_clear_color(Color::BLACK) },
+            pose(),
+        ),
+    ]);
+    world.spawn((Transform::IDENTITY, sprite("white", glass, Vec2::splat(8.0))));
+    let (image, scene) = draw(&gpu, &mut renderer, &mut world, &assets, 16, 8);
+    assert_eq!(scene.passes.len(), 2);
+    assert_eq!(scene.stats.presentation_skipped, 0);
+    expect_px(&image, 16, 8, 4, [255, 128, 0, 255], 4, "direct Load blends over the first camera");
+    assert_eq!(renderer.internal_targets().cameras, 0);
+    assert_eq!(renderer.stats().presentation_draws, 0);
+}

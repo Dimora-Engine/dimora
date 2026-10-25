@@ -2,7 +2,9 @@
 //
 // The pipeline viewport and scissor are that rectangle. Group 0 is not the scene bind group.
 // textureLoad keeps each internal pixel as a scale-by-scale block. There is no lighting, fog,
-// or tint. The source is a one-sample color image that is no longer a color attachment.
+// tint, or manual gamma. The source is a one-sample color image that is no longer a color
+// attachment. An sRGB source decodes to linear on load. An sRGB destination encodes that linear
+// value. The shader does not encode or decode again.
 
 struct Present {
     origin: vec2<f32>,
