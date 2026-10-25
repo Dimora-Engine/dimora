@@ -1,0 +1,12 @@
+[package]
+name = "internal_resolution"
+description = "Preview of optional integer-resolution camera presentation."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+engine.workspace = true
+image = { version = "0.25", default-features = false, features = ["png"] }

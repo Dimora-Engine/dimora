@@ -3,7 +3,7 @@ use engine_math::{Mat4, Vec2, Vec3};
 use engine_world::GlobalTransform;
 
 use crate::projection::{CameraProjection, Projection, ScreenPosition};
-use crate::render_target::RenderTargetId;
+use crate::render_target::{RenderTargetError, RenderTargetId};
 
 /// The part of the render target a camera draws into, in normalized target coordinates with the
 /// origin at the **top-left** (`x`, `y`, `width`, `height` all in `[0, 1]`). The default fills the
@@ -105,7 +105,14 @@ pub enum CameraClear {
 /// target ([`ViewportRect`]). Moving the camera in 3D is what produces parallax.
 ///
 /// [`Self::pixel_snap`] can quantize an orthographic view translation when a [`CameraView`] is
-/// built. It does not write the entity transform.
+/// built. It does not write the entity transform. The grid is the image this camera renders.
+/// With [`Self::internal_resolution`] set, that image is the internal size, not the enlarged
+/// destination.
+///
+/// [`Self::internal_resolution`] renders that image and presents it with integer nearest-neighbor
+/// scaling inside [`Self::viewport`]. `None` draws directly into the destination, as before.
+/// [`CameraClear::Load`] cannot keep an earlier camera's pixels through that private image, so
+/// the combination is rejected and the camera is not drawn.
 ///
 /// Every [`Self::active`] camera is rendered, in ascending `(order, entity id)`. A lower order
 /// draws first and sits underneath. A higher order draws later and can overlay it. There is no
@@ -133,6 +140,19 @@ pub struct Camera {
     /// not snap. An oblique builder stores a custom matrix, so it does not snap either. The flag
     /// stays editable when the projection changes. Camera presets do not turn it on.
     pub pixel_snap: bool,
+    /// Pixel size of the private image this camera renders before presentation.
+    ///
+    /// `None`, the default from [`Camera::new`], draws directly into the destination viewport.
+    /// `Some` renders the whole view at that size and scales it into [`Self::viewport`] by an
+    /// integer factor, centered, with nearest sampling. Bars use [`Self::letterbox_color`].
+    /// A size of zero or above the render-target extent is rejected at view build and is not
+    /// replaced with the destination size. Presets do not set this.
+    pub internal_resolution: Option<(u32, u32)>,
+    /// Color of the bars around an integer-scaled image, and of a viewport that is too small
+    /// to hold one copy of that image. The default from [`Camera::new`] is [`Color::BLACK`].
+    /// Unused when [`Self::internal_resolution`] is `None`. This is not [`Self::clear_color`]:
+    /// the scene background stays the clear color inside the internal image.
+    pub letterbox_color: Color,
     pub active: bool,
     /// Draw order among active cameras. Lower draws first. Equal orders use the entity id.
     pub order: i32,
@@ -148,6 +168,8 @@ impl Camera {
             output: CameraOutput::Surface,
             presentation: CameraPresentation::Shaded,
             pixel_snap: false,
+            internal_resolution: None,
+            letterbox_color: Color::BLACK,
             active: true,
             order: 0,
         }
@@ -183,6 +205,96 @@ impl Camera {
         self.pixel_snap = pixel_snap;
         self
     }
+    /// Stores [`Self::internal_resolution`]. The size is checked when a [`CameraView`] is built.
+    pub fn with_internal_resolution(mut self, width: u32, height: u32) -> Self {
+        self.internal_resolution = Some((width, height));
+        self
+    }
+    /// Clears [`Self::internal_resolution`]. The camera draws directly into its destination again.
+    pub fn without_internal_resolution(mut self) -> Self {
+        self.internal_resolution = None;
+        self
+    }
+    /// Stores [`Self::letterbox_color`].
+    pub fn with_letterbox_color(mut self, color: Color) -> Self {
+        self.letterbox_color = color;
+        self
+    }
+}
+
+/// Why a camera with [`Camera::internal_resolution`] was not presented.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PresentationReject {
+    /// [`CameraClear::Load`] would have to keep destination pixels the private image does not contain.
+    Load { width: u32, height: u32 },
+    /// The size is zero or above the render-target extent.
+    Size(RenderTargetError),
+}
+
+/// Where the rendered image sits inside the destination viewport.
+///
+/// Origins are destination pixels, top-left. A direct camera has no extra rectangle: its render
+/// size is the destination viewport.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum PresentationFit {
+    /// Draw into the destination viewport. No private image.
+    Direct,
+    /// `scale >= 1`. The displayed size is the internal size times `scale`.
+    Scaled(ScaledImage),
+    /// The destination viewport is smaller than the internal image on at least one axis.
+    /// The viewport is filled with the letterbox color and the scene is not rendered.
+    Letterbox { internal_width: u32, internal_height: u32 },
+    /// The camera is not drawn and does not own picking.
+    Rejected(PresentationReject),
+}
+
+/// Integer-scaled copy of an internal image.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ScaledImage {
+    pub internal_width: u32,
+    pub internal_height: u32,
+    pub scale: u32,
+    /// Top-left of the displayed image. [`fit_internal_resolution`] reports this relative to the
+    /// viewport. [`CameraView`] stores it in destination pixels.
+    pub display_origin: Vec2,
+    /// `internal_width * scale` by `internal_height * scale`.
+    pub display_size: Vec2,
+}
+
+/// Integer fit of `internal` inside a destination viewport of `destination` pixels.
+///
+/// `destination` is the viewport size, not the window. The origin of the result is relative to
+/// that viewport's top-left. Scale is `min(destination / internal)` in integer division. A scale
+/// of 0 is [`PresentationFit::Letterbox`]. An odd remainder stays on the right and the bottom.
+/// The size is checked with [`crate::check_render_target_size`]. This does not look at
+/// [`CameraClear`].
+pub fn fit_internal_resolution(
+    internal_width: u32,
+    internal_height: u32,
+    destination_width: u32,
+    destination_height: u32,
+) -> Result<PresentationFit, RenderTargetError> {
+    crate::render_target::check_render_target_size(internal_width, internal_height)?;
+    let scale = (destination_width / internal_width).min(destination_height / internal_height);
+    if scale == 0 {
+        return Ok(PresentationFit::Letterbox { internal_width, internal_height });
+    }
+    let Some(display_width) = internal_width.checked_mul(scale) else {
+        return Err(RenderTargetError::Allocation { width: internal_width, height: internal_height });
+    };
+    let Some(display_height) = internal_height.checked_mul(scale) else {
+        return Err(RenderTargetError::Allocation { width: internal_width, height: internal_height });
+    };
+    Ok(PresentationFit::Scaled(ScaledImage {
+        internal_width,
+        internal_height,
+        scale,
+        display_origin: Vec2::new(
+            ((destination_width - display_width) / 2) as f32,
+            ((destination_height - display_height) / 2) as f32,
+        ),
+        display_size: Vec2::new(display_width as f32, display_height as f32),
+    }))
 }
 
 /// A camera resolved against a viewport: everything needed to project, cull and render.
@@ -202,10 +314,17 @@ pub struct CameraView {
     pub forward: Vec3,
     pub up: Vec3,
     pub right: Vec3,
-    /// Size in pixels of the camera's viewport rectangle (what the aspect ratio is computed from).
+    /// Size in pixels of the destination viewport. [`Self::contains_window_pixel`] uses this.
+    /// The projection aspect uses [`Self::render_viewport`], which matches this unless an
+    /// internal resolution is active.
     pub viewport: Vec2,
-    /// Top-left corner of the viewport rectangle on the render target, in pixels.
+    /// Top-left corner of the destination viewport on the render target, in pixels.
     pub viewport_origin: Vec2,
+    /// Pixel size of the image that was projected and, for an orthographic snap, quantized.
+    /// Equal to [`Self::viewport`] when presentation is direct.
+    pub render_viewport: Vec2,
+    /// How the rendered image meets the destination. [`PresentationFit::Rejected`] is not drawn.
+    pub fit: PresentationFit,
 }
 
 impl CameraView {
@@ -219,36 +338,61 @@ impl CameraView {
     /// from this viewport's pixel aspect. [`CameraProjection::Custom`] keeps the stored view-to-clip
     /// matrix; a resize changes pixel mapping only.
     ///
-    /// Orthographic [`Camera::pixel_snap`] moves the eye onto the viewport pixel grid before
-    /// `look_to_lh`. The projection matrix, including reverse-Z, is not snapped. Callers that
-    /// project or cast rays from the raw `Transform`, without building this view, can disagree by
-    /// up to half a pixel.
+    /// Orthographic [`Camera::pixel_snap`] moves the eye onto the render-image pixel grid before
+    /// `look_to_lh`. That grid is the internal resolution when it is set, and the destination
+    /// viewport otherwise. The projection matrix, including reverse-Z, is not snapped. Callers
+    /// that project or cast rays from the raw `Transform`, without building this view, can
+    /// disagree by up to half a render pixel.
     pub fn new(camera: &Camera, transform: &GlobalTransform, target_size: Vec2) -> Self {
         let t = transform.to_transform();
         let (mut position, forward, up) = (t.position, t.forward(), t.up());
         let (viewport_origin, viewport) = camera.viewport.to_pixels(target_size);
-        if let Some(eye) = orthographic_pixel_eye(camera, position, forward, up, viewport) {
+        let fit = presentation_fit(camera, viewport_origin, viewport);
+        let render_viewport = render_size(viewport, fit);
+        if let Some(eye) = orthographic_pixel_eye(camera, position, forward, up, render_viewport) {
             position = eye;
         }
         let view = Mat4::look_to_lh(position, forward, up);
-        let proj = camera.projection.matrix(viewport.x / viewport.y.max(1.0));
-        Self { view, proj, view_proj: proj * view, position, forward, up, right: t.right(), viewport, viewport_origin }
+        let proj = camera.projection.matrix(render_viewport.x / render_viewport.y.max(1.0));
+        Self {
+            view,
+            proj,
+            view_proj: proj * view,
+            position,
+            forward,
+            up,
+            right: t.right(),
+            viewport,
+            viewport_origin,
+            render_viewport,
+            fit,
+        }
     }
 
     pub fn aspect(&self) -> f32 {
-        self.viewport.x / self.viewport.y.max(1.0)
+        self.render_viewport.x / self.render_viewport.y.max(1.0)
+    }
+
+    /// Whether this camera writes a destination and owns the pixels in its viewport, including bars.
+    pub fn presented(&self) -> bool {
+        !matches!(self.fit, PresentationFit::Rejected(_))
     }
 
     /// Projects with this view's own matrices (identical to `Projection::project` for the camera's
     /// projection).
     pub fn project(&self, world_position: Vec3) -> Option<ScreenPosition> {
         let clip = self.view_proj * world_position.extend(1.0);
-        ScreenPosition::from_clip(clip, self.view.transform_point3(world_position).z, self.viewport)
+        ScreenPosition::from_clip(clip, self.view.transform_point3(world_position).z, self.render_viewport)
     }
 
-    /// Whether `window_pixel` lies in this viewport. Coordinates are target pixels, origin
-    /// top-left. The rectangle is half-open: the far edges belong to a neighbor that starts there.
+    /// Whether `window_pixel` lies in this destination viewport. Coordinates are target pixels,
+    /// origin top-left. The rectangle is half-open: the far edges belong to a neighbor that
+    /// starts there. A rejected presentation does not contain any pixel, so a camera underneath
+    /// can be chosen. Letterbox bars do contain the pixel.
     pub fn contains_window_pixel(&self, window_pixel: Vec2) -> bool {
+        if !self.presented() {
+            return false;
+        }
         let (origin, size) = (self.viewport_origin, self.viewport);
         window_pixel.x >= origin.x
             && window_pixel.y >= origin.y
@@ -256,20 +400,53 @@ impl CameraView {
             && window_pixel.y < origin.y + size.y
     }
 
-    /// `window_pixel - viewport_origin`. [`Self::ray_from_pixels`] and [`Self::project`] use
-    /// this viewport-local space, not window pixels.
+    /// `window_pixel - viewport_origin`. This is destination-local. [`Self::ray_from_pixels`]
+    /// expects render pixels, which match this only when presentation is direct.
     pub fn window_to_viewport(&self, window_pixel: Vec2) -> Vec2 {
         window_pixel - self.viewport_origin
     }
 
-    /// World-space ray through a pixel (origin top-left of this viewport): `(origin, unit direction)`.
+    /// Render pixel for a destination pixel, or `None` outside the displayed image.
     ///
-    /// The ray is the unprojection of NDC depth 1 (near) and 0 (far) through `view_proj`. `None`
-    /// when that matrix has no reliable inverse, including a singular custom projection. Rendering
-    /// does not require the inverse and does not substitute a ray.
+    /// Direct cameras return the destination-local pixel. A scaled camera divides by the integer
+    /// scale after subtracting the displayed origin, so the center of an output block is the
+    /// center of the matching internal pixel. Letterbox bars and a viewport that is too small
+    /// return `None`. A rejected camera returns `None`.
+    pub fn render_pixel(&self, window_pixel: Vec2) -> Option<Vec2> {
+        if !self.contains_window_pixel(window_pixel) {
+            return None;
+        }
+        match self.fit {
+            PresentationFit::Direct => Some(self.window_to_viewport(window_pixel)),
+            PresentationFit::Scaled(image) => {
+                let local = window_pixel - image.display_origin;
+                if local.x < 0.0 || local.y < 0.0 || local.x >= image.display_size.x || local.y >= image.display_size.y
+                {
+                    return None;
+                }
+                Some(local / image.scale as f32)
+            }
+            PresentationFit::Letterbox { .. } | PresentationFit::Rejected(_) => None,
+        }
+    }
+
+    /// [`Self::ray_from_pixels`] through [`Self::render_pixel`]. Bars and rejected cameras return `None`.
+    pub fn ray_from_window_pixel(&self, window_pixel: Vec2) -> Option<(Vec3, Vec3)> {
+        self.ray_from_pixels(self.render_pixel(window_pixel)?)
+    }
+
+    /// World-space ray through a render pixel (origin top-left of the rendered image):
+    /// `(origin, unit direction)`.
+    ///
+    /// For a direct camera the render image is the destination viewport. For an internal
+    /// resolution it is that internal image, not the enlarged destination. The ray is the
+    /// unprojection of NDC depth 1 (near) and 0 (far) through `view_proj`. `None` when that
+    /// matrix has no reliable inverse, including a singular custom projection. Rendering does
+    /// not require the inverse and does not substitute a ray.
     pub fn ray_from_pixels(&self, pixels: Vec2) -> Option<(Vec3, Vec3)> {
         let inv = self.view_proj.inverse()?;
-        let ndc = Vec2::new(pixels.x / self.viewport.x * 2.0 - 1.0, 1.0 - pixels.y / self.viewport.y * 2.0);
+        let ndc =
+            Vec2::new(pixels.x / self.render_viewport.x * 2.0 - 1.0, 1.0 - pixels.y / self.render_viewport.y * 2.0);
         let unproject = |z: f32| {
             let p = inv * engine_math::Vec4::new(ndc.x, ndc.y, z, 1.0);
             p.xyz() / p.w
@@ -279,10 +456,44 @@ impl CameraView {
     }
 }
 
+fn presentation_fit(camera: &Camera, viewport_origin: Vec2, viewport: Vec2) -> PresentationFit {
+    let Some((width, height)) = camera.internal_resolution else {
+        return PresentationFit::Direct;
+    };
+    let destination_width = viewport.x.round().max(1.0) as u32;
+    let destination_height = viewport.y.round().max(1.0) as u32;
+    let fit = match fit_internal_resolution(width, height, destination_width, destination_height) {
+        Ok(fit) => fit,
+        Err(error) => return PresentationFit::Rejected(PresentationReject::Size(error)),
+    };
+    if camera.clear == CameraClear::Load {
+        return PresentationFit::Rejected(PresentationReject::Load { width, height });
+    }
+    match fit {
+        PresentationFit::Scaled(mut image) => {
+            image.display_origin += viewport_origin;
+            PresentationFit::Scaled(image)
+        }
+        other => other,
+    }
+}
+
+fn render_size(destination: Vec2, fit: PresentationFit) -> Vec2 {
+    match fit {
+        PresentationFit::Scaled(image) => Vec2::new(image.internal_width as f32, image.internal_height as f32),
+        PresentationFit::Letterbox { internal_width, internal_height } => {
+            Vec2::new(internal_width as f32, internal_height as f32)
+        }
+        PresentationFit::Direct | PresentationFit::Rejected(_) => destination,
+    }
+}
+
 /// Eye for an orthographic camera whose view-space X and Y translation are an integer number of
-/// viewport pixels, or `None` when snapping does not apply.
+/// render pixels, or `None` when snapping does not apply.
 ///
-/// The scale is `viewport_height_px / orthographic_height`. That is both axes of
+/// The scale is `render_height_px / orthographic_height`. The render height is the internal
+/// image when [`Camera::internal_resolution`] is set, and the destination viewport otherwise.
+/// That is both axes of
 /// [`Mat4::orthographic_lh`] for a symmetric window whose aspect is `viewport_width / viewport_height`:
 /// one world unit is `viewport_height / height` pixels. The basis is the same one `look_to_lh`
 /// builds from `forward` and `up`.

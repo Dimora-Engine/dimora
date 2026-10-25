@@ -13,6 +13,7 @@ members = [
     "examples/basic_2_5d",
     "examples/spatial_scene",
     "examples/depth_view",
+    "examples/internal_resolution",
 ]
 
 [workspace.package]

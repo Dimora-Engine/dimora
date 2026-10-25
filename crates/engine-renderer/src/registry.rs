@@ -55,6 +55,8 @@ const CAMERA_FIELDS: &[FieldDesc] = &[
     FieldDesc::new("order", "i32"),
     FieldDesc::new("presentation", "CameraPresentation"),
     FieldDesc::new("pixel_snap", "bool"),
+    FieldDesc::new("internal_resolution", "Option<(u32, u32)>"),
+    FieldDesc::new("letterbox_color", "Color"),
 ];
 
 const LIGHT_FIELDS: &[FieldDesc] =
@@ -171,6 +173,11 @@ fn camera_values(camera: &Camera) -> Vec<String> {
         camera.order.to_string(),
         format!("{:?}", camera.presentation),
         camera.pixel_snap.to_string(),
+        match camera.internal_resolution {
+            Some((width, height)) => format!("{width}x{height}"),
+            None => "none".to_string(),
+        },
+        color(camera.letterbox_color),
     ]
 }
 

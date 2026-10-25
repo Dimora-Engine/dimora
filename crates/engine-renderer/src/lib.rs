@@ -36,7 +36,10 @@ mod registry;
 mod render_target;
 pub mod scene;
 
-pub use camera::{Camera, CameraClear, CameraOutput, CameraPresentation, CameraView, ViewportRect};
+pub use camera::{
+    fit_internal_resolution, Camera, CameraClear, CameraOutput, CameraPresentation, CameraView, PresentationFit,
+    PresentationReject, ScaledImage, ViewportRect,
+};
 pub use components::{
     AmbientLight, Fog, Light, LightKind, Material, Mesh, RenderOrder, Sprite, SpriteBlend, SpriteOrientation, TileMap,
 };

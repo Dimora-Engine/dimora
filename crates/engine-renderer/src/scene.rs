@@ -267,6 +267,10 @@ pub struct ExtractStats {
     /// Debug segments copied from [`crate::DebugDraw`] for this frame. Counted once, not once per
     /// camera. Zero when the resource is absent or empty.
     pub debug_segments: u32,
+    /// Cameras that were not drawn because internal resolution was combined with
+    /// [`crate::CameraClear::Load`] or the size was rejected. Counted on the scene, not per pass.
+    /// A direct camera is not one of these.
+    pub presentation_skipped: u32,
 }
 
 /// One active camera, already culled and sorted for its own view.
@@ -286,6 +290,9 @@ pub struct CameraPass {
     pub output: CameraOutput,
     pub clear: CameraClear,
     pub clear_color: Color,
+    /// [`crate::Camera::letterbox_color`] copied at extraction. Used when the view's fit is scaled
+    /// or letterboxed. A direct camera does not read it.
+    pub letterbox_color: Color,
     /// [`crate::Camera::presentation`] copied at extraction. The backend reads this. Extraction
     /// does not build a second scene for [`crate::CameraPresentation::Depth`].
     pub presentation: crate::CameraPresentation,

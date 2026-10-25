@@ -5,7 +5,7 @@ use engine_core::Color;
 use engine_math::{Mat3, Mat4, Quat, Rect, Vec2, Vec3};
 use engine_world::{Entity, GlobalTransform, Parent, Visibility, World};
 
-use crate::camera::{Camera, CameraClear, CameraOutput, CameraView};
+use crate::camera::{Camera, CameraClear, CameraOutput, CameraView, PresentationFit, PresentationReject};
 use crate::components::{
     AmbientLight, Fog, Light, LightKind, Mesh, RenderOrder, Sprite, SpriteBlend, SpriteOrientation, TileMap,
 };
@@ -43,7 +43,7 @@ use crate::scene::*;
 pub fn extract_scene(world: &World, assets: &AssetManager, target_size: Vec2) -> Option<RenderScene> {
     let hidden = AncestorVisibility::read(world);
     let poses = render_poses(world);
-    let (cameras, missing_outputs) = ordered_cameras(world, target_size, &poses);
+    let (cameras, missing_outputs, presentation_skipped) = ordered_cameras(world, target_size, &poses);
     if cameras.is_empty() {
         return None;
     }
@@ -66,8 +66,11 @@ pub fn extract_scene(world: &World, assets: &AssetManager, target_size: Vec2) ->
     let mut missing_targets = missing_outputs;
     let mut passes = Vec::with_capacity(cameras.len());
     for camera in &cameras {
-        let pass =
-            build_pass(world, assets, camera, &sprites, &tiles, &meshes, &lights, &written, &mut missing_targets);
+        let pass = if matches!(camera.view.fit, PresentationFit::Letterbox { .. }) {
+            empty_camera_pass(camera)
+        } else {
+            build_pass(world, assets, camera, &sprites, &tiles, &meshes, &lights, &written, &mut missing_targets)
+        };
         if let CameraOutput::Target(id) = pass.output {
             written.insert(id);
         }
@@ -80,6 +83,7 @@ pub fn extract_scene(world: &World, assets: &AssetManager, target_size: Vec2) ->
         missing_assets: shared.missing_assets,
         missing_targets,
         debug_segments,
+        presentation_skipped,
         ..ExtractStats::default()
     };
     for pass in &passes {
@@ -106,20 +110,28 @@ pub struct OrderedCamera {
     pub output: CameraOutput,
     pub clear: CameraClear,
     pub clear_color: Color,
+    pub letterbox_color: Color,
     pub presentation: crate::CameraPresentation,
     pub view: CameraView,
 }
 
-/// The topmost surface camera under a window pixel, plus that pixel in viewport-local space.
+/// The topmost surface camera under a window pixel.
 ///
 /// This chooses a camera. It does not ask which object is visible at the pixel.
+/// A presented camera owns its letterbox bars: the hit is that camera and [`Self::render_pixel`]
+/// is `None`, so the camera underneath is not chosen. A rejected internal resolution does not
+/// contain the pixel.
 #[derive(Clone, Copy, Debug)]
 pub struct SurfaceHit {
     pub camera_id: u32,
     pub order: i32,
     pub view: CameraView,
-    /// `window_pixel - viewport_origin`, ready for [`CameraView::ray_from_pixels`].
+    /// `window_pixel - viewport_origin`. Destination-local. This matches
+    /// [`Self::render_pixel`] only when the camera draws directly.
     pub viewport_pixel: Vec2,
+    /// Render pixel for [`CameraView::ray_from_pixels`], or `None` in a letterbox bar or when
+    /// the viewport is too small for the internal image.
+    pub render_pixel: Option<Vec2>,
 }
 
 /// Active surface cameras in draw order: ascending [`Camera::order`], then ascending entity id.
@@ -139,7 +151,8 @@ pub fn active_surface_cameras(world: &World, target_size: Vec2) -> Vec<OrderedCa
 ///
 /// Overlap uses that later camera. A pixel in no surface viewport returns `None`. Offscreen
 /// cameras are not candidates, including one drawn later than every surface camera. The returned
-/// [`SurfaceHit::viewport_pixel`] is viewport-local to the surface.
+/// [`SurfaceHit::viewport_pixel`] is destination-local. [`SurfaceHit::render_pixel`] is the
+/// coordinate [`CameraView::ray_from_pixels`] takes.
 pub fn top_surface_camera(world: &World, window_pixel: Vec2, target_size: Vec2) -> Option<SurfaceHit> {
     active_surface_cameras(world, target_size)
         .into_iter()
@@ -149,6 +162,7 @@ pub fn top_surface_camera(world: &World, window_pixel: Vec2, target_size: Vec2) 
             order: camera.order,
             view: camera.view,
             viewport_pixel: camera.view.window_to_viewport(window_pixel),
+            render_pixel: camera.view.render_pixel(window_pixel),
         })
 }
 
@@ -181,9 +195,10 @@ fn destination_size(world: &World, output: CameraOutput, surface: Vec2) -> Optio
     }
 }
 
-fn ordered_cameras(world: &World, target_size: Vec2, poses: &RenderPoses) -> (Vec<OrderedCamera>, u32) {
+fn ordered_cameras(world: &World, target_size: Vec2, poses: &RenderPoses) -> (Vec<OrderedCamera>, u32, u32) {
     let mut cameras = Vec::new();
     let mut missing_outputs = 0u32;
+    let mut presentation_skipped = 0u32;
     for (entity, (camera, global)) in world.query::<(&Camera, &GlobalTransform)>().iter() {
         if !camera.active {
             continue;
@@ -201,18 +216,72 @@ fn ordered_cameras(world: &World, target_size: Vec2, poses: &RenderPoses) -> (Ve
             continue;
         };
         let placed = GlobalTransform { matrix: poses.matrix(entity, global) };
+        let view = CameraView::new(camera, &placed, size);
+        match view.fit {
+            PresentationFit::Rejected(reason) => {
+                presentation_skipped += 1;
+                warn_presentation_once(entity.id(), &reject_message(entity.id(), reason));
+                continue;
+            }
+            PresentationFit::Letterbox { internal_width, internal_height } => warn_presentation_once(
+                entity.id(),
+                &format!(
+                    "camera {} internal resolution {internal_width}x{internal_height} does not fit in {:.0}x{:.0}; the viewport is filled with the letterbox color and the scene is not rendered",
+                    entity.id(),
+                    view.viewport.x,
+                    view.viewport.y
+                ),
+            ),
+            PresentationFit::Direct | PresentationFit::Scaled(_) => {}
+        }
         cameras.push(OrderedCamera {
             camera_id: entity.id(),
             order: camera.order,
             output: camera.output,
             clear: camera.clear,
             clear_color: camera.clear_color,
+            letterbox_color: camera.letterbox_color,
             presentation: camera.presentation,
-            view: CameraView::new(camera, &placed, size),
+            view,
         });
     }
     cameras.sort_by_key(|camera| (camera.order, camera.camera_id));
-    (cameras, missing_outputs)
+    (cameras, missing_outputs, presentation_skipped)
+}
+
+fn reject_message(camera_id: u32, reason: PresentationReject) -> String {
+    match reason {
+        PresentationReject::Load { width, height } => format!(
+            "camera {camera_id} internal resolution {width}x{height} with CameraClear::Load was not drawn; Load cannot keep destination pixels through a private image"
+        ),
+        PresentationReject::Size(error) => {
+            format!("camera {camera_id} internal resolution was not drawn: {error}")
+        }
+    }
+}
+
+fn warn_presentation_once(camera_id: u32, message: &str) {
+    use std::sync::Mutex;
+    static WARNED: Mutex<Vec<(u32, u64)>> = Mutex::new(Vec::new());
+    let key = (camera_id, fnv_message(message));
+    let mut warned = WARNED.lock().unwrap_or_else(|poison| poison.into_inner());
+    if warned.contains(&key) {
+        return;
+    }
+    if warned.len() == 64 {
+        warned.remove(0);
+    }
+    warned.push(key);
+    log::warn!("{message}");
+}
+
+fn fnv_message(message: &str) -> u64 {
+    let mut hash = 0xcbf29ce484222325u64;
+    for byte in message.bytes() {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
 }
 
 fn sprite_sample(
@@ -421,6 +490,30 @@ fn select_lights(lights: &[LightData], view: &CameraView) -> Vec<LightData> {
     lights
 }
 
+fn empty_camera_pass(camera: &OrderedCamera) -> CameraPass {
+    let view = &camera.view;
+    CameraPass {
+        camera_id: camera.camera_id,
+        order: camera.order,
+        view: *view,
+        output: camera.output,
+        clear: camera.clear,
+        clear_color: camera.clear_color,
+        letterbox_color: camera.letterbox_color,
+        presentation: camera.presentation,
+        viewport_px: [view.viewport_origin.x, view.viewport_origin.y, view.viewport.x, view.viewport.y],
+        lights: Vec::new(),
+        meshes: Vec::new(),
+        opaque_sprites: SpriteLayer::from_ordered(Vec::new()),
+        mask_sprites: SpriteLayer::from_ordered(Vec::new()),
+        cutout_sprites: SpriteLayer::from_ordered(Vec::new()),
+        blended_sprites: SpriteLayer::from_ordered(Vec::new()),
+        blended_meshes: Vec::new(),
+        transparent: Vec::new(),
+        stats: ExtractStats::default(),
+    }
+}
+
 #[allow(clippy::too_many_arguments)] // target availability is the written set plus the missing counter
 fn build_pass(
     world: &World,
@@ -542,6 +635,7 @@ fn build_pass(
         output: camera.output,
         clear: camera.clear,
         clear_color: camera.clear_color,
+        letterbox_color: camera.letterbox_color,
         presentation: camera.presentation,
         viewport_px: [view.viewport_origin.x, view.viewport_origin.y, view.viewport.x, view.viewport.y],
         lights,

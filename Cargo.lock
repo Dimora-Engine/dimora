@@ -758,6 +758,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "internal_resolution"
+version = "0.1.0"
+dependencies = [
+ "engine",
+ "image",
+]
+
+[[package]]
 name = "jni"
 version = "0.22.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"

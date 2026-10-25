@@ -8,9 +8,9 @@ use engine_assets::{
 };
 use engine_math::Mat4;
 use engine_renderer::{
-    CameraClear, CameraOutput, CameraPass, CameraPresentation, DebugSegment, MeshDraw, MeshInstance, RenderScene,
-    RenderTargetDesc, RenderTargetId, SpriteBatch, SpriteLayer, SpritePipelineKind, TransparentBatch, DEPTH_VIEW_EMPTY,
-    DEPTH_VIEW_MIN_SPAN, DEPTH_VIEW_UNSUPPORTED,
+    CameraClear, CameraOutput, CameraPass, CameraPresentation, DebugSegment, MeshDraw, MeshInstance, PresentationFit,
+    RenderScene, RenderTargetDesc, RenderTargetId, ScaledImage, SpriteBatch, SpriteLayer, SpritePipelineKind,
+    TransparentBatch, DEPTH_VIEW_EMPTY, DEPTH_VIEW_MIN_SPAN, DEPTH_VIEW_UNSUPPORTED,
 };
 use wgpu::util::DeviceExt;
 
@@ -61,6 +61,9 @@ pub struct FrameStats {
     /// not a viewport clear. Zero when every camera is shaded, so a shaded frame's
     /// [`Self::draw_calls`] stays the world and clear total.
     pub depth_view_draws: u32,
+    /// Nearest blits of an internal camera image. Not a world draw and not a viewport clear.
+    /// Zero when no camera uses an internal resolution that fits in its viewport.
+    pub presentation_draws: u32,
 }
 
 /// GPU submission counts for one camera pass. Summed into [`FrameStats`].
@@ -72,6 +75,7 @@ pub struct PassFrameStats {
     pub mesh_instances: u32,
     pub submitted_instances: u32,
     pub depth_view_draws: u32,
+    pub presentation_draws: u32,
 }
 
 /// Frames a cached texture or mesh may go unused before it is evicted, unless configured otherwise
@@ -128,6 +132,22 @@ pub struct GpuResourceStats {
     /// Offscreen color and depth images replaced because the description's size or generation changed.
     /// The previous image is dropped. wgpu keeps it alive until earlier submissions finish.
     pub render_target_reallocs: u64,
+    /// Private internal-resolution color images created. The matching depth image is not a second count.
+    pub internal_target_creates: u64,
+    /// Private internal images replaced because that camera's internal size changed.
+    pub internal_target_reallocs: u64,
+    /// Private internal images dropped because the camera no longer presents one this frame.
+    pub internal_target_drops: u64,
+}
+
+/// Private internal-resolution images retained after the latest frame.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct InternalTargetUsage {
+    pub cameras: u32,
+    /// `width * height * 4` summed across retained color images.
+    pub color_bytes: u64,
+    /// `width * height * 4` summed across the matching `Depth32Float` images.
+    pub depth_bytes: u64,
 }
 
 /// Effective GPU sampling and storage for one cached asset texture.
@@ -237,6 +257,16 @@ struct GpuRenderTarget {
     bind_group: wgpu::BindGroup,
 }
 
+/// Private color and depth for one camera's internal resolution. Not a [`RenderTargetId`].
+struct InternalTarget {
+    width: u32,
+    height: u32,
+    color: wgpu::Texture,
+    view: wgpu::TextureView,
+    depth: DepthImage,
+    present_bind_group: wgpu::BindGroup,
+}
+
 /// Growable vertex buffer rewritten every frame.
 struct InstanceBuffer {
     buffer: wgpu::Buffer,
@@ -294,8 +324,14 @@ pub struct SceneRenderer {
     /// Color-only viewport fill. Later cameras with [`CameraClear::Color`] draw this inside the
     /// scissor. It does not write depth and does not blend.
     clear_pipeline: wgpu::RenderPipeline,
+    /// Same fill as [`Self::clear_pipeline`] with no depth state, for a presentation pass that
+    /// does not attach destination depth.
+    color_fill_pipeline: wgpu::RenderPipeline,
     clear_bind_group: wgpu::BindGroup,
     clear_uniform: wgpu::Buffer,
+    present_pipeline: wgpu::RenderPipeline,
+    present_layout: wgpu::BindGroupLayout,
+    present_uniform: wgpu::Buffer,
     /// Fullscreen depth presentation. No depth state: its pass has no depth attachment.
     /// Created with the renderer. A shaded frame does not bind it.
     depth_view_pipeline: wgpu::RenderPipeline,
@@ -337,6 +373,10 @@ pub struct SceneRenderer {
     /// Sampler used by every offscreen target. Targets have no asset sampler descriptor.
     target_sampler: wgpu::Sampler,
     render_targets: HashMap<RenderTargetId, GpuRenderTarget>,
+    /// Keyed by [`CameraPass::camera_id`]. Entries exist only for cameras that scaled an image
+    /// this frame. A size change replaces the entry. wgpu keeps the old image until earlier
+    /// submissions finish.
+    internal_targets: HashMap<u32, InternalTarget>,
     meshes: HashMap<AssetId, GpuMesh>,
     opaque_instances: InstanceBuffer,
     mask_instances: InstanceBuffer,
@@ -629,6 +669,91 @@ impl SceneRenderer {
             multiview_mask: None,
             cache: None,
         });
+        let color_fill_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("letterbox"),
+            layout: Some(&device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("letterbox layout"),
+                bind_group_layouts: &[Some(&clear_layout)],
+                immediate_size: 0,
+            })),
+            vertex: wgpu::VertexState {
+                module: &clear_shader,
+                entry_point: Some("vs_clear"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &clear_shader,
+                entry_point: Some("fs_clear"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState { format, blend: None, write_mask: wgpu::ColorWrites::ALL })],
+            }),
+            primitive: wgpu::PrimitiveState { cull_mode: None, ..Default::default() },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+        let present_uniform = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("internal present"),
+            size: core::mem::size_of::<PresentUniform>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let present_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("internal present layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+        let present_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("internal present"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/present.wgsl").into()),
+        });
+        let present_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("internal present"),
+            layout: Some(&device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("internal present layout"),
+                bind_group_layouts: &[Some(&present_layout)],
+                immediate_size: 0,
+            })),
+            vertex: wgpu::VertexState {
+                module: &present_shader,
+                entry_point: Some("vs_present"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &present_shader,
+                entry_point: Some("fs_present"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState { format, blend: None, write_mask: wgpu::ColorWrites::ALL })],
+            }),
+            primitive: wgpu::PrimitiveState { cull_mode: None, ..Default::default() },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
 
         let depth_view_uniform = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("depth view"),
@@ -738,8 +863,12 @@ impl SceneRenderer {
             globals,
             globals_bind_group,
             clear_pipeline,
+            color_fill_pipeline,
             clear_bind_group,
             clear_uniform,
+            present_pipeline,
+            present_layout,
+            present_uniform,
             depth_view_pipeline,
             depth_view_layout,
             depth_view_uniform,
@@ -747,6 +876,7 @@ impl SceneRenderer {
             missing,
             target_sampler: default_sampler,
             render_targets: HashMap::new(),
+            internal_targets: HashMap::new(),
             texture_layout,
             samplers,
             anisotropic_filtering,
@@ -973,6 +1103,7 @@ impl SceneRenderer {
             stats.mesh_instances += one.mesh_instances;
             pass_stats.push(one);
         }
+        self.retire_internal_targets(&scene.passes);
         self.stats = stats;
         self.pass_stats = pass_stats;
     }
@@ -1020,6 +1151,28 @@ impl SceneRenderer {
             GpuGlobals::from_camera(&camera.view, scene.ambient, scene.fog, scene.coplanar_thickness, &camera.lights);
         gpu.queue.write_buffer(&self.globals, 0, bytemuck::bytes_of(&globals));
 
+        if matches!(camera.view.fit, PresentationFit::Rejected(_)) {
+            return PassFrameStats::default();
+        }
+        if matches!(camera.view.fit, PresentationFit::Letterbox { .. }) {
+            return self.submit_letterbox(gpu, camera, first, target, stats);
+        }
+        let scaled = match camera.view.fit {
+            PresentationFit::Scaled(image) => Some(image),
+            _ => None,
+        };
+        if let Some(image) = scaled {
+            if !self.ensure_internal(gpu, camera.camera_id, image.internal_width, image.internal_height) {
+                log::warn!(
+                    "camera {} internal resolution {}x{} was not allocated; the viewport is filled with the letterbox color",
+                    camera.camera_id,
+                    image.internal_width,
+                    image.internal_height
+                );
+                return self.submit_letterbox(gpu, camera, first, target, stats);
+            }
+        }
+
         if let CameraOutput::Target(id) = camera.output {
             if !self.render_targets.contains_key(&id) {
                 log::warn!("render target {id} has no GPU image; camera {} was not drawn", camera.camera_id);
@@ -1030,11 +1183,18 @@ impl SceneRenderer {
         // A later Color camera paints only its rectangle on this destination. The attachment
         // clear covers the whole image, so it is used once, for the first camera that writes it.
         // Alpha matches that clear: 1.
-        let fill_viewport = !first && camera.clear == CameraClear::Color;
+        let fill_viewport = scaled.is_none() && !first && camera.clear == CameraClear::Color;
         if fill_viewport {
             let uniform =
                 ClearUniform { color: [camera.clear_color.r, camera.clear_color.g, camera.clear_color.b, 1.0] };
             gpu.queue.write_buffer(&self.clear_uniform, 0, bytemuck::bytes_of(&uniform));
+        }
+        if let Some(image) = scaled {
+            let plan = self.present_plan(camera, false, first);
+            if plan.fill_draw {
+                self.write_clear(gpu, [camera.letterbox_color.r, camera.letterbox_color.g, camera.letterbox_color.b]);
+            }
+            self.write_present(gpu, image);
         }
         // Depth presentation samples the depth this camera is about to store. The uniform is
         // written before the encoder so this submit sees it. The next camera has its own submit.
@@ -1046,17 +1206,41 @@ impl SceneRenderer {
         let mut one = PassFrameStats::default();
         let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("camera") });
         {
-            let (color_view, depth_view, size) = match camera.output {
-                CameraOutput::Surface => {
-                    let surface_depth = self.depth.as_ref().expect("depth created above");
-                    (target, &surface_depth.attachment, surface_depth.size)
-                }
-                CameraOutput::Target(id) => {
-                    let image = self.render_targets.get(&id).expect("missing targets return before the encoder");
-                    (&image.view, &image.depth.attachment, (image.width, image.height))
+            let (color_view, depth_view, size, scene_viewport, scene_first) = if scaled.is_some() {
+                let image = &self.internal_targets[&camera.camera_id];
+                let size = (image.width, image.height);
+                (
+                    image.view.clone(),
+                    image.depth.attachment.clone(),
+                    size,
+                    [0.0, 0.0, size.0 as f32, size.1 as f32],
+                    true,
+                )
+            } else {
+                match camera.output {
+                    CameraOutput::Surface => {
+                        let surface_depth = self.depth.as_ref().expect("depth created above");
+                        (
+                            target.clone(),
+                            surface_depth.attachment.clone(),
+                            surface_depth.size,
+                            camera.viewport_px,
+                            first,
+                        )
+                    }
+                    CameraOutput::Target(id) => {
+                        let image = self.render_targets.get(&id).expect("missing targets return before the encoder");
+                        (
+                            image.view.clone(),
+                            image.depth.attachment.clone(),
+                            (image.width, image.height),
+                            camera.viewport_px,
+                            first,
+                        )
+                    }
                 }
             };
-            let color_load = if first {
+            let color_load = if scene_first {
                 wgpu::LoadOp::Clear(attachment_clear(camera.clear_color.r, camera.clear_color.g, camera.clear_color.b))
             } else {
                 wgpu::LoadOp::Load
@@ -1064,13 +1248,13 @@ impl SceneRenderer {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("camera"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: color_view,
+                    view: &color_view,
                     depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations { load: color_load, store: wgpu::StoreOp::Store },
                 })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: depth_view,
+                    view: &depth_view,
                     depth_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Clear(0.0),
                         store: if visualize { wgpu::StoreOp::Store } else { wgpu::StoreOp::Discard },
@@ -1081,7 +1265,7 @@ impl SceneRenderer {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            let (x, y, w, h) = clamp_viewport(camera.viewport_px, size);
+            let (x, y, w, h) = clamp_viewport(scene_viewport, size);
             pass.set_viewport(x, y, w, h, 0.0, 1.0);
             pass.set_scissor_rect(x as u32, y as u32, w as u32, h as u32);
             if fill_viewport {
@@ -1126,6 +1310,9 @@ impl SceneRenderer {
         if visualize {
             self.draw_depth_view(&mut encoder, camera, target, stats, &mut one);
         }
+        if scaled.is_some() {
+            self.record_present(&mut encoder, camera, target, first, stats, &mut one);
+        }
         gpu.queue.submit([encoder.finish()]);
         one
     }
@@ -1134,6 +1321,21 @@ impl SceneRenderer {
     ///
     /// The group is not created for a shaded camera. Resizing the image drops it with the image.
     fn prepare_depth_view(&mut self, gpu: &GpuContext, camera: &CameraPass) {
+        if let PresentationFit::Scaled(image) = camera.view.fit {
+            let viewport = [0.0, 0.0, image.internal_width as f32, image.internal_height as f32];
+            let uniform = DepthViewUniform::from_projection(camera.view.proj, viewport);
+            gpu.queue.write_buffer(&self.depth_view_uniform, 0, bytemuck::bytes_of(&uniform));
+            if self.internal_targets[&camera.camera_id].depth.sample_bind_group.is_some() {
+                return;
+            }
+            let sample = self.internal_targets[&camera.camera_id].depth.sample.clone();
+            let group =
+                depth_sample_bind_group(&gpu.device, &self.depth_view_layout, &sample, &self.depth_view_uniform);
+            self.internal_targets.get_mut(&camera.camera_id).expect("internal image").depth.sample_bind_group =
+                Some(group);
+            self.resource_stats.bind_group_creates += 1;
+            return;
+        }
         let size = match camera.output {
             CameraOutput::Surface => self.depth.as_ref().expect("depth created above").size,
             CameraOutput::Target(id) => {
@@ -1187,6 +1389,37 @@ impl SceneRenderer {
         stats: &mut FrameStats,
         one: &mut PassFrameStats,
     ) {
+        if let PresentationFit::Scaled(image) = camera.view.fit {
+            let (sample, color_view, size) = {
+                let internal = &self.internal_targets[&camera.camera_id];
+                (
+                    internal.depth.sample_bind_group.clone().expect("internal depth sample"),
+                    internal.view.clone(),
+                    (image.internal_width, image.internal_height),
+                )
+            };
+            let (x, y, w, h) = (0.0, 0.0, size.0 as f32, size.1 as f32);
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("depth view"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &color_view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(&self.depth_view_pipeline);
+            pass.set_bind_group(0, &sample, &[]);
+            pass.set_viewport(x, y, w, h, 0.0, 1.0);
+            pass.set_scissor_rect(0, 0, size.0, size.1);
+            pass.draw(0..3, 0..1);
+            record_depth_view(stats, one);
+            return;
+        }
         let (sample, color_view, size) = match camera.output {
             CameraOutput::Surface => {
                 let depth = self.depth.as_ref().expect("depth created above");
@@ -1221,6 +1454,213 @@ impl SceneRenderer {
         pass.set_scissor_rect(x as u32, y as u32, w as u32, h as u32);
         pass.draw(0..3, 0..1);
         record_depth_view(stats, one);
+    }
+
+    /// Letterbox fill only. The scene was not rendered. The destination viewport is defined.
+    fn submit_letterbox(
+        &mut self,
+        gpu: &GpuContext,
+        camera: &CameraPass,
+        first: bool,
+        surface: &wgpu::TextureView,
+        stats: &mut FrameStats,
+    ) -> PassFrameStats {
+        if let CameraOutput::Target(id) = camera.output {
+            if !self.render_targets.contains_key(&id) {
+                log::warn!("render target {id} has no GPU image; camera {} was not drawn", camera.camera_id);
+                return PassFrameStats::default();
+            }
+        }
+        let plan = self.present_plan(camera, true, first);
+        if plan.fill_draw {
+            self.write_clear(gpu, [camera.letterbox_color.r, camera.letterbox_color.g, camera.letterbox_color.b]);
+        }
+        let mut one = PassFrameStats::default();
+        let mut encoder =
+            gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("letterbox") });
+        self.record_present(&mut encoder, camera, surface, first, stats, &mut one);
+        gpu.queue.submit([encoder.finish()]);
+        one
+    }
+
+    fn record_present(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        camera: &CameraPass,
+        surface: &wgpu::TextureView,
+        first: bool,
+        stats: &mut FrameStats,
+        one: &mut PassFrameStats,
+    ) {
+        let letterbox_only = matches!(camera.view.fit, PresentationFit::Letterbox { .. });
+        let plan = self.present_plan(camera, letterbox_only, first);
+        let (destination, dest_size) = self.destination_view(camera, surface);
+        let (x, y, w, h) = clamp_viewport(camera.viewport_px, dest_size);
+        let load = if !first {
+            wgpu::LoadOp::Load
+        } else if plan.clear_with_letterbox {
+            wgpu::LoadOp::Clear(attachment_clear(
+                camera.letterbox_color.r,
+                camera.letterbox_color.g,
+                camera.letterbox_color.b,
+            ))
+        } else {
+            wgpu::LoadOp::Clear(attachment_clear(camera.clear_color.r, camera.clear_color.g, camera.clear_color.b))
+        };
+        let present = match camera.view.fit {
+            PresentationFit::Scaled(_) => Some(self.internal_targets[&camera.camera_id].present_bind_group.clone()),
+            _ => None,
+        };
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("present"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &destination,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations { load, store: wgpu::StoreOp::Store },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        if plan.fill_draw {
+            pass.set_pipeline(&self.color_fill_pipeline);
+            pass.set_bind_group(0, &self.clear_bind_group, &[]);
+            pass.set_viewport(x, y, w, h, 0.0, 1.0);
+            pass.set_scissor_rect(x as u32, y as u32, w as u32, h as u32);
+            pass.draw(0..3, 0..1);
+            record_clear(stats, one);
+        }
+        if let Some(group) = present.as_ref() {
+            let PresentationFit::Scaled(image) = camera.view.fit else { return };
+            let (dx, dy, dw, dh) = clamp_viewport(
+                [image.display_origin.x, image.display_origin.y, image.display_size.x, image.display_size.y],
+                dest_size,
+            );
+            pass.set_pipeline(&self.present_pipeline);
+            pass.set_bind_group(0, group, &[]);
+            pass.set_viewport(dx, dy, dw, dh, 0.0, 1.0);
+            pass.set_scissor_rect(dx as u32, dy as u32, dw as u32, dh as u32);
+            pass.draw(0..3, 0..1);
+            record_presentation(stats, one);
+        }
+    }
+
+    fn present_plan(&self, camera: &CameraPass, letterbox_only: bool, first: bool) -> PresentPlan {
+        let size = self.output_size(camera);
+        let (x, y, w, h) = clamp_viewport(camera.viewport_px, size);
+        let covers = x <= 0.0 && y <= 0.0 && w + 0.5 >= size.0 as f32 && h + 0.5 >= size.1 as f32;
+        let bars = if letterbox_only {
+            true
+        } else if let PresentationFit::Scaled(image) = camera.view.fit {
+            image.display_size.x + 0.5 < w || image.display_size.y + 0.5 < h
+        } else {
+            false
+        };
+        PresentPlan { fill_draw: bars && !(first && covers), clear_with_letterbox: first && covers && bars }
+    }
+
+    fn output_size(&self, camera: &CameraPass) -> (u32, u32) {
+        match camera.output {
+            CameraOutput::Surface => self.depth.as_ref().expect("depth created above").size,
+            CameraOutput::Target(id) => {
+                let image = &self.render_targets[&id];
+                (image.width, image.height)
+            }
+        }
+    }
+
+    fn destination_view(&self, camera: &CameraPass, surface: &wgpu::TextureView) -> (wgpu::TextureView, (u32, u32)) {
+        match camera.output {
+            CameraOutput::Surface => (surface.clone(), self.output_size(camera)),
+            CameraOutput::Target(id) => {
+                let image = &self.render_targets[&id];
+                (image.view.clone(), (image.width, image.height))
+            }
+        }
+    }
+
+    fn write_clear(&self, gpu: &GpuContext, color: [f32; 3]) {
+        let uniform = ClearUniform { color: [color[0], color[1], color[2], 1.0] };
+        gpu.queue.write_buffer(&self.clear_uniform, 0, bytemuck::bytes_of(&uniform));
+    }
+
+    fn write_present(&self, gpu: &GpuContext, image: ScaledImage) {
+        let uniform =
+            PresentUniform { origin: [image.display_origin.x, image.display_origin.y], scale: image.scale, _pad: 0 };
+        gpu.queue.write_buffer(&self.present_uniform, 0, bytemuck::bytes_of(&uniform));
+    }
+
+    /// Allocates or reuses this camera's private image. `false` when the device cannot allocate it.
+    fn ensure_internal(&mut self, gpu: &GpuContext, camera_id: u32, width: u32, height: u32) -> bool {
+        if let Err(error) = validate_texture_dimensions(width, height, self.dimension_limits(gpu)) {
+            log::warn!("internal resolution {width}x{height} was not allocated: {error}");
+            self.internal_targets.remove(&camera_id);
+            return false;
+        }
+        if let Some(current) = self.internal_targets.get(&camera_id) {
+            if current.width == width && current.height == height {
+                return true;
+            }
+        }
+        let replacing = self.internal_targets.contains_key(&camera_id);
+        let size = wgpu::Extent3d { width, height, depth_or_array_layers: 1 };
+        let color = gpu.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("internal color"),
+            size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: self.format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = color.create_view(&wgpu::TextureViewDescriptor::default());
+        let depth = DepthImage::allocate(&gpu.device, (width, height), "internal depth");
+        let present_bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("internal present"),
+            layout: &self.present_layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&view) },
+                wgpu::BindGroupEntry { binding: 1, resource: self.present_uniform.as_entire_binding() },
+            ],
+        });
+        self.resource_stats.bind_group_creates += 1;
+        if replacing {
+            self.resource_stats.internal_target_reallocs += 1;
+        } else {
+            self.resource_stats.internal_target_creates += 1;
+        }
+        self.internal_targets
+            .insert(camera_id, InternalTarget { width, height, color, view, depth, present_bind_group });
+        true
+    }
+
+    fn retire_internal_targets(&mut self, passes: &[CameraPass]) {
+        let live: HashSet<u32> = passes
+            .iter()
+            .filter(|pass| matches!(pass.view.fit, PresentationFit::Scaled(_)))
+            .map(|pass| pass.camera_id)
+            .collect();
+        let before = self.internal_targets.len();
+        self.internal_targets.retain(|id, _| live.contains(id));
+        self.resource_stats.internal_target_drops += (before - self.internal_targets.len()) as u64;
+    }
+
+    /// Color and depth bytes of private internal images retained for the cameras that scaled
+    /// during the latest [`Self::render`].
+    pub fn internal_targets(&self) -> InternalTargetUsage {
+        let mut color_bytes = 0u64;
+        let mut depth_bytes = 0u64;
+        for image in self.internal_targets.values() {
+            let pixels = u64::from(image.width) * u64::from(image.height);
+            color_bytes += pixels * 4;
+            depth_bytes += pixels * 4;
+        }
+        InternalTargetUsage { cameras: self.internal_targets.len() as u32, color_bytes, depth_bytes }
     }
 
     fn sprite_bind_group<'a>(&'a self, batch: &SpriteBatch) -> &'a wgpu::BindGroup {
@@ -1307,6 +1747,15 @@ impl SceneRenderer {
             pass.draw(0..6, batch.range.clone());
             record_world(stats, one, batch.range.end - batch.range.start);
         }
+    }
+
+    /// Tightly packed RGBA8 of one camera's private internal image after [`Self::render`].
+    ///
+    /// This is a test and diagnostic read. Sprites cannot sample this image, and it is not a
+    /// [`RenderTargetId`]. `None` when that camera did not scale an image this frame.
+    pub fn read_internal(&self, gpu: &GpuContext, camera_id: u32) -> Option<Vec<u8>> {
+        let image = self.internal_targets.get(&camera_id)?;
+        read_texture_level(gpu, &image.color, 0, image.width, image.height)
     }
 
     /// Tightly packed RGBA8 of one offscreen target after [`Self::render`].
@@ -1779,6 +2228,12 @@ fn record_clear(stats: &mut FrameStats, pass: &mut PassFrameStats) {
     pass.clear_draw_calls += 1;
 }
 
+fn record_presentation(stats: &mut FrameStats, pass: &mut PassFrameStats) {
+    stats.draw_calls += 1;
+    stats.presentation_draws += 1;
+    pass.presentation_draws += 1;
+}
+
 fn record_depth_view(stats: &mut FrameStats, pass: &mut PassFrameStats) {
     stats.draw_calls += 1;
     stats.depth_view_draws += 1;
@@ -1800,6 +2255,19 @@ fn clamp_viewport(viewport_px: [f32; 4], size: (u32, u32)) -> (f32, f32, f32, f3
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct ClearUniform {
     color: [f32; 4],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct PresentUniform {
+    origin: [f32; 2],
+    scale: u32,
+    _pad: u32,
+}
+
+struct PresentPlan {
+    fill_draw: bool,
+    clear_with_letterbox: bool,
 }
 
 #[repr(C)]
