@@ -154,6 +154,8 @@ Camera.clear       Color (default) or Load
 Camera.output      Surface (default) or Target(RenderTargetId)
 Camera.order       draw order among active cameras
 Camera.pixel_snap  orthographic view-translation snap; default false; ignored by perspective and custom
+Camera.internal_resolution  optional private image size; default none; the whole view, then an integer nearest blit
+Camera.letterbox_color  bars and a scale-0 viewport; default black; unused when resolution is none
 ```
 
 Every active camera with a drawable destination is a pass. Passes sort by ascending `(order, entity id)`
@@ -176,7 +178,13 @@ placeholder. The previous frame's image is not used. Several cameras may write o
 aspect ratio comes from the viewport rectangle, not the window, so a camera in half the window is
 not stretched. The same `view_proj` drives CPU projection (`CameraView::project`, picking
 rays, culling) and that camera's GPU uniform, so the two cannot disagree. `project` and
-`ray_from_pixels` are viewport-local. A window pixel subtracts `viewport_origin` first.
+`ray_from_pixels` are viewport-local for a direct camera. A window pixel subtracts `viewport_origin` first.
+With `internal_resolution` set, `CameraView::render_pixel` then maps that pixel through the centered
+display rectangle and the integer scale. The center of an output block is the center of the matching
+internal pixel. Letterbox bars contain the camera and `ray_from_window_pixel` returns `None`, so a
+camera underneath is not chosen. A rejected camera, including `CameraClear::Load` with an internal
+resolution, contains no pixel. `ray_from_pixels` still takes render pixels, which are the internal
+pixels when that resolution is active.
 `top_surface_camera` picks the last drawn surface camera whose rectangle contains the window pixel.
 An offscreen camera is not selected that way. `camera_view_of` still resolves it in target-local pixels.
 
@@ -185,6 +193,18 @@ The first camera that writes a destination clears that whole image, whether the 
 later `Load` pass does not. Every pass clears that destination's depth to 0.0 and discards it. The
 renderer submits each camera before writing the next camera's globals or instance data. One
 full-surface camera does not add a fill draw. An offscreen target does not receive the surface clear.
+
+### Integer presentation
+
+`Camera.internal_resolution` (default `None`) is optional. `None` is the direct path above. `Some((width, height))` is the pixel size of the private image for that whole view, not a crop. [ADR-0023](adr/0023-integer-resolution-camera-presentation.md) is Proposed and does not close D-06.
+
+The fit uses the destination viewport in physical pixels. `scale = min(Dw / Iw, Dh / Ih)` with integer division. When `scale >= 1` the displayed size is the internal size times `scale`, centered, with the odd remainder on the right and the bottom. Sampling is nearest. The image is not cropped or stretched. Bars use `letterbox_color` (default black), which is not the scene clear color. 320×180 in 1366×768 is scale 4, a 1280×720 image, and origin (43, 24). When `scale` is 0 the viewport is filled with the letterbox color, the scene is not rendered, and no private image is allocated.
+
+A size of 0 or above the render-target extent is rejected and is not replaced with the destination size. `CameraClear::Load` with an internal resolution is rejected, including at scale 0. The camera is omitted, the destination is not written by it, and a direct camera's `Load` behavior is unchanged. The warning is rate-limited.
+
+The scene pass is the existing one, into a private one-sample color image and a private depth image in the renderer format. Those images are keyed by the camera entity id, reused while the size is unchanged, replaced when the size changes, and dropped when the camera no longer scales. They are not `RenderTargetId`s. The public destination receives the blit, and a later camera samples that. Depth presentation linearizes the internal depth before the blit. The blit does not light, fog, or tint, and it does not change sprite samplers. `presentation_draws` counts the blit. A direct camera adds none.
+
+Orthographic `pixel_snap` uses the internal height. Perspective and custom still ignore the flag. The entity transform is not written.
 
 `CameraProjection::Custom` stores that view-to-clip matrix. `matrix(aspect)` returns it unchanged, so a
 viewport resize changes pixel mapping and does not rebuild the matrix. Perspective and orthographic still
@@ -209,11 +229,11 @@ and clipping. Two objects at different Z with the same X/Y land on the same pixe
 their apparent size at any depth. Moving the camera shifts every object by the same amount: no
 parallax, because there is no per-object parallax value to apply.
 
-`Camera.pixel_snap` (default `false`, settled for D-06A in [ADR-0022](adr/0022-orthographic-pixel-snap.md)) can quantize that shift. The scale is `viewport_height_px / orthographic_height`, which is both axes of the symmetric orthographic window. View-space X and Y translation are rounded to an integer number of those pixels with `f32::round` (a tie rounds away from zero) and the eye is moved in the right/up plane. View-space Z and the rotation stay. The projection is the existing reverse-Z matrix. An already-integer translation does not move. There is no extra half-pixel bias: an odd viewport height puts the optical axis on a pixel center, and an even height puts it on a pixel edge. The correction is at most half a pixel. Crossing the halfway value jumps a whole pixel even when the camera moved by less than one pixel. A translation that stays inside one rounding bin does not change the view.
+`Camera.pixel_snap` (default `false`, settled for D-06A in [ADR-0022](adr/0022-orthographic-pixel-snap.md)) can quantize that shift. The scale is that render image's height in pixels divided by `orthographic_height`, which is both axes of the symmetric orthographic window. A direct camera uses the destination viewport height. An internal resolution uses the internal height. View-space X and Y translation are rounded to an integer number of those pixels with `f32::round` (a tie rounds away from zero) and the eye is moved in the right/up plane. View-space Z and the rotation stay. The projection is the existing reverse-Z matrix. An already-integer translation does not move. There is no extra half-pixel bias: an odd viewport height puts the optical axis on a pixel center, and an even height puts it on a pixel edge. The correction is at most half a pixel. Crossing the halfway value jumps a whole pixel even when the camera moved by less than one pixel. A translation that stays inside one rounding bin does not change the view.
 
-The grid is that camera's viewport from `ViewportRect::to_pixels`, not the window. A split origin, a resize, and an offscreen target each use their own height. Side, top-down, and isometric placements are orthographic, so they snap along the view axes when the flag is set. Roll does too. Perspective, `CameraProjection::Custom`, and the oblique builders do not snap. The flag remains editable. Presets leave it off.
+The grid is the image that camera renders. For a direct camera that is the viewport from `ViewportRect::to_pixels`, not the window. With `internal_resolution` set it is that internal height, including when the displayed image is larger. A split origin, a resize, and an offscreen target each use their own destination rectangle, and the fit is against that rectangle. Side, top-down, and isometric placements are orthographic, so they snap along the view axes when the flag is set. Roll does too. Perspective, `CameraProjection::Custom`, and the oblique builders do not snap. The flag remains editable. Presets leave it off.
 
-Sprites, tilemaps, meshes, and debug lines of that camera share the snapped view, so they occlude one another as before. The snap does not pixelate mesh shading and does not allocate a low-resolution image. Nearest and linear filtering stay on the texture. It also does not freeze independent sprite motion, a sprite animation, camera rotation, a fractional zoom, a sheared custom matrix, a non-integer texel-to-pixel ratio, a rotated or perspective-projected face, or mixed-resolution art. An integer-aligned nearest sprite often keeps the same covered pixels for any camera shift inside the same half-pixel coverage bin as the snapped pose. A sub-pixel pose is therefore not a promise of a different framebuffer, and it is not a promise of an unchanged one once an edge crosses a pixel center.
+Sprites, tilemaps, meshes, and debug lines of that camera share the snapped view, so they occlude one another as before. The snap does not pixelate mesh shading and does not itself allocate a low-resolution image. That image is `internal_resolution` ([ADR-0023](adr/0023-integer-resolution-camera-presentation.md)), and this flag does not turn it on. Nearest and linear filtering stay on the texture. It also does not freeze independent sprite motion, a sprite animation, camera rotation, a fractional zoom, a sheared custom matrix, a non-integer texel-to-pixel ratio, a rotated or perspective-projected face, or mixed-resolution art. An integer-aligned nearest sprite often keeps the same covered pixels for any camera shift inside the same half-pixel coverage bin as the snapped pose. A sub-pixel pose is therefore not a promise of a different framebuffer, and it is not a promise of an unchanged one once an edge crosses a pixel center.
 
 ### Perspective
 

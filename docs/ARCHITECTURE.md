@@ -109,18 +109,25 @@ is exact only for uniform scale.
   `Load` keeps the color already in a later camera's viewport on that same destination.
   `CameraOutput::Surface` is the default. `CameraOutput::Target` names a `RenderTargetId`.
   `pixel_snap` defaults to `false` and is a registered camera field.
+  `internal_resolution` defaults to `None`. `letterbox_color` defaults to black. Both are registered.
+  `None` draws directly into the destination viewport. `Some` renders that whole view at the given
+  size and presents it with integer nearest scaling ([ADR-0023](adr/0023-integer-resolution-camera-presentation.md),
+  Proposed). The private color and depth images are not `RenderTargetId`s.
 * `CameraProjection` is a `#[non_exhaustive]` enum: `Orthographic`, `Perspective`, and
   `Custom(Mat4)` (D-25, M6-1B). `CameraView::new(camera, global_transform, target_size)` resolves the
   view matrix (inverse of the camera's world transform), projection matrix, viewport pixels, and basis
   vectors. The same `view_proj` is used for CPU projection, picking rays, culling and the GPU.
   When `pixel_snap` is set and the projection is orthographic, that constructor shifts the eye in the
-  camera's right/up plane so the view-space X and Y translation land on the viewport pixel grid, then
+  camera's right/up plane so the view-space X and Y translation land on the render-image pixel grid, then
   builds one `look_to_lh` ([ADR-0022](adr/0022-orthographic-pixel-snap.md), settled for D-06A only). `CameraView.position`
   is that eye. `forward`, `up`, and `right` stay the entity basis. The projection, including reverse-Z,
   is not snapped, and the entity transform is not written. Perspective and `Custom` skip the shift and
   keep the flag. Frustum culling, sprites, tiles, meshes, debug lines, depth presentation, and
   `ray_from_pixels` use this view. A ray built from the raw transform, without `CameraView::new`, can
-  disagree by at most half a pixel. There is no second camera and no shader snap.
+  disagree by at most half a pixel. With an internal resolution the grid and the projection aspect
+  are that internal size. `render_pixel` maps a destination pixel into the displayed image.
+  Letterbox bars contain the camera and return no ray. A rejected presentation, including `Load`
+  with an internal resolution, contains no pixel. There is no second camera and no shader snap.
 * The `Projection` trait (`matrix(aspect)`, default `project()`) is implemented by `Orthographic`,
   `Perspective` and the enum. A caller-supplied matrix is `CameraProjection::Custom`, not a trait
   object.
@@ -378,7 +385,8 @@ skinned meshes must pick a class and may not introduce a second ordering concept
 outside this model (painter's order, no depth). Blended meshes use the bounding-sphere centre.
 Intersecting blended objects stay an accepted limit (D-05, KI-14), not a second ordering policy.
 The depth presentation displays the values those rules stored. It does not add a sort, a layer, or a
-second depth convention.
+second depth convention. An internal-resolution camera stores those values in its private depth
+image, linearizes that image, and then nearest-blits the color. The blit does not light, fog, or tint.
 
 **3. Character animation, attachment and world transforms.** Bones and sockets are entities in the
 world, so an attached sword or particle emitter is an ordinary child and follows `propagate_transforms`.
@@ -484,7 +492,7 @@ systems they touch. Each cites evidence from this audit.
 | Id | Risk | Evidence | Cost if found late | Response |
 |---|---|---|---|---|
 | R-1 | **Later transparent primitives still need the shared sequence.** Blended sprites and blended meshes sort and submit together. Particles and skinned characters are not in that list yet. Opaque and mask content stays in the depth-writing passes | `scene.rs` `transparent`; the walk in `scene_renderer.rs` | Moderate for the next transparent primitive if it grows a private list | D-05 is implemented for sprites and meshes (ADR-0015, M5-5C `ab1b6f7`, M5-5D `a7efd6c`). A new blended primitive joins `transparent` instead of a second order |
-| R-2 | **Targets are explicit, not a graph.** `RenderScene.passes` is every drawable camera (D-08). A camera writes the surface or one `RenderTargetId`. A sprite samples a target only after an earlier camera in that frame has written it. There is no scheduler and no previous-frame fallback. The depth presentation is a second pass in the encoder of the camera that owns the destination | `render_target.rs`; `extract.rs` `sprite_sample`; `scene_renderer.rs` `sync_render_targets`, `draw_depth_view` | High if a later effect assumes feedback or automatic ordering | D-08 is implemented locally. The depth view does not add a renderer or a graph. Do not add one for shadows or the editor viewport |
+| R-2 | **Targets are explicit, not a graph.** `RenderScene.passes` is every drawable camera (D-08). A camera writes the surface or one `RenderTargetId`. A sprite samples a target only after an earlier camera in that frame has written it. There is no scheduler and no previous-frame fallback. The depth presentation is a second pass in the encoder of the camera that owns the destination. An internal-resolution blit is another pass in that same submission, after the scene and any depth view, and later cameras sample the public destination | `render_target.rs`; `extract.rs` `sprite_sample`; `scene_renderer.rs` `sync_render_targets`, `draw_depth_view`, `record_present` | High if a later effect assumes feedback or automatic ordering | D-08 is implemented locally. The depth view and the integer blit do not add a renderer or a graph. Do not add one for shadows or the editor viewport |
 | R-3 | **No transform timeline beyond one previous local.** `Transform` is current simulation state. `Interpolate` stores one previous local for opt-in extract interpolation. There is still no dirty tracking, propagation is still a full pass, and camera-dependent animation still has a one-frame latency rule | `interpolate.rs`, `hierarchy.rs`; KI-9, KI-10, D-02 | Moderate if a later system starts reading the render matrix as simulation | M3a-5 stores the previous local and blends only at extract. Dirty tracking stays out (ADR-0009) until a profile |
 | R-4 | **Asset identity and retention.** Handles are name hashes with no recoverable name, no reference counting, ids change on rename, and the collision guard is per type | `handle.rs`, `manager.rs`; D-16 | High once scene files, sheets or bundles exist | Decide D-16 before any persisted format (sheet descriptors in M8 are the first); keep names in the manager so handles can be serialized by name or id |
 | R-5 | **Mutation model.** Systems may still mutate the world directly. Resources are `RefCell` (a double borrow panics). Commands and events exist and follow ADR-0008 | `commands.rs`, `events.rs`, `resources.rs`; KI-9 | A second mutation path, or holding the command writer across a flush, reintroduces the alias | Built in M3a-3. Direct `spawn` remains for code that holds no query. No observers |

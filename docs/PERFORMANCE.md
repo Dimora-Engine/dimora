@@ -797,3 +797,49 @@ Recorded 2026-10-25 in the afternoon, America/Chicago, on the same Apple M5 and 
 
 The medians do not move in one direction. In the first sequence the first snap row is about 51 µs under the opening unsnapped row, and the closing unsnapped row is the slowest. In the second sequence the rows rise from about 1.89 ms to about 2.34 ms across both settings. Several p95 values sit hundreds of microseconds above their medians. The earlier two-camera gap of about 0.1 ms is inside this spread. No extract-time improvement or regression is claimed. No renderer change follows from these numbers. GPU pass time remains unmeasured.
 
+## Integer-resolution presentation
+
+Recorded 2026-10-25 at about 3:05 PM America/Chicago, on `feat/m6-d06b-internal-resolution` at `d491bda`, before the 3:08 PM check. The machine is Apple M5, Metal, macOS arm64, `rustc 1.99.0`. This section does not replace the render-scale table or the pixel-snap table. The scene is the depth-view bench scene, not the 10,000-sprite catalog.
+
+| | |
+|---|---|
+| Command | `cargo run --release -p engine-renderer-wgpu --example internal_resolution_bench` |
+| Scene | 64 cutout sprites and 4 shared cuboids, viewport 1280×720, one orthographic camera or two split viewports |
+| Internal | The internal rows set 320×180. The direct rows leave `internal_resolution` unset |
+| Samples | 4 warmup, then 11, and the whole table twice. Median is the middle sample. p95 is the slowest sample |
+| Extract | `extract_scene`. Not a GPU timestamp |
+| Encode | `SceneRenderer::render` after the previous completion wait. Records and submits. Does not map a readback |
+| Completion | The following `device.poll(wait_indefinitely)`. GPU execution and driver synchronization together. Not a timestamp query in the scene pass or the blit |
+
+One 320×180 color image is 230,400 bytes (`width * height * 4`). The matching `Depth32Float` image is the same number of bytes. Two cameras retain both pairs: 460,800 color bytes and 460,800 depth bytes. A direct row retains neither.
+
+World draws stay 2 for one camera and 4 for two. Presentation draws are 0, 1, or 2 with the camera count on internal rows, and 0 on every direct row. Direct rows create no private image. Internal rows create one image per camera during warmup and do not create or reallocate again across the samples.
+
+| Run | Mode | Cameras | extract median ns | extract p95 ns | encode median ns | encode p95 ns | completion median ns | completion p95 ns |
+|---|---|---|---|---|---|---|---|---|
+| 1 | direct | 1 | 9,750 | 17,000 | 31,167 | 40,000 | 371,208 | 400,833 |
+| 1 | internal | 1 | 7,125 | 8,333 | 36,916 | 41,291 | 426,250 | 446,667 |
+| 1 | direct | 2 | 9,709 | 11,042 | 53,916 | 106,000 | 430,375 | 470,959 |
+| 1 | internal | 2 | 9,625 | 10,792 | 73,416 | 79,958 | 430,208 | 694,833 |
+| 2 | direct | 1 | 7,042 | 7,250 | 29,125 | 33,875 | 371,625 | 461,583 |
+| 2 | internal | 1 | 7,041 | 7,208 | 34,708 | 45,542 | 409,708 | 429,083 |
+| 2 | direct | 2 | 9,542 | 9,833 | 53,459 | 65,208 | 436,875 | 530,166 |
+| 2 | internal | 2 | 9,750 | 10,208 | 73,625 | 84,666 | 425,792 | 510,750 |
+
+Extract of this small scene is about 7–10 µs. Run 1's one-camera internal row was faster than the direct row that preceded it, which is the first-row effect. Run 2's one-camera medians match (7,042 ns and 7,041 ns). The two-camera extract rows stay within a few hundred nanoseconds. No extract budget is assigned.
+
+Encode medians for one internal camera are about 6 µs above the direct row (36.9 µs and 34.7 µs, against 31.2 µs and 29.1 µs). Two internal cameras are about 20 µs above the direct pair (73.4 µs and 73.6 µs, against 53.9 µs and 53.5 µs). That is CPU time recording the extra blit, on a scene whose encode is a few tens of microseconds. It is not a GPU pass time. Completion waits overlap between modes, from about 0.37 ms to about 0.53 ms at the median, and the p95 moves by more than the encode gap. No GPU cost is claimed.
+
+### Size change and disable
+
+One renderer, after the timed rows. Counters are cumulative on that renderer.
+
+| Step | creates | reallocs | drops | cameras | color bytes | depth bytes | world draws | presentation draws |
+|---|---|---|---|---|---|---|---|---|
+| 320×180 | 1 | 0 | 0 | 1 | 230,400 | 230,400 | 2 | 1 |
+| 320×180 again | 1 | 0 | 0 | 1 | 230,400 | 230,400 | 2 | 1 |
+| 160×90 | 1 | 1 | 0 | 1 | 57,600 | 57,600 | 2 | 1 |
+| direct | 1 | 1 | 1 | 0 | 0 | 0 | 2 | 0 |
+
+The second 320×180 frame reuses the images. The size change reallocates once and retains the new size only. Disabling the feature drops the private images and adds no presentation draw. World draws stay 2. A disabled camera therefore adds no private image and no presentation draw on this path.
+
