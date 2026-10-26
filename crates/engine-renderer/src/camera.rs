@@ -98,8 +98,9 @@ pub enum CameraPresentation {
 /// unchanged at one sample. An editor must show that rejection. It must not present the skipped
 /// camera as a successful composite.
 ///
-/// A renderer set to 4× does not draw `Load` yet. Preserving destination color through a
-/// multisampled viewport is later work. The camera is skipped, and it is not drawn at one sample.
+/// At 4×, a later direct `Load` camera copies the resolved destination into every sample of its
+/// viewport, draws, and resolves that viewport only. The first camera that writes a destination
+/// still clears the whole image. `Load` with internal resolution stays rejected.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CameraClear {
     /// Replace this camera's viewport with [`Camera::clear_color`] before its scene.

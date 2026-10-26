@@ -8,9 +8,9 @@ use engine_assets::{
 };
 use engine_math::Mat4;
 use engine_renderer::{
-    msaa4_camera_skip, select_msaa, CameraClear, CameraOutput, CameraPass, CameraPresentation, DebugSegment, MeshDraw,
-    MeshInstance, MsaaError, MsaaSamples, MsaaSkip, PresentationFit, RenderScene, RenderTargetDesc, RenderTargetId,
-    ScaledImage, SpriteBatch, SpriteLayer, SpritePipelineKind, TransparentBatch, DEPTH_VIEW_EMPTY, DEPTH_VIEW_MIN_SPAN,
+    select_msaa, CameraClear, CameraOutput, CameraPass, CameraPresentation, DebugSegment, MeshDraw, MeshInstance,
+    MsaaError, MsaaSamples, MsaaSkip, PresentationFit, RenderScene, RenderTargetDesc, RenderTargetId, ScaledImage,
+    SpriteBatch, SpriteLayer, SpritePipelineKind, TransparentBatch, DEPTH_VIEW_EMPTY, DEPTH_VIEW_MIN_SPAN,
     DEPTH_VIEW_UNSUPPORTED,
 };
 use wgpu::util::DeviceExt;
@@ -33,8 +33,9 @@ const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 /// Per-frame counters, handy for HUDs and for asserting batching in tests.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct FrameStats {
-    /// Every `draw` and `draw_indexed`, including viewport color clears, depth-view draws, and
-    /// 4× resolves. A one-sample frame has no resolves, so its total matches the world and clear draws.
+    /// Every `draw` and `draw_indexed`, including viewport color clears, depth-view draws,
+    /// 4× resolves, and load expansions. A one-sample frame has none of the last two, so its total
+    /// matches the world and clear draws.
     pub draw_calls: u32,
     /// Scene draws only. A viewport clear is not one of these.
     pub world_draw_calls: u32,
@@ -66,10 +67,14 @@ pub struct FrameStats {
     /// Zero when no camera uses an internal resolution that fits in its viewport.
     pub presentation_draws: u32,
     /// Shader resolves of a 4× color image into one camera viewport. Not a world draw.
-    /// Zero when the renderer is at one sample.
+    /// Zero when the renderer is at one sample, and zero for a depth presentation.
     pub resolve_draws: u32,
-    /// Cameras that were not drawn because 4× does not support them yet, or because the 4×
-    /// images were not allocated. Zero at one sample. The selected count is not changed.
+    /// Copies of an already-resolved destination into the four color samples of a later
+    /// [`CameraClear::Load`] viewport. Not a world draw. Zero at one sample, for a first writer,
+    /// for [`CameraClear::Color`], and for a depth presentation.
+    pub expand_draws: u32,
+    /// Cameras that were not drawn because their 4× images were not allocated. Zero at one sample.
+    /// The selected count is not changed, and the camera is not drawn at one sample.
     pub msaa_skipped: u32,
 }
 
@@ -84,6 +89,7 @@ pub struct PassFrameStats {
     pub depth_view_draws: u32,
     pub presentation_draws: u32,
     pub resolve_draws: u32,
+    pub expand_draws: u32,
 }
 
 /// Frames a cached texture or mesh may go unused before it is evicted, unless configured otherwise
@@ -150,24 +156,30 @@ pub struct GpuResourceStats {
     /// increments this once. A later `Four` does not create them again. Switching to
     /// [`MsaaSamples::One`] keeps the pipelines and does not increment this.
     pub msaa_pipeline_creates: u64,
-    /// 4× color images created. The matching depth image is not a second count.
+    /// 4× color images created. The matching depth image is not a second count. A surface image,
+    /// an offscreen target, and an internal-resolution image each count once.
     pub msaa_image_creates: u64,
-    /// 4× color and depth images replaced because the surface size changed.
+    /// 4× color and depth images replaced because that destination's size changed.
     pub msaa_image_reallocs: u64,
-    /// 4× images dropped because the renderer returned to one sample.
+    /// 4× images dropped because the renderer returned to one sample, a destination was removed
+    /// or resized, or an internal camera stopped scaling.
     pub msaa_image_drops: u64,
 }
 
-/// 4× color and depth images retained for the direct surface path.
+/// 4× color and depth bytes retained for every live destination.
 ///
-/// Bytes are `width * height * 4 * 4`: four bytes per sample and four samples. This is a size
-/// calculation, not a measured allocation from the driver. Both are zero when no image is retained.
+/// Bytes are `width * height * 4 * 4` per image: four bytes per sample and four samples, summed
+/// across the surface, offscreen targets, and internal-resolution cameras. This is a size
+/// calculation, not a measured allocation from the driver. [`Self::width`] and [`Self::height`]
+/// describe the surface image when one is retained, and are zero when only a private image is.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct MsaaImageUsage {
     pub width: u32,
     pub height: u32,
     pub color_bytes: u64,
     pub depth_bytes: u64,
+    /// Retained 4× color images. Each has a matching depth image that is not a second count.
+    pub image_count: u32,
 }
 
 /// Private internal-resolution images retained after the latest frame.
@@ -285,6 +297,9 @@ struct GpuRenderTarget {
     view: wgpu::TextureView,
     depth: DepthImage,
     bind_group: wgpu::BindGroup,
+    /// Multisample color and depth for cameras that write this target at 4×. The public `color`
+    /// image stays one sample. Absent at one sample, and until the first 4× camera prepares it.
+    msaa: Option<MsaaImages>,
 }
 
 /// Private color and depth for one camera's internal resolution. Not a [`RenderTargetId`].
@@ -295,6 +310,8 @@ struct InternalTarget {
     view: wgpu::TextureView,
     depth: DepthImage,
     present_bind_group: wgpu::BindGroup,
+    /// Multisample color and depth at this internal size. The present blit samples `view`.
+    msaa: Option<MsaaImages>,
 }
 
 /// Growable vertex buffer rewritten every frame.
@@ -440,6 +457,9 @@ pub struct SceneRenderer {
     msaa_skip_warned: HashSet<(u32, MsaaSkip)>,
     /// The blank-destination warning has been logged since the last surface camera that drew at 4×.
     msaa_blank_logged: bool,
+    /// Destination size of the latest [`Self::render`]. Letterbox and presentation use this when
+    /// 4× is selected, because that path does not keep the one-sample surface depth image.
+    surface_size: (u32, u32),
 }
 
 impl SceneRenderer {
@@ -799,6 +819,7 @@ impl SceneRenderer {
             clear_pipeline_layout,
             msaa_skip_warned: HashSet::new(),
             msaa_blank_logged: false,
+            surface_size: (1, 1),
         }
     }
 
@@ -823,17 +844,35 @@ impl SceneRenderer {
     }
 
     /// 4× color and depth bytes retained right now.
+    ///
+    /// The surface pair, each offscreen target's pair, and each internal camera's pair are
+    /// included. [`MsaaImageUsage::width`] and [`MsaaImageUsage::height`] are the surface image.
     pub fn msaa_images(&self) -> MsaaImageUsage {
-        let Some(images) = self.msaa4.as_ref().and_then(|extra| extra.images.as_ref()) else {
-            return MsaaImageUsage::default();
+        let mut usage = MsaaImageUsage::default();
+        let mut add = |images: &MsaaImages, surface: bool| {
+            let pixels = u64::from(images.width) * u64::from(images.height);
+            usage.color_bytes += pixels * 4 * 4;
+            usage.depth_bytes += pixels * 4 * 4;
+            usage.image_count += 1;
+            if surface {
+                usage.width = images.width;
+                usage.height = images.height;
+            }
         };
-        let pixels = u64::from(images.width) * u64::from(images.height);
-        MsaaImageUsage {
-            width: images.width,
-            height: images.height,
-            color_bytes: pixels * 4 * 4,
-            depth_bytes: pixels * 4 * 4,
+        if let Some(images) = self.msaa4.as_ref().and_then(|extra| extra.images.as_ref()) {
+            add(images, true);
         }
+        for target in self.render_targets.values() {
+            if let Some(images) = target.msaa.as_ref() {
+                add(images, false);
+            }
+        }
+        for internal in self.internal_targets.values() {
+            if let Some(images) = internal.msaa.as_ref() {
+                add(images, false);
+            }
+        }
+        usage
     }
 
     /// Whether `format` and `Depth32Float` both support 4 samples on `gpu`'s adapter.
@@ -1026,13 +1065,10 @@ impl SceneRenderer {
             }
         }
         self.evict_unused(assets);
-        let msaa_ready = match self.msaa {
-            MsaaSamples::One => {
-                self.ensure_depth(gpu, size);
-                false
-            }
-            MsaaSamples::Four => self.prepare_msaa_images(gpu, size),
-        };
+        self.surface_size = (size.0.max(1), size.1.max(1));
+        if self.msaa == MsaaSamples::One {
+            self.ensure_depth(gpu, self.surface_size);
+        }
         // One upload for every camera. Later cameras do not rewrite this buffer, so a second
         // submit still reads the same vertices. An empty list does not write and does not draw.
         let debug_vertices = collect_debug_vertices(&scene.debug_lines);
@@ -1044,20 +1080,49 @@ impl SceneRenderer {
         let mut stats = FrameStats { camera_passes: scene.passes.len() as u32, ..FrameStats::default() };
         let mut pass_stats = Vec::with_capacity(scene.passes.len());
         let mut opened = HashSet::new();
+        let mut color_surface_failed = false;
+        let mut load_surface_failed = false;
         for camera in &scene.passes {
             if self.msaa == MsaaSamples::Four {
-                let reason = if msaa_ready {
-                    msaa4_camera_skip(self.msaa, camera.view.fit, camera.output, camera.clear, camera.presentation)
-                } else {
-                    Some(MsaaSkip::ImagesUnavailable)
-                };
-                if let Some(reason) = reason {
-                    self.warn_msaa_skip(camera.camera_id, reason);
-                    stats.msaa_skipped += 1;
-                    let mut one = PassFrameStats::default();
-                    count_pass_instances(camera, &mut stats, &mut one);
-                    pass_stats.push(one);
-                    continue;
+                match self.prepare_four_sample(gpu, camera) {
+                    FourPrep::Unavailable => {
+                        self.note_direct_surface_failure(camera, &mut color_surface_failed, &mut load_surface_failed);
+                        self.warn_msaa_skip(camera.camera_id, MsaaSkip::ImagesUnavailable);
+                        stats.msaa_skipped += 1;
+                        let mut one = PassFrameStats::default();
+                        count_pass_instances(camera, &mut stats, &mut one);
+                        pass_stats.push(one);
+                        continue;
+                    }
+                    FourPrep::Absent => {
+                        if let CameraOutput::Target(id) = camera.output {
+                            log::warn!(
+                                "render target {id} has no GPU image; camera {} was not drawn",
+                                camera.camera_id
+                            );
+                        }
+                        match camera.output {
+                            CameraOutput::Surface => stats.surface_passes += 1,
+                            CameraOutput::Target(_) => stats.offscreen_passes += 1,
+                        }
+                        let _first = opened.insert(camera.output);
+                        let mut one = PassFrameStats::default();
+                        count_pass_instances(camera, &mut stats, &mut one);
+                        pass_stats.push(one);
+                        continue;
+                    }
+                    FourPrep::Letterbox => {
+                        match camera.output {
+                            CameraOutput::Surface => stats.surface_passes += 1,
+                            CameraOutput::Target(_) => stats.offscreen_passes += 1,
+                        }
+                        let first = opened.insert(camera.output);
+                        let mut one = self.submit_letterbox(gpu, camera, first, target, &mut stats);
+                        count_pass_instances(camera, &mut stats, &mut one);
+                        pass_stats.push(one);
+                        continue;
+                    }
+                    FourPrep::Ready => {}
                 }
             }
             match camera.output {
@@ -1066,7 +1131,7 @@ impl SceneRenderer {
             }
             let first = opened.insert(camera.output);
             let mut one = if self.msaa == MsaaSamples::Four {
-                self.submit_direct_msaa(gpu, scene, camera, first, target, &mut stats)
+                self.submit_msaa_camera(gpu, scene, camera, first, target, &mut stats)
             } else {
                 self.submit_camera(gpu, scene, camera, first, target, &mut stats)
             };
@@ -1075,10 +1140,9 @@ impl SceneRenderer {
         }
         if self.msaa == MsaaSamples::Four {
             let surface_written = opened.iter().any(|output| matches!(output, CameraOutput::Surface));
-            let surface_requested = scene.passes.iter().any(|camera| matches!(camera.output, CameraOutput::Surface));
             if surface_written {
                 self.msaa_blank_logged = false;
-            } else if surface_requested {
+            } else if color_surface_failed && !load_surface_failed {
                 self.clear_undefined_surface(gpu, target);
             }
         }
@@ -1512,7 +1576,7 @@ impl SceneRenderer {
 
     fn output_size(&self, camera: &CameraPass) -> (u32, u32) {
         match camera.output {
-            CameraOutput::Surface => self.depth.as_ref().expect("depth created above").size,
+            CameraOutput::Surface => self.surface_size,
             CameraOutput::Target(id) => {
                 let image = &self.render_targets[&id];
                 (image.width, image.height)
@@ -1554,6 +1618,9 @@ impl SceneRenderer {
             }
         }
         let replacing = self.internal_targets.contains_key(&camera_id);
+        if replacing && self.internal_targets.get(&camera_id).and_then(|image| image.msaa.as_ref()).is_some() {
+            self.resource_stats.msaa_image_drops += 1;
+        }
         let size = wgpu::Extent3d { width, height, depth_or_array_layers: 1 };
         let color = gpu.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("internal color"),
@@ -1584,7 +1651,7 @@ impl SceneRenderer {
             self.resource_stats.internal_target_creates += 1;
         }
         self.internal_targets
-            .insert(camera_id, InternalTarget { width, height, color, view, depth, present_bind_group });
+            .insert(camera_id, InternalTarget { width, height, color, view, depth, present_bind_group, msaa: None });
         true
     }
 
@@ -1594,9 +1661,13 @@ impl SceneRenderer {
             .filter(|pass| matches!(pass.view.fit, PresentationFit::Scaled(_)))
             .map(|pass| pass.camera_id)
             .collect();
+        let msaa_drops =
+            self.internal_targets.iter().filter(|(id, image)| !live.contains(id) && image.msaa.is_some()).count()
+                as u64;
         let before = self.internal_targets.len();
         self.internal_targets.retain(|id, _| live.contains(id));
         self.resource_stats.internal_target_drops += (before - self.internal_targets.len()) as u64;
+        self.resource_stats.msaa_image_drops += msaa_drops;
     }
 
     /// Color and depth bytes of private internal images retained for the cameras that scaled
@@ -1762,7 +1833,9 @@ impl SceneRenderer {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: self.format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::COPY_SRC
+                | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -1824,7 +1897,10 @@ impl SceneRenderer {
     /// does not count as a texture upload.
     fn sync_render_targets(&mut self, gpu: &GpuContext, targets: &[RenderTargetDesc]) {
         let live: HashSet<RenderTargetId> = targets.iter().map(|target| target.id).collect();
+        let msaa_drops =
+            self.render_targets.iter().filter(|(id, image)| !live.contains(id) && image.msaa.is_some()).count() as u64;
         self.render_targets.retain(|id, _| live.contains(id));
+        self.resource_stats.msaa_image_drops += msaa_drops;
         for desc in targets {
             if let Err(error) = validate_texture_dimensions(desc.width, desc.height, self.dimension_limits(gpu)) {
                 log::warn!("render target {} was not allocated: {error}", desc.id);
@@ -1849,6 +1925,9 @@ impl SceneRenderer {
     fn allocate_render_target(&mut self, gpu: &GpuContext, desc: &RenderTargetDesc, replace: bool) {
         if replace {
             self.resource_stats.render_target_reallocs += 1;
+            if self.render_targets.get(&desc.id).and_then(|image| image.msaa.as_ref()).is_some() {
+                self.resource_stats.msaa_image_drops += 1;
+            }
         } else {
             self.resource_stats.render_target_creates += 1;
         }
@@ -1880,6 +1959,7 @@ impl SceneRenderer {
                 view,
                 depth,
                 bind_group,
+                msaa: None,
             },
         );
     }
@@ -2216,9 +2296,12 @@ impl SceneRenderer {
         gpu.queue.write_buffer(&self.globals, 0, bytemuck::bytes_of(&globals));
     }
 
-    /// Direct shaded surface camera at 4×. The scene pass writes multisampled color and depth.
-    /// A later pass averages color into this camera's viewport only.
-    fn submit_direct_msaa(
+    /// One camera at 4×. Multisample color and depth match the image that camera renders: the
+    /// surface, an offscreen target, or the internal-resolution image. A shaded camera resolves
+    /// that viewport into the one-sample destination. A depth presentation writes the nearest
+    /// reverse-Z sample instead of resolving color. A later [`CameraClear::Load`] camera expands
+    /// the resolved destination into the multisample viewport before the scene pass.
+    fn submit_msaa_camera(
         &mut self,
         gpu: &GpuContext,
         scene: &RenderScene,
@@ -2228,31 +2311,90 @@ impl SceneRenderer {
         stats: &mut FrameStats,
     ) -> PassFrameStats {
         self.upload_camera(gpu, scene, camera);
-        let fill_viewport = !first;
+        let scaled = match camera.view.fit {
+            PresentationFit::Scaled(image) => Some(image),
+            _ => None,
+        };
+        let visualize = camera.presentation == CameraPresentation::Depth;
+        // The private internal image is cleared every frame. `first` still belongs to the public
+        // destination, which the present pass uses.
+        let scene_first = scaled.is_some() || first;
+        let expand = !scene_first && !visualize && camera.clear == CameraClear::Load;
+        let fill_viewport = !scene_first && !visualize && camera.clear == CameraClear::Color;
         if fill_viewport {
             let uniform =
                 ClearUniform { color: [camera.clear_color.r, camera.clear_color.g, camera.clear_color.b, 1.0] };
             gpu.queue.write_buffer(&self.clear_uniform, 0, bytemuck::bytes_of(&uniform));
         }
-        let (color_view, depth_view, resolve_group, msaa_clear, msaa_debug, resolve_pipeline, size) = {
+        if let Some(image) = scaled {
+            let plan = self.present_plan(camera, false, first);
+            if plan.fill_draw {
+                self.write_clear(gpu, [camera.letterbox_color.r, camera.letterbox_color.g, camera.letterbox_color.b]);
+            }
+            self.write_present(gpu, image);
+        }
+        if visualize {
+            self.prepare_msaa_depth_view(gpu, camera);
+        }
+
+        let (expand_pipeline, expand_layout, resolve_pipeline, msaa_clear, msaa_debug, depth_pipeline) = {
             let extra = self.msaa4.as_ref().expect("4× pipelines exist while Four is selected");
-            let images = extra.images.as_ref().expect("4× images were prepared for this frame");
             (
-                images.color_attachment.clone(),
-                images.depth_attachment.clone(),
-                images.resolve_group.clone(),
+                extra.expand_pipeline.clone(),
+                extra.expand_layout.clone(),
+                extra.resolve_pipeline.clone(),
                 extra.draw.clear.clone(),
                 extra.draw.debug.clone(),
-                extra.resolve_pipeline.clone(),
-                (images.width, images.height),
+                extra.depth_view_pipeline.clone(),
             )
         };
+        let attachments = self.msaa_attachments(camera, target);
+        let expand_group = if expand {
+            Some(gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("msaa expand"),
+                layout: &expand_layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&attachments.destination),
+                }],
+            }))
+        } else {
+            None
+        };
+        if expand_group.is_some() {
+            // The destination view is new for a headless frame and typically for a window frame,
+            // so this group is not retained. Image-create counters do not include it.
+            self.resource_stats.bind_group_creates += 1;
+        }
+        let depth_group = if visualize { Some(self.msaa_depth_group(camera)) } else { None };
 
         let mut one = PassFrameStats::default();
         let mut encoder =
             gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("msaa camera") });
+        let (x, y, w, h) = clamp_viewport(attachments.viewport, attachments.size);
+        if let Some(group) = expand_group.as_ref() {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("msaa expand"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &attachments.color,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(&expand_pipeline);
+            pass.set_bind_group(0, group, &[]);
+            pass.set_viewport(x, y, w, h, 0.0, 1.0);
+            pass.set_scissor_rect(x as u32, y as u32, w as u32, h as u32);
+            pass.draw(0..3, 0..1);
+            record_expand(stats, &mut one);
+        }
         {
-            let color_load = if first {
+            let color_load = if scene_first {
                 wgpu::LoadOp::Clear(attachment_clear(camera.clear_color.r, camera.clear_color.g, camera.clear_color.b))
             } else {
                 wgpu::LoadOp::Load
@@ -2260,21 +2402,23 @@ impl SceneRenderer {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("msaa camera"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &color_view,
+                    view: &attachments.color,
                     depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations { load: color_load, store: wgpu::StoreOp::Store },
                 })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &depth_view,
-                    depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(0.0), store: wgpu::StoreOp::Discard }),
+                    view: &attachments.depth,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(0.0),
+                        store: if visualize { wgpu::StoreOp::Store } else { wgpu::StoreOp::Discard },
+                    }),
                     stencil_ops: None,
                 }),
                 timestamp_writes: None,
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            let (x, y, w, h) = clamp_viewport(camera.viewport_px, size);
             pass.set_viewport(x, y, w, h, 0.0, 1.0);
             pass.set_scissor_rect(x as u32, y as u32, w as u32, h as u32);
             if fill_viewport {
@@ -2312,35 +2456,259 @@ impl SceneRenderer {
                 record_world(stats, &mut one, self.debug_vertex_count);
             }
         }
-        {
-            let load = if first {
-                wgpu::LoadOp::Clear(attachment_clear(camera.clear_color.r, camera.clear_color.g, camera.clear_color.b))
-            } else {
-                wgpu::LoadOp::Load
-            };
+        let destination_load = if scene_first {
+            wgpu::LoadOp::Clear(attachment_clear(camera.clear_color.r, camera.clear_color.g, camera.clear_color.b))
+        } else {
+            wgpu::LoadOp::Load
+        };
+        if let Some(group) = depth_group.as_ref() {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("msaa resolve"),
+                label: Some("msaa depth view"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: target,
+                    view: &attachments.destination,
                     depth_slice: None,
                     resolve_target: None,
-                    ops: wgpu::Operations { load, store: wgpu::StoreOp::Store },
+                    ops: wgpu::Operations { load: destination_load, store: wgpu::StoreOp::Store },
                 })],
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            let (x, y, w, h) = clamp_viewport(camera.viewport_px, size);
+            pass.set_pipeline(&depth_pipeline);
+            pass.set_bind_group(0, group, &[]);
+            pass.set_viewport(x, y, w, h, 0.0, 1.0);
+            pass.set_scissor_rect(x as u32, y as u32, w as u32, h as u32);
+            pass.draw(0..3, 0..1);
+            record_depth_view(stats, &mut one);
+        } else {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("msaa resolve"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &attachments.destination,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations { load: destination_load, store: wgpu::StoreOp::Store },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
             pass.set_pipeline(&resolve_pipeline);
-            pass.set_bind_group(0, &resolve_group, &[]);
+            pass.set_bind_group(0, &attachments.resolve_group, &[]);
             pass.set_viewport(x, y, w, h, 0.0, 1.0);
             pass.set_scissor_rect(x as u32, y as u32, w as u32, h as u32);
             pass.draw(0..3, 0..1);
             record_resolve(stats, &mut one);
         }
+        if scaled.is_some() {
+            self.record_present(&mut encoder, camera, target, first, stats, &mut one);
+        }
         gpu.queue.submit([encoder.finish()]);
         one
+    }
+
+    /// Prepares the 4× images for one camera. A letterbox camera allocates none. A failed direct
+    /// surface camera is [`FourPrep::Unavailable`] and does not become the destination's first writer.
+    fn prepare_four_sample(&mut self, gpu: &GpuContext, camera: &CameraPass) -> FourPrep {
+        if matches!(camera.view.fit, PresentationFit::Letterbox { .. }) {
+            return FourPrep::Letterbox;
+        }
+        if let PresentationFit::Scaled(image) = camera.view.fit {
+            if !self.ensure_internal(gpu, camera.camera_id, image.internal_width, image.internal_height) {
+                return FourPrep::Letterbox;
+            }
+            if !self.ensure_named_msaa(
+                gpu,
+                MsaaSlot::Internal(camera.camera_id),
+                image.internal_width,
+                image.internal_height,
+            ) {
+                log::warn!(
+                    "camera {} 4× images were not allocated; the viewport is filled with the letterbox color and the scene was not drawn at 1×",
+                    camera.camera_id
+                );
+                return FourPrep::Letterbox;
+            }
+            return FourPrep::Ready;
+        }
+        match camera.output {
+            CameraOutput::Target(id) => {
+                let Some(stored) = self.render_targets.get(&id) else {
+                    return FourPrep::Absent;
+                };
+                let (width, height) = (stored.width, stored.height);
+                if self.ensure_named_msaa(gpu, MsaaSlot::Target(id), width, height) {
+                    FourPrep::Ready
+                } else {
+                    FourPrep::Unavailable
+                }
+            }
+            CameraOutput::Surface => {
+                if self.prepare_msaa_images(gpu, self.surface_size) {
+                    FourPrep::Ready
+                } else {
+                    FourPrep::Unavailable
+                }
+            }
+        }
+    }
+
+    fn note_direct_surface_failure(&self, camera: &CameraPass, color_failed: &mut bool, load_failed: &mut bool) {
+        if !matches!(camera.output, CameraOutput::Surface) || !matches!(camera.view.fit, PresentationFit::Direct) {
+            return;
+        }
+        match camera.clear {
+            CameraClear::Color => *color_failed = true,
+            CameraClear::Load => *load_failed = true,
+        }
+    }
+
+    fn ensure_named_msaa(&mut self, gpu: &GpuContext, slot: MsaaSlot, width: u32, height: u32) -> bool {
+        if self.msaa4.is_none() {
+            log::warn!("4× MSAA images were not allocated: pipelines are missing");
+            return false;
+        }
+        let (width, height) = (width.max(1), height.max(1));
+        if let Err(error) = validate_texture_dimensions(width, height, self.dimension_limits(gpu)) {
+            log::warn!("4× MSAA images {width}x{height} were not allocated: {error}");
+            return false;
+        }
+        let (matches_size, replacing) = {
+            let current = match slot {
+                MsaaSlot::Target(id) => self.render_targets.get(&id).and_then(|image| image.msaa.as_ref()),
+                MsaaSlot::Internal(id) => self.internal_targets.get(&id).and_then(|image| image.msaa.as_ref()),
+            };
+            (current.is_some_and(|images| images.width == width && images.height == height), current.is_some())
+        };
+        if matches_size {
+            return true;
+        }
+        let layout = self.msaa4.as_ref().expect("checked above").resolve_layout.clone();
+        let images = MsaaImages::allocate(gpu, self.format, width, height, &layout);
+        self.resource_stats.bind_group_creates += 1;
+        if replacing {
+            self.resource_stats.msaa_image_reallocs += 1;
+        } else {
+            self.resource_stats.msaa_image_creates += 1;
+        }
+        match slot {
+            MsaaSlot::Target(id) => {
+                if let Some(stored) = self.render_targets.get_mut(&id) {
+                    stored.msaa = Some(images);
+                }
+            }
+            MsaaSlot::Internal(id) => {
+                if let Some(stored) = self.internal_targets.get_mut(&id) {
+                    stored.msaa = Some(images);
+                }
+            }
+        }
+        true
+    }
+
+    fn prepare_msaa_depth_view(&mut self, gpu: &GpuContext, camera: &CameraPass) {
+        let viewport = if let PresentationFit::Scaled(image) = camera.view.fit {
+            [0.0, 0.0, image.internal_width as f32, image.internal_height as f32]
+        } else {
+            let size = match camera.output {
+                CameraOutput::Surface => self.surface_size,
+                CameraOutput::Target(id) => {
+                    let image = &self.render_targets[&id];
+                    (image.width, image.height)
+                }
+            };
+            let (x, y, w, h) = clamp_viewport(camera.viewport_px, size);
+            [x, y, w, h]
+        };
+        let uniform = DepthViewUniform::from_projection(camera.view.proj, viewport);
+        gpu.queue.write_buffer(&self.depth_view_uniform, 0, bytemuck::bytes_of(&uniform));
+        if !self.msaa_depth_group_missing(camera) {
+            return;
+        }
+        let sample = self.msaa_depth_sample(camera);
+        let layout = self.msaa4.as_ref().expect("4× pipelines").depth_view_layout.clone();
+        let group = depth_sample_bind_group(&gpu.device, &layout, &sample, &self.depth_view_uniform);
+        self.store_msaa_depth_group(camera, group);
+        self.resource_stats.bind_group_creates += 1;
+    }
+
+    fn msaa_depth_group_missing(&self, camera: &CameraPass) -> bool {
+        self.msaa_images_of(camera).depth_sample_bind_group.is_none()
+    }
+
+    fn msaa_depth_sample(&self, camera: &CameraPass) -> wgpu::TextureView {
+        self.msaa_images_of(camera).depth_sample.clone()
+    }
+
+    fn msaa_depth_group(&self, camera: &CameraPass) -> wgpu::BindGroup {
+        self.msaa_images_of(camera).depth_sample_bind_group.clone().expect("4× depth sample group")
+    }
+
+    fn msaa_images_of(&self, camera: &CameraPass) -> &MsaaImages {
+        if matches!(camera.view.fit, PresentationFit::Scaled(_)) {
+            return self.internal_targets[&camera.camera_id].msaa.as_ref().expect("internal 4× images");
+        }
+        match camera.output {
+            CameraOutput::Surface => {
+                self.msaa4.as_ref().expect("4× pipelines").images.as_ref().expect("surface 4× images")
+            }
+            CameraOutput::Target(id) => self.render_targets[&id].msaa.as_ref().expect("target 4× images"),
+        }
+    }
+
+    fn store_msaa_depth_group(&mut self, camera: &CameraPass, group: wgpu::BindGroup) {
+        let images = if matches!(camera.view.fit, PresentationFit::Scaled(_)) {
+            self.internal_targets.get_mut(&camera.camera_id).expect("internal image").msaa.as_mut()
+        } else {
+            match camera.output {
+                CameraOutput::Surface => self.msaa4.as_mut().expect("4× pipelines").images.as_mut(),
+                CameraOutput::Target(id) => self.render_targets.get_mut(&id).expect("target").msaa.as_mut(),
+            }
+        };
+        images.expect("4× images").depth_sample_bind_group = Some(group);
+    }
+
+    fn msaa_attachments(&self, camera: &CameraPass, surface: &wgpu::TextureView) -> MsaaAttachments {
+        if let PresentationFit::Scaled(image) = camera.view.fit {
+            let internal = &self.internal_targets[&camera.camera_id];
+            let msaa = internal.msaa.as_ref().expect("internal 4× images");
+            let size = (image.internal_width, image.internal_height);
+            return MsaaAttachments {
+                color: msaa.color_attachment.clone(),
+                depth: msaa.depth_attachment.clone(),
+                resolve_group: msaa.resolve_group.clone(),
+                destination: internal.view.clone(),
+                size,
+                viewport: [0.0, 0.0, size.0 as f32, size.1 as f32],
+            };
+        }
+        match camera.output {
+            CameraOutput::Surface => {
+                let images = self.msaa4.as_ref().expect("4× pipelines").images.as_ref().expect("surface 4× images");
+                MsaaAttachments {
+                    color: images.color_attachment.clone(),
+                    depth: images.depth_attachment.clone(),
+                    resolve_group: images.resolve_group.clone(),
+                    destination: surface.clone(),
+                    size: (images.width, images.height),
+                    viewport: camera.viewport_px,
+                }
+            }
+            CameraOutput::Target(id) => {
+                let stored = &self.render_targets[&id];
+                let msaa = stored.msaa.as_ref().expect("target 4× images");
+                MsaaAttachments {
+                    color: msaa.color_attachment.clone(),
+                    depth: msaa.depth_attachment.clone(),
+                    resolve_group: msaa.resolve_group.clone(),
+                    destination: stored.view.clone(),
+                    size: (stored.width, stored.height),
+                    viewport: camera.viewport_px,
+                }
+            }
+        }
     }
 
     /// Allocates or reuses the 4× surface images. `false` leaves the selected count at 4× and
@@ -2379,9 +2747,18 @@ impl SceneRenderer {
     }
 
     fn drop_msaa_images(&mut self) {
-        let dropped = self.msaa4.as_mut().and_then(|extra| extra.images.take()).is_some();
-        if dropped {
+        if self.msaa4.as_mut().and_then(|extra| extra.images.take()).is_some() {
             self.resource_stats.msaa_image_drops += 1;
+        }
+        for target in self.render_targets.values_mut() {
+            if target.msaa.take().is_some() {
+                self.resource_stats.msaa_image_drops += 1;
+            }
+        }
+        for internal in self.internal_targets.values_mut() {
+            if internal.msaa.take().is_some() {
+                self.resource_stats.msaa_image_drops += 1;
+            }
         }
     }
 
@@ -2459,6 +2836,12 @@ fn record_resolve(stats: &mut FrameStats, pass: &mut PassFrameStats) {
     stats.draw_calls += 1;
     stats.resolve_draws += 1;
     pass.resolve_draws += 1;
+}
+
+fn record_expand(stats: &mut FrameStats, pass: &mut PassFrameStats) {
+    stats.draw_calls += 1;
+    stats.expand_draws += 1;
+    pass.expand_draws += 1;
 }
 
 fn count_pass_instances(camera: &CameraPass, stats: &mut FrameStats, one: &mut PassFrameStats) {
@@ -2574,6 +2957,10 @@ struct Msaa4 {
     draw: crate::draw_pipelines::DrawPipelines,
     resolve_pipeline: wgpu::RenderPipeline,
     resolve_layout: wgpu::BindGroupLayout,
+    expand_pipeline: wgpu::RenderPipeline,
+    expand_layout: wgpu::BindGroupLayout,
+    depth_view_pipeline: wgpu::RenderPipeline,
+    depth_view_layout: wgpu::BindGroupLayout,
     images: Option<MsaaImages>,
 }
 
@@ -2586,7 +2973,33 @@ struct MsaaImages {
     #[allow(dead_code)]
     depth: wgpu::Texture,
     depth_attachment: wgpu::TextureView,
+    /// Second view of `depth`, sampled by the 4× depth presentation. Not bound in the scene pass.
+    depth_sample: wgpu::TextureView,
+    depth_sample_bind_group: Option<wgpu::BindGroup>,
     resolve_group: wgpu::BindGroup,
+}
+
+struct MsaaAttachments {
+    color: wgpu::TextureView,
+    depth: wgpu::TextureView,
+    resolve_group: wgpu::BindGroup,
+    /// One-sample image the resolve or depth presentation writes. The expand pass samples it.
+    destination: wgpu::TextureView,
+    size: (u32, u32),
+    viewport: [f32; 4],
+}
+
+enum FourPrep {
+    Ready,
+    Letterbox,
+    Absent,
+    Unavailable,
+}
+
+#[derive(Clone, Copy)]
+enum MsaaSlot {
+    Target(RenderTargetId),
+    Internal(u32),
 }
 
 impl Msaa4 {
@@ -2647,7 +3060,113 @@ impl Msaa4 {
             multiview_mask: None,
             cache: None,
         });
-        Self { draw, resolve_pipeline, resolve_layout, images: None }
+        let expand_layout = gpu.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("msaa expand layout"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            }],
+        });
+        let expand_shader = gpu.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("msaa expand"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/msaa_expand.wgsl").into()),
+        });
+        let samples = wgpu::MultisampleState { count: 4, mask: !0, alpha_to_coverage_enabled: false };
+        let expand_pipeline = gpu.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("msaa expand"),
+            layout: Some(&gpu.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("msaa expand layout"),
+                bind_group_layouts: &[Some(&expand_layout)],
+                immediate_size: 0,
+            })),
+            vertex: wgpu::VertexState {
+                module: &expand_shader,
+                entry_point: Some("vs_expand"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &expand_shader,
+                entry_point: Some("fs_expand"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState { format, blend: None, write_mask: wgpu::ColorWrites::ALL })],
+            }),
+            primitive: wgpu::PrimitiveState { cull_mode: None, ..Default::default() },
+            depth_stencil: None,
+            multisample: samples,
+            multiview_mask: None,
+            cache: None,
+        });
+        let depth_view_layout = gpu.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("msaa depth view layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: true,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+        let depth_shader = gpu.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("msaa depth view"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/depth_view_msaa.wgsl").into()),
+        });
+        let depth_view_pipeline = gpu.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("msaa depth view"),
+            layout: Some(&gpu.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("msaa depth view layout"),
+                bind_group_layouts: &[Some(&depth_view_layout)],
+                immediate_size: 0,
+            })),
+            vertex: wgpu::VertexState {
+                module: &depth_shader,
+                entry_point: Some("vs_depth"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &depth_shader,
+                entry_point: Some("fs_depth"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState { format, blend: None, write_mask: wgpu::ColorWrites::ALL })],
+            }),
+            primitive: wgpu::PrimitiveState { cull_mode: None, ..Default::default() },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+        Self {
+            draw,
+            resolve_pipeline,
+            resolve_layout,
+            expand_pipeline,
+            expand_layout,
+            depth_view_pipeline,
+            depth_view_layout,
+            images: None,
+        }
     }
 }
 
@@ -2679,10 +3198,11 @@ impl MsaaImages {
             sample_count: 4,
             dimension: wgpu::TextureDimension::D2,
             format: DEPTH_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
         let depth_attachment = depth.create_view(&wgpu::TextureViewDescriptor::default());
+        let depth_sample = depth.create_view(&wgpu::TextureViewDescriptor::default());
         let resolve_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("msaa resolve"),
             layout: resolve_layout,
@@ -2691,7 +3211,17 @@ impl MsaaImages {
                 resource: wgpu::BindingResource::TextureView(&color_sample),
             }],
         });
-        Self { width, height, color, color_attachment, depth, depth_attachment, resolve_group }
+        Self {
+            width,
+            height,
+            color,
+            color_attachment,
+            depth,
+            depth_attachment,
+            depth_sample,
+            depth_sample_bind_group: None,
+            resolve_group,
+        }
     }
 }
 

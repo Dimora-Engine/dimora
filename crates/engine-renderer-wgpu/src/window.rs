@@ -40,6 +40,9 @@ impl WindowRenderer {
         if let Some(srgb) = caps.formats.iter().copied().find(|f| f.is_srgb()) {
             config.format = srgb;
         }
+        // A later CameraClear::Load at 4× samples this resolved image. The scene pass does not
+        // bind it while the pass is also writing it.
+        config.usage |= wgpu::TextureUsages::TEXTURE_BINDING;
         surface.configure(&gpu.device, &config);
         let scene = SceneRenderer::new(&gpu, config.format);
         Ok(Self { gpu, scene, surface, config, surface_loss_noted: false })

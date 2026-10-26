@@ -1,7 +1,7 @@
-//! Stage-1 4× MSAA on Apple Metal, plus capability checks that do not need one GPU.
+//! 4× MSAA on Apple Metal, plus capability checks that do not need one GPU.
 //!
-//! One sample stays the default path. Four samples are a direct shaded surface camera that
-//! clears color. Load, depth presentation, offscreen targets, and internal resolution are skipped.
+//! One sample stays the default path. Four samples draw the same camera combinations, including
+//! load, depth presentation, offscreen targets, and internal resolution.
 
 use engine_assets::{
     AlphaMode, AssetManager, ColorSpace, MaterialAsset, MeshData, SpriteAsset, Texture, TextureDimensionLimits, Vertex,
@@ -166,7 +166,10 @@ fn four_samples_are_created_once_and_images_follow_the_selected_count() {
 
     draw(&gpu, &mut renderer, &mut world, &assets, 16, 8);
     let first = renderer.msaa_images();
-    assert_eq!(first, MsaaImageUsage { width: 16, height: 8, color_bytes: 16 * 8 * 16, depth_bytes: 16 * 8 * 16 });
+    assert_eq!(
+        first,
+        MsaaImageUsage { width: 16, height: 8, color_bytes: 16 * 8 * 16, depth_bytes: 16 * 8 * 16, image_count: 1 }
+    );
     assert_eq!(renderer.resource_stats().msaa_image_creates, 1);
     assert_eq!(renderer.stats().resolve_draws, 1);
 
@@ -436,7 +439,7 @@ fn switching_sample_counts_does_not_reuse_the_other_count_for_a_covered_sprite()
 }
 
 #[test]
-fn unsupported_cameras_are_skipped_and_a_later_direct_camera_still_draws() {
+fn load_depth_offscreen_and_internal_cameras_draw_and_the_last_surface_camera_wins() {
     let Some(gpu) = gpu() else { return };
     capture::begin();
     let mut renderer = renderer(&gpu);
@@ -486,18 +489,15 @@ fn unsupported_cameras_are_skipped_and_a_later_direct_camera_still_draws() {
     ));
     let image = draw(&gpu, &mut renderer, &mut world, &assets, 16, 16);
     assert_eq!(renderer.msaa(), MsaaSamples::Four);
-    assert_eq!(renderer.stats().msaa_skipped, 4);
-    assert_eq!(renderer.stats().resolve_draws, 1);
-    expect_px(&image, 16, 8, 8, [255, 255, 255, 255], 1, "the direct camera still draws");
-    let skips =
-        || capture::messages().into_iter().filter(|message| message.contains("was not drawn")).collect::<Vec<_>>();
-    let first = skips();
-    assert!(first.iter().any(|message| message.contains("CameraClear::Load")), "{first:?}");
-    assert!(first.iter().any(|message| message.contains("CameraPresentation::Depth")));
-    assert!(first.iter().any(|message| message.contains("offscreen")));
-    assert!(first.iter().any(|message| message.contains("internal resolution")));
-    draw(&gpu, &mut renderer, &mut world, &assets, 16, 16);
-    assert_eq!(skips().len(), first.len(), "the same skips are not logged twice");
+    assert_eq!(renderer.stats().msaa_skipped, 0);
+    assert!(renderer.stats().resolve_draws >= 1);
+    assert!(renderer.stats().depth_view_draws >= 1);
+    assert!(renderer.stats().presentation_draws >= 1);
+    expect_px(&image, 16, 8, 8, [255, 255, 255, 255], 1, "the last direct camera still draws");
+    let offscreen = renderer.read_render_target(&gpu, target).expect("offscreen target");
+    expect_px(&offscreen, 8, 4, 4, [255, 255, 255, 255], 1, "the offscreen camera resolved the sprite");
+    let skipped = capture::messages().into_iter().filter(|message| message.contains("was not drawn")).count();
+    assert_eq!(skipped, 0);
 }
 
 fn srgb_channel(linear: f32) -> u8 {
