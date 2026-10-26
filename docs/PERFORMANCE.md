@@ -871,3 +871,34 @@ World draws stay 2. Resolve draws are 0 at one sample and 1 at four. Pipeline cr
 
 Encode medians at 4× are about 5.5 µs above one sample on run 1 and about 2.3 µs above it on run 2, on an encode of a few tens of microseconds. That is CPU time recording the extra resolve. It is not a GPU pass time. Completion medians overlap. Run 2's 4× median is lower than its one-sample median, and run 2's one-sample p95 is an outlier above 2 ms. No GPU cost is claimed. GPU pass timestamps were not measured.
 
+The same direct scene was measured again on 2026-10-26 at 1:08 PM America/Chicago, after stage 2, still with a `RENDER_ATTACHMENT` color target and no `Load` sampling. Run 1: one sample encode median 41,083 ns, p95 48,250, completion median 365,000, p95 767,166. Four samples: 36,125, 91,292, 479,542, 548,917. Run 2: one sample 28,542, 31,375, 298,917, 319,042. Four samples: 34,292, 40,791, 325,292, 806,708. World draws stay 2. Resolve draws stay 0 and 1. Pipeline creates stay 0 and 1. Image creates stay 0 and 1. Calculated bytes stay 0 and 14,745,600 for each 4× image. Run 1's 4× encode median is below its one-sample median. The difference is a few microseconds and is not a GPU cost.
+
+### Stage 2 workloads
+
+Same command, machine, warmup, and sample count, at 1:08 PM America/Chicago. `extract_ns` is `extract_scene` only and does not depend on the sample count. `timed_image_creates` is the image-create counter during the 11 timed frames, after warmup. It is 0 on every row. Lifetime `image_creates` is 1 at 4× because the frame before warmup allocates. Pipeline creation is outside the timed loop.
+
+Sprite-heavy is 256 cutout sprites and no meshes. Mesh-heavy is 64 shared cuboids and no sprites. Mixed is the 64-sprite, 4-cuboid scene above. Split is that scene in two side-by-side viewports. Offscreen writes it to a 1280×720 target. Internal presents it from 320×180. Load adds a second full-viewport `CameraClear::Load` camera; that row's color target also has `TEXTURE_BINDING`. Depth presents the mixed scene. World draws of 1 mean the sprites or the cuboids batched. Bytes are calculated. The internal pair is 320 × 180 × 16 = 921,600 bytes per image, not the 1280×720 surface pair.
+
+| Workload | Run | Mode | extract median ns | encode median ns | encode p95 ns | completion median ns | completion p95 ns | world | resolve | expand | depth | present | color bytes |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| sprites | 2 | 1× | 26,125 | 31,000 | 37,917 | 187,084 | 200,167 | 1 | 0 | 0 | 0 | 0 | 0 |
+| sprites | 2 | 4× | 26,125 | 38,292 | 51,792 | 258,042 | 1,623,083 | 1 | 1 | 0 | 0 | 0 | 14,745,600 |
+| meshes | 2 | 1× | 3,250 | 25,917 | 48,291 | 209,834 | 1,254,542 | 1 | 0 | 0 | 0 | 0 | 0 |
+| meshes | 2 | 4× | 3,250 | 33,250 | 37,334 | 239,625 | 340,125 | 1 | 1 | 0 | 0 | 0 | 14,745,600 |
+| mixed | 2 | 1× | 6,916 | 26,584 | 26,959 | 207,750 | 324,875 | 2 | 0 | 0 | 0 | 0 | 0 |
+| mixed | 2 | 4× | 6,916 | 32,917 | 35,292 | 234,125 | 370,916 | 2 | 1 | 0 | 0 | 0 | 14,745,600 |
+| split | 2 | 1× | 9,542 | 50,166 | 56,875 | 236,625 | 319,292 | 4 | 0 | 0 | 0 | 0 | 0 |
+| split | 2 | 4× | 9,542 | 62,833 | 71,875 | 294,875 | 1,759,125 | 4 | 2 | 0 | 0 | 0 | 14,745,600 |
+| offscreen | 2 | 1× | 7,000 | 26,167 | 51,625 | 224,334 | 1,223,750 | 2 | 0 | 0 | 0 | 0 | 0 |
+| offscreen | 2 | 4× | 7,000 | 32,125 | 35,000 | 240,625 | 299,416 | 2 | 1 | 0 | 0 | 0 | 14,745,600 |
+| internal | 2 | 1× | 6,917 | 33,334 | 34,209 | 210,875 | 259,458 | 2 | 0 | 0 | 0 | 1 | 0 |
+| internal | 2 | 4× | 6,917 | 42,250 | 51,292 | 235,959 | 355,583 | 2 | 1 | 0 | 0 | 1 | 921,600 |
+| load | 2 | 1× | 9,625 | 47,208 | 53,708 | 229,583 | 273,667 | 4 | 0 | 0 | 0 | 0 | 0 |
+| load | 2 | 4× | 9,625 | 74,959 | 80,000 | 306,667 | 1,819,875 | 4 | 2 | 1 | 0 | 0 | 14,745,600 |
+| depth | 2 | 1× | 7,084 | 38,042 | 109,500 | 215,375 | 300,125 | 2 | 0 | 0 | 1 | 0 | 0 |
+| depth | 2 | 4× | 7,084 | 39,000 | 44,375 | 238,209 | 458,666 | 2 | 0 | 0 | 1 | 0 | 14,745,600 |
+
+Run 1 is the same shape. Its 4× encode medians are 39,417 (sprites), 33,375 (meshes), 32,583 (mixed), 64,250 (split), 34,542 (offscreen), 40,583 (internal), 74,125 (load), and 36,833 (depth). Draw counts and byte counts match run 2. Completion p95 moves by more than a millisecond on several rows. That wait is queue completion, not a timestamp query. No GPU cost is claimed.
+
+The load row's extra encode, about 28 µs on run 2, is the CPU recording the expansion pass plus the second scene pass. Extraction does not change with the sample count. Switching sample counts on one renderer created the pipelines once, allocated one surface pair, allocated nothing on the next steady frame, reallocated once when the surface became 640×360, dropped that pair on the return to one sample (`image_count` 0), and created the 1280×720 pair again without a second pipeline. Restored calculated bytes were 14,745,600 for color and the same for depth.
+
