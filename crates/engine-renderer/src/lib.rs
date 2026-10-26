@@ -30,6 +30,7 @@ mod extract;
 pub mod frustum;
 mod interpolate;
 mod missing;
+mod msaa;
 pub mod presets;
 pub mod projection;
 mod registry;
@@ -57,6 +58,7 @@ pub use extract::{
 };
 pub use frustum::Frustum;
 pub use missing::{MissingAssetWarnings, MISSING_ASSET_WARNING_CAPACITY};
+pub use msaa::{msaa4_camera_skip, select_msaa, MsaaError, MsaaSamples, MsaaSkip};
 pub use presets::PlacedCamera;
 pub use projection::{CameraProjection, Orthographic, Perspective, Projection, ProjectionError, ScreenPosition};
 pub use registry::register_render_components;

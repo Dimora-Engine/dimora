@@ -173,7 +173,13 @@ impl App for WindowedGame {
         let size = window.inner_size();
         let scale = window.scale_factor();
         match WindowRenderer::new(window.clone(), Some(Box::new(display)), (size.width, size.height)) {
-            Ok(r) => self.renderer = Some(r),
+            Ok(mut renderer) => match renderer.scene.set_msaa(&renderer.gpu, self.game.msaa_request()) {
+                Ok(()) => self.renderer = Some(renderer),
+                Err(error) => {
+                    log::error!("{error}");
+                    self.error = Some(Box::new(error));
+                }
+            },
             Err(e) => {
                 log_window_init_failure(&e);
                 self.error = Some(Box::new(e));

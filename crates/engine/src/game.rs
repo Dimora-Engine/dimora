@@ -5,7 +5,8 @@ use engine_assets::AssetManager;
 use engine_core::{Actions, FixedTimestep, Input, InputEvent, Time};
 use engine_platform::WindowConfig;
 use engine_renderer::{
-    extract_scene, AmbientLight, DebugDraw, ExtractStats, MissingAssetWarnings, RenderScene, RenderTargetStore,
+    extract_scene, AmbientLight, DebugDraw, ExtractStats, MissingAssetWarnings, MsaaError, MsaaSamples, RenderScene,
+    RenderTargetStore,
 };
 use engine_renderer_wgpu::{CacheStats, FrameStats, GpuContext, RenderError, SceneRenderer};
 use engine_world::{propagate_transforms, snapshot_interpolation, Schedule, ScheduleError, World};
@@ -214,6 +215,9 @@ pub struct Game {
     input_clear: Schedule,
     pub(crate) config: GameConfig,
     headless: Option<(GpuContext, SceneRenderer)>,
+    /// Requested sample count. Applied when a renderer exists. [`Game::msaa`] stays
+    /// [`MsaaSamples::One`] until that renderer accepts [`MsaaSamples::Four`].
+    msaa_request: MsaaSamples,
 }
 
 impl Game {
@@ -267,6 +271,7 @@ impl Game {
             input_clear,
             config,
             headless: None,
+            msaa_request: MsaaSamples::One,
         }
     }
 
@@ -521,6 +526,37 @@ impl Game {
         Ok(())
     }
 
+    /// Requests a renderer-wide sample count. [`MsaaSamples::One`] is the default.
+    ///
+    /// When a headless renderer already exists, [`MsaaSamples::Four`] is checked against that
+    /// adapter immediately. Failure leaves the previous count selected. Before any renderer
+    /// exists, this stores the request and [`Self::msaa`] stays [`MsaaSamples::One`]. The first
+    /// headless frame and the window renderer apply it. A rejected apply fails that frame or
+    /// window creation. It does not draw at one sample while the request is still four.
+    pub fn set_msaa(&mut self, samples: MsaaSamples) -> Result<(), MsaaError> {
+        if let Some((gpu, renderer)) = self.headless.as_mut() {
+            renderer.set_msaa(gpu, samples)?;
+        }
+        self.msaa_request = samples;
+        Ok(())
+    }
+
+    /// Sample count the headless renderer is using. [`MsaaSamples::One`] when no renderer exists
+    /// yet, including when [`Self::set_msaa`] has stored a four-sample request that is not applied.
+    pub fn msaa(&self) -> MsaaSamples {
+        self.headless.as_ref().map(|(_, renderer)| renderer.msaa()).unwrap_or(MsaaSamples::One)
+    }
+
+    /// Whether the headless adapter supports 4× for this renderer's color format and `Depth32Float`.
+    /// `None` until the headless renderer exists.
+    pub fn msaa4_available(&self) -> Option<bool> {
+        self.headless.as_ref().map(|(gpu, renderer)| SceneRenderer::adapter_supports_msaa4(gpu, renderer.format()))
+    }
+
+    pub(crate) fn msaa_request(&self) -> MsaaSamples {
+        self.msaa_request
+    }
+
     /// Snapshots the world for the active camera at the current `Viewport`.
     pub fn extract(&self) -> Option<RenderScene> {
         let viewport = self.world.resource::<Viewport>().physical_size_pixels();
@@ -534,6 +570,12 @@ impl Game {
             let gpu = GpuContext::headless()?;
             let renderer = SceneRenderer::new(&gpu, wgpu_rgba8_srgb());
             self.headless = Some((gpu, renderer));
+        }
+        {
+            let (gpu, renderer) = self.headless.as_mut().expect("created above");
+            if renderer.msaa() != self.msaa_request {
+                renderer.set_msaa(gpu, self.msaa_request).map_err(|error| RenderError::Device(error.to_string()))?;
+            }
         }
         self.world.insert_resource(Viewport::from_logical_pixels(width, height));
         let scene = self.extract().ok_or_else(|| RenderError::Device("no active camera in the world".into()))?;

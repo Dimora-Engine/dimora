@@ -95,8 +95,11 @@ pub enum CameraPresentation {
 /// [`CameraClear::Load`] combined with [`Camera::internal_resolution`] is rejected. It is not
 /// drawn, and it is not converted into [`CameraClear::Color`]. The private image does not contain
 /// the earlier camera's pixels, so an opaque blit cannot keep them. A direct camera's `Load` is
-/// unchanged. An editor must show that rejection. It must not present the skipped camera as a
-/// successful composite.
+/// unchanged at one sample. An editor must show that rejection. It must not present the skipped
+/// camera as a successful composite.
+///
+/// A renderer set to 4× does not draw `Load` yet. Preserving destination color through a
+/// multisampled viewport is later work. The camera is skipped, and it is not drawn at one sample.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CameraClear {
     /// Replace this camera's viewport with [`Camera::clear_color`] before its scene.

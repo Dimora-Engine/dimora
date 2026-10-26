@@ -8,9 +8,10 @@ use engine_assets::{
 };
 use engine_math::Mat4;
 use engine_renderer::{
-    CameraClear, CameraOutput, CameraPass, CameraPresentation, DebugSegment, MeshDraw, MeshInstance, PresentationFit,
-    RenderScene, RenderTargetDesc, RenderTargetId, ScaledImage, SpriteBatch, SpriteLayer, SpritePipelineKind,
-    TransparentBatch, DEPTH_VIEW_EMPTY, DEPTH_VIEW_MIN_SPAN, DEPTH_VIEW_UNSUPPORTED,
+    msaa4_camera_skip, select_msaa, CameraClear, CameraOutput, CameraPass, CameraPresentation, DebugSegment, MeshDraw,
+    MeshInstance, MsaaError, MsaaSamples, MsaaSkip, PresentationFit, RenderScene, RenderTargetDesc, RenderTargetId,
+    ScaledImage, SpriteBatch, SpriteLayer, SpritePipelineKind, TransparentBatch, DEPTH_VIEW_EMPTY, DEPTH_VIEW_MIN_SPAN,
+    DEPTH_VIEW_UNSUPPORTED,
 };
 use wgpu::util::DeviceExt;
 
@@ -28,12 +29,12 @@ use crate::gpu_types::{GpuDebugVertex, GpuGlobals, GpuMeshInstance, GpuSpriteIns
 use crate::{GpuContext, RenderError};
 
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
-const SHADER_COMMON: &str = include_str!("shaders/common.wgsl");
 
 /// Per-frame counters, handy for HUDs and for asserting batching in tests.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct FrameStats {
-    /// Every `draw` and `draw_indexed`, including viewport color clears and depth-view draws.
+    /// Every `draw` and `draw_indexed`, including viewport color clears, depth-view draws, and
+    /// 4× resolves. A one-sample frame has no resolves, so its total matches the world and clear draws.
     pub draw_calls: u32,
     /// Scene draws only. A viewport clear is not one of these.
     pub world_draw_calls: u32,
@@ -64,6 +65,12 @@ pub struct FrameStats {
     /// Nearest blits of an internal camera image. Not a world draw and not a viewport clear.
     /// Zero when no camera uses an internal resolution that fits in its viewport.
     pub presentation_draws: u32,
+    /// Shader resolves of a 4× color image into one camera viewport. Not a world draw.
+    /// Zero when the renderer is at one sample.
+    pub resolve_draws: u32,
+    /// Cameras that were not drawn because 4× does not support them yet, or because the 4×
+    /// images were not allocated. Zero at one sample. The selected count is not changed.
+    pub msaa_skipped: u32,
 }
 
 /// GPU submission counts for one camera pass. Summed into [`FrameStats`].
@@ -76,6 +83,7 @@ pub struct PassFrameStats {
     pub submitted_instances: u32,
     pub depth_view_draws: u32,
     pub presentation_draws: u32,
+    pub resolve_draws: u32,
 }
 
 /// Frames a cached texture or mesh may go unused before it is evicted, unless configured otherwise
@@ -138,6 +146,28 @@ pub struct GpuResourceStats {
     pub internal_target_reallocs: u64,
     /// Private internal images dropped because the camera no longer presents one this frame.
     pub internal_target_drops: u64,
+    /// Times the 4× scene pipelines were created. The first successful [`MsaaSamples::Four`]
+    /// increments this once. A later `Four` does not create them again. Switching to
+    /// [`MsaaSamples::One`] keeps the pipelines and does not increment this.
+    pub msaa_pipeline_creates: u64,
+    /// 4× color images created. The matching depth image is not a second count.
+    pub msaa_image_creates: u64,
+    /// 4× color and depth images replaced because the surface size changed.
+    pub msaa_image_reallocs: u64,
+    /// 4× images dropped because the renderer returned to one sample.
+    pub msaa_image_drops: u64,
+}
+
+/// 4× color and depth images retained for the direct surface path.
+///
+/// Bytes are `width * height * 4 * 4`: four bytes per sample and four samples. This is a size
+/// calculation, not a measured allocation from the driver. Both are zero when no image is retained.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct MsaaImageUsage {
+    pub width: u32,
+    pub height: u32,
+    pub color_bytes: u64,
+    pub depth_bytes: u64,
 }
 
 /// Private internal-resolution images retained after the latest frame.
@@ -397,6 +427,19 @@ pub struct SceneRenderer {
     dimension_limit_override: Option<TextureDimensionLimits>,
     /// Asset revision already refused, so a later frame does not hash or allocate it again.
     refused_uploads: HashMap<AssetId, u32>,
+    /// Active sample count. [`MsaaSamples::One`] uses the pipelines created in [`Self::new`].
+    msaa: MsaaSamples,
+    /// 4× pipelines, created on the first successful [`Self::set_msaa`] of [`MsaaSamples::Four`].
+    /// Retained after a switch back to one sample. Images inside it are not.
+    msaa4: Option<Msaa4>,
+    /// Scene, debug, and viewport-clear layouts shared by the one-sample and four-sample pipelines.
+    scene_layout: wgpu::PipelineLayout,
+    debug_layout: wgpu::PipelineLayout,
+    clear_pipeline_layout: wgpu::PipelineLayout,
+    /// `(camera id, reason)` already logged for a 4× skip. A later frame with the same pair is quiet.
+    msaa_skip_warned: HashSet<(u32, MsaaSkip)>,
+    /// The blank-destination warning has been logged since the last surface camera that drew at 4×.
+    msaa_blank_logged: bool,
 }
 
 impl SceneRenderer {
@@ -454,160 +497,11 @@ impl SceneRenderer {
             immediate_size: 0,
         });
 
-        let sprite_module = shader(device, "sprite", include_str!("shaders/sprite.wgsl"));
-        let mesh_module = shader(device, "mesh", include_str!("shaders/mesh.wgsl"));
-
-        let instance_attrs_sprite = wgpu::vertex_attr_array![
-            0 => Float32x4, 1 => Float32x4, 2 => Float32x4, 3 => Float32x4,
-            4 => Float32x4, 5 => Float32x4, 6 => Uint32x4
-        ];
-        let sprite_instance_layout = wgpu::VertexBufferLayout {
-            array_stride: core::mem::size_of::<GpuSpriteInstance>() as u64,
-            step_mode: wgpu::VertexStepMode::Instance,
-            attributes: &instance_attrs_sprite,
-        };
-        let sprite_pipeline =
-            |label, entry, depth_write: bool, blend: Option<wgpu::BlendState>, cull: Option<wgpu::Face>| {
-                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: Some(label),
-                    layout: Some(&layout),
-                    vertex: wgpu::VertexState {
-                        module: &sprite_module,
-                        entry_point: Some("vs_main"),
-                        compilation_options: Default::default(),
-                        buffers: &[Some(sprite_instance_layout.clone())],
-                    },
-                    fragment: Some(wgpu::FragmentState {
-                        module: &sprite_module,
-                        entry_point: Some(entry),
-                        compilation_options: Default::default(),
-                        targets: &[Some(wgpu::ColorTargetState { format, blend, write_mask: wgpu::ColorWrites::ALL })],
-                    }),
-                    primitive: wgpu::PrimitiveState {
-                        cull_mode: cull,
-                        front_face: wgpu::FrontFace::Ccw,
-                        ..Default::default()
-                    },
-                    depth_stencil: Some(depth_state(depth_write)),
-                    multisample: wgpu::MultisampleState::default(),
-                    multiview_mask: None,
-                    cache: None,
-                })
-            };
-        let sprite_cutout = sprite_pipeline("sprite cutout", "fs_cutout", true, None, None);
-        let sprite_blend =
-            sprite_pipeline("sprite blend", "fs_blend", false, Some(wgpu::BlendState::ALPHA_BLENDING), None);
-        let sprite_opaque = sprite_pipeline("sprite opaque", "fs_opaque", true, None, Some(wgpu::Face::Back));
-        let sprite_opaque_double = sprite_pipeline("sprite opaque double", "fs_opaque", true, None, None);
-        let sprite_mask = sprite_pipeline("sprite mask", "fs_mask", true, None, Some(wgpu::Face::Back));
-        let sprite_mask_double = sprite_pipeline("sprite mask double", "fs_mask", true, None, None);
-        let sprite_blend_culled = sprite_pipeline(
-            "sprite blend culled",
-            "fs_blend",
-            false,
-            Some(wgpu::BlendState::ALPHA_BLENDING),
-            Some(wgpu::Face::Back),
-        );
-
-        let mesh_vertex_attrs = wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2];
-        let mesh_instance_attrs = wgpu::vertex_attr_array![
-            3 => Float32x4, 4 => Float32x4, 5 => Float32x4, 6 => Float32x4, 7 => Float32x4, 8 => Uint32x4
-        ];
-        let mesh_vertex_layout = wgpu::VertexBufferLayout {
-            array_stride: core::mem::size_of::<engine_assets::Vertex>() as u64,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &mesh_vertex_attrs,
-        };
-        let mesh_instance_layout = wgpu::VertexBufferLayout {
-            array_stride: core::mem::size_of::<GpuMeshInstance>() as u64,
-            step_mode: wgpu::VertexStepMode::Instance,
-            attributes: &mesh_instance_attrs,
-        };
-        let mesh_pipeline =
-            |label, entry, depth_write: bool, blend: Option<wgpu::BlendState>, cull: Option<wgpu::Face>| {
-                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: Some(label),
-                    layout: Some(&layout),
-                    vertex: wgpu::VertexState {
-                        module: &mesh_module,
-                        entry_point: Some("vs_main"),
-                        compilation_options: Default::default(),
-                        buffers: &[Some(mesh_vertex_layout.clone()), Some(mesh_instance_layout.clone())],
-                    },
-                    fragment: Some(wgpu::FragmentState {
-                        module: &mesh_module,
-                        entry_point: Some(entry),
-                        compilation_options: Default::default(),
-                        targets: &[Some(wgpu::ColorTargetState { format, blend, write_mask: wgpu::ColorWrites::ALL })],
-                    }),
-                    primitive: wgpu::PrimitiveState {
-                        cull_mode: cull,
-                        front_face: wgpu::FrontFace::Ccw,
-                        ..Default::default()
-                    },
-                    depth_stencil: Some(depth_state(depth_write)),
-                    multisample: wgpu::MultisampleState::default(),
-                    multiview_mask: None,
-                    cache: None,
-                })
-            };
-        let mesh_solid = mesh_pipeline("mesh", "fs_main", true, None, Some(wgpu::Face::Back));
-        let mesh_solid_double = mesh_pipeline("mesh double", "fs_main", true, None, None);
-        let mesh_mask = mesh_pipeline("mesh mask", "fs_mask", true, None, Some(wgpu::Face::Back));
-        let mesh_mask_double = mesh_pipeline("mesh mask double", "fs_mask", true, None, None);
-        let mesh_blend = mesh_pipeline(
-            "mesh blend",
-            "fs_blend",
-            false,
-            Some(wgpu::BlendState::ALPHA_BLENDING),
-            Some(wgpu::Face::Back),
-        );
-        let mesh_blend_double =
-            mesh_pipeline("mesh blend double", "fs_blend", false, Some(wgpu::BlendState::ALPHA_BLENDING), None);
-
-        // Own shader module: `shader()` prepends common.wgsl, which binds a texture this
-        // pipeline does not have. Line width is not part of wgpu 30's primitive state, so the
-        // contract is one pixel. Alpha blend lets a segment's alpha show. Depth write stays off.
-        let debug_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("debug line"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/debug_line.wgsl").into()),
+        let debug_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("debug line layout"),
+            bind_group_layouts: &[Some(&globals_layout)],
+            immediate_size: 0,
         });
-        let debug_attrs = wgpu::vertex_attr_array![0 => Float32x4, 1 => Float32x4];
-        let debug_vertex_layout = wgpu::VertexBufferLayout {
-            array_stride: core::mem::size_of::<GpuDebugVertex>() as u64,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &debug_attrs,
-        };
-        let debug_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("debug line"),
-            layout: Some(&device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("debug line layout"),
-                bind_group_layouts: &[Some(&globals_layout)],
-                immediate_size: 0,
-            })),
-            vertex: wgpu::VertexState {
-                module: &debug_shader,
-                entry_point: Some("vs_debug"),
-                compilation_options: Default::default(),
-                buffers: &[Some(debug_vertex_layout)],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &debug_shader,
-                entry_point: Some("fs_debug"),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            primitive: wgpu::PrimitiveState { topology: wgpu::PrimitiveTopology::LineList, ..Default::default() },
-            depth_stencil: Some(depth_state(false)),
-            multisample: wgpu::MultisampleState::default(),
-            multiview_mask: None,
-            cache: None,
-        });
-
         let clear_uniform = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("viewport clear"),
             size: core::mem::size_of::<ClearUniform>() as u64,
@@ -632,42 +526,22 @@ impl SceneRenderer {
             layout: &clear_layout,
             entries: &[wgpu::BindGroupEntry { binding: 0, resource: clear_uniform.as_entire_binding() }],
         });
+        let clear_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("viewport clear layout"),
+            bind_group_layouts: &[Some(&clear_layout)],
+            immediate_size: 0,
+        });
+        let draw = crate::draw_pipelines::make_draw_pipelines(
+            device,
+            format,
+            1,
+            &layout,
+            &debug_layout,
+            &clear_pipeline_layout,
+        );
         let clear_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("viewport clear"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders/viewport_clear.wgsl").into()),
-        });
-        let clear_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("viewport clear"),
-            layout: Some(&device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("viewport clear layout"),
-                bind_group_layouts: &[Some(&clear_layout)],
-                immediate_size: 0,
-            })),
-            vertex: wgpu::VertexState {
-                module: &clear_shader,
-                entry_point: Some("vs_clear"),
-                compilation_options: Default::default(),
-                buffers: &[],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &clear_shader,
-                entry_point: Some("fs_clear"),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState { format, blend: None, write_mask: wgpu::ColorWrites::ALL })],
-            }),
-            primitive: wgpu::PrimitiveState { cull_mode: None, ..Default::default() },
-            // The pass has a depth attachment. This draw must not change it: the attachment clear
-            // already set 1.0, and a color fill is not a depth writer.
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: DEPTH_FORMAT,
-                depth_write_enabled: Some(false),
-                depth_compare: Some(wgpu::CompareFunction::Always),
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState::default(),
-            multiview_mask: None,
-            cache: None,
         });
         let color_fill_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("letterbox"),
@@ -862,7 +736,7 @@ impl SceneRenderer {
             format,
             globals,
             globals_bind_group,
-            clear_pipeline,
+            clear_pipeline: draw.clear,
             color_fill_pipeline,
             clear_bind_group,
             clear_uniform,
@@ -887,20 +761,20 @@ impl SceneRenderer {
             npot_fallback_names: HashSet::new(),
             mip_generator: None,
             resource_stats,
-            sprite_cutout,
-            sprite_blend,
-            sprite_opaque,
-            sprite_opaque_double,
-            sprite_mask,
-            sprite_mask_double,
-            sprite_blend_culled,
-            mesh_solid,
-            mesh_solid_double,
-            mesh_mask,
-            mesh_mask_double,
-            mesh_blend,
-            mesh_blend_double,
-            debug_pipeline,
+            sprite_cutout: draw.sprite_cutout,
+            sprite_blend: draw.sprite_blend,
+            sprite_opaque: draw.sprite_opaque,
+            sprite_opaque_double: draw.sprite_opaque_double,
+            sprite_mask: draw.sprite_mask,
+            sprite_mask_double: draw.sprite_mask_double,
+            sprite_blend_culled: draw.sprite_blend_culled,
+            mesh_solid: draw.mesh_solid,
+            mesh_solid_double: draw.mesh_solid_double,
+            mesh_mask: draw.mesh_mask,
+            mesh_mask_double: draw.mesh_mask_double,
+            mesh_blend: draw.mesh_blend,
+            mesh_blend_double: draw.mesh_blend_double,
+            debug_pipeline: draw.debug,
             textures: HashMap::new(),
             meshes: HashMap::new(),
             opaque_instances: InstanceBuffer::new(device, "opaque sprite instances"),
@@ -918,11 +792,88 @@ impl SceneRenderer {
             cache_max_idle_frames: DEFAULT_CACHE_MAX_IDLE_FRAMES,
             dimension_limit_override: None,
             refused_uploads: HashMap::new(),
+            msaa: MsaaSamples::One,
+            msaa4: None,
+            scene_layout: layout,
+            debug_layout,
+            clear_pipeline_layout,
+            msaa_skip_warned: HashSet::new(),
+            msaa_blank_logged: false,
         }
     }
 
     pub fn format(&self) -> wgpu::TextureFormat {
         self.format
+    }
+
+    /// Sample count in effect. [`MsaaSamples::One`] until [`Self::set_msaa`] accepts
+    /// [`MsaaSamples::Four`].
+    pub fn msaa(&self) -> MsaaSamples {
+        self.msaa
+    }
+
+    /// Sample count of the retained 4× pipelines.
+    ///
+    /// `None` until the first successful [`MsaaSamples::Four`]. The pipelines stay after a switch
+    /// back to [`MsaaSamples::One`], so this can be [`Some`]`(4)` while [`Self::msaa`] is
+    /// [`MsaaSamples::One`]. Images do not follow that rule: [`Self::msaa_images`] is empty at
+    /// one sample.
+    pub fn retained_msaa_pipeline_samples(&self) -> Option<u32> {
+        self.msaa4.as_ref().map(|extra| extra.draw.sample_count)
+    }
+
+    /// 4× color and depth bytes retained right now.
+    pub fn msaa_images(&self) -> MsaaImageUsage {
+        let Some(images) = self.msaa4.as_ref().and_then(|extra| extra.images.as_ref()) else {
+            return MsaaImageUsage::default();
+        };
+        let pixels = u64::from(images.width) * u64::from(images.height);
+        MsaaImageUsage {
+            width: images.width,
+            height: images.height,
+            color_bytes: pixels * 4 * 4,
+            depth_bytes: pixels * 4 * 4,
+        }
+    }
+
+    /// Whether `format` and `Depth32Float` both support 4 samples on `gpu`'s adapter.
+    ///
+    /// Hardware resolve is not required. Stage 1 averages samples in a viewport-scoped shader.
+    pub fn adapter_supports_msaa4(gpu: &GpuContext, format: wgpu::TextureFormat) -> bool {
+        let color = gpu.adapter.get_texture_format_features(format).flags;
+        let depth = gpu.adapter.get_texture_format_features(DEPTH_FORMAT).flags;
+        msaa4_supported(color, depth)
+    }
+
+    /// Selects the sample count.
+    ///
+    /// [`MsaaSamples::One`] always succeeds. [`MsaaSamples::Four`] checks the adapter and, on
+    /// success, builds the 4× pipelines once. A rejected request leaves [`Self::msaa`] unchanged
+    /// and does not build those pipelines. Returning to one sample drops 4× images and keeps the
+    /// pipelines. `wgpu`'s `create_texture` does not report an out-of-memory `Result`; a size the
+    /// device limits reject is handled when a frame tries to allocate, without changing this count.
+    pub fn set_msaa(&mut self, gpu: &GpuContext, samples: MsaaSamples) -> Result<(), MsaaError> {
+        let color = gpu.adapter.get_texture_format_features(self.format).flags.sample_count_supported(4);
+        let depth = gpu.adapter.get_texture_format_features(DEPTH_FORMAT).flags.sample_count_supported(4);
+        let next = select_msaa(self.msaa, samples, color, depth)?;
+        if next == MsaaSamples::Four {
+            if self.msaa4.is_none() {
+                self.msaa4 = Some(Msaa4::create(
+                    gpu,
+                    self.format,
+                    &self.scene_layout,
+                    &self.debug_layout,
+                    &self.clear_pipeline_layout,
+                ));
+                self.resource_stats.msaa_pipeline_creates += 1;
+            }
+            // The one-sample surface depth is not attached while 4× is selected.
+            self.depth = None;
+        } else {
+            self.drop_msaa_images();
+        }
+        self.msaa = next;
+        Ok(())
     }
 
     /// Counters from the most recent [`SceneRenderer::render`].
@@ -1075,7 +1026,13 @@ impl SceneRenderer {
             }
         }
         self.evict_unused(assets);
-        self.ensure_depth(gpu, size);
+        let msaa_ready = match self.msaa {
+            MsaaSamples::One => {
+                self.ensure_depth(gpu, size);
+                false
+            }
+            MsaaSamples::Four => self.prepare_msaa_images(gpu, size),
+        };
         // One upload for every camera. Later cameras do not rewrite this buffer, so a second
         // submit still reads the same vertices. An empty list does not write and does not draw.
         let debug_vertices = collect_debug_vertices(&scene.debug_lines);
@@ -1088,20 +1045,42 @@ impl SceneRenderer {
         let mut pass_stats = Vec::with_capacity(scene.passes.len());
         let mut opened = HashSet::new();
         for camera in &scene.passes {
+            if self.msaa == MsaaSamples::Four {
+                let reason = if msaa_ready {
+                    msaa4_camera_skip(self.msaa, camera.view.fit, camera.output, camera.clear, camera.presentation)
+                } else {
+                    Some(MsaaSkip::ImagesUnavailable)
+                };
+                if let Some(reason) = reason {
+                    self.warn_msaa_skip(camera.camera_id, reason);
+                    stats.msaa_skipped += 1;
+                    let mut one = PassFrameStats::default();
+                    count_pass_instances(camera, &mut stats, &mut one);
+                    pass_stats.push(one);
+                    continue;
+                }
+            }
             match camera.output {
                 CameraOutput::Surface => stats.surface_passes += 1,
                 CameraOutput::Target(_) => stats.offscreen_passes += 1,
             }
             let first = opened.insert(camera.output);
-            let mut one = self.submit_camera(gpu, scene, camera, first, target, &mut stats);
-            one.sprite_instances = (camera.opaque_sprites.instances.len()
-                + camera.mask_sprites.instances.len()
-                + camera.cutout_sprites.instances.len()
-                + camera.blended_sprites.instances.len()) as u32;
-            one.mesh_instances = (camera.meshes.len() + camera.blended_meshes.len()) as u32;
-            stats.sprite_instances += one.sprite_instances;
-            stats.mesh_instances += one.mesh_instances;
+            let mut one = if self.msaa == MsaaSamples::Four {
+                self.submit_direct_msaa(gpu, scene, camera, first, target, &mut stats)
+            } else {
+                self.submit_camera(gpu, scene, camera, first, target, &mut stats)
+            };
+            count_pass_instances(camera, &mut stats, &mut one);
             pass_stats.push(one);
+        }
+        if self.msaa == MsaaSamples::Four {
+            let surface_written = opened.iter().any(|output| matches!(output, CameraOutput::Surface));
+            let surface_requested = scene.passes.iter().any(|camera| matches!(camera.output, CameraOutput::Surface));
+            if surface_written {
+                self.msaa_blank_logged = false;
+            } else if surface_requested {
+                self.clear_undefined_surface(gpu, target);
+            }
         }
         self.retire_internal_targets(&scene.passes);
         self.stats = stats;
@@ -1119,37 +1098,7 @@ impl SceneRenderer {
         target: &wgpu::TextureView,
         stats: &mut FrameStats,
     ) -> PassFrameStats {
-        self.resource_stats.instance_buffer_grows +=
-            u64::from(self.opaque_instances.upload(gpu, &sprite_instances(&camera.opaque_sprites)));
-        self.resource_stats.instance_buffer_grows +=
-            u64::from(self.mask_instances.upload(gpu, &sprite_instances(&camera.mask_sprites)));
-        self.resource_stats.instance_buffer_grows +=
-            u64::from(self.cutout_instances.upload(gpu, &sprite_instances(&camera.cutout_sprites)));
-        self.resource_stats.instance_buffer_grows +=
-            u64::from(self.blend_instances.upload(gpu, &sprite_instances(&camera.blended_sprites)));
-        let mesh_data: Vec<GpuMeshInstance> = camera
-            .meshes
-            .iter()
-            .map(|mesh| GpuMeshInstance {
-                model: mesh.model.to_cols_array(),
-                color: mesh.color,
-                flags: [mesh.lit as u32, mesh.cutoff.to_bits(), 0, 0],
-            })
-            .collect();
-        self.resource_stats.instance_buffer_grows += u64::from(self.mesh_instances.upload(gpu, &mesh_data));
-        let blend_mesh_data: Vec<GpuMeshInstance> = camera
-            .blended_meshes
-            .iter()
-            .map(|mesh| GpuMeshInstance {
-                model: mesh.model.to_cols_array(),
-                color: mesh.color,
-                flags: [mesh.lit as u32, mesh.cutoff.to_bits(), 0, 0],
-            })
-            .collect();
-        self.resource_stats.instance_buffer_grows += u64::from(self.blend_mesh_instances.upload(gpu, &blend_mesh_data));
-        let globals =
-            GpuGlobals::from_camera(&camera.view, scene.ambient, scene.fog, scene.coplanar_thickness, &camera.lights);
-        gpu.queue.write_buffer(&self.globals, 0, bytemuck::bytes_of(&globals));
+        self.upload_camera(gpu, scene, camera);
 
         if matches!(camera.view.fit, PresentationFit::Rejected(_)) {
             return PassFrameStats::default();
@@ -1674,6 +1623,17 @@ impl SceneRenderer {
     }
 
     fn mesh_pipeline(&self, draw: MeshDraw) -> &wgpu::RenderPipeline {
+        if self.msaa == MsaaSamples::Four {
+            let draw_pipes = &self.msaa4.as_ref().expect("4× pipelines exist while Four is selected").draw;
+            return match draw {
+                MeshDraw::Solid { double_sided: false } => &draw_pipes.mesh_solid,
+                MeshDraw::Solid { double_sided: true } => &draw_pipes.mesh_solid_double,
+                MeshDraw::Mask { double_sided: false } => &draw_pipes.mesh_mask,
+                MeshDraw::Mask { double_sided: true } => &draw_pipes.mesh_mask_double,
+                MeshDraw::Blend { double_sided: false } => &draw_pipes.mesh_blend,
+                MeshDraw::Blend { double_sided: true } => &draw_pipes.mesh_blend_double,
+            };
+        }
         match draw {
             MeshDraw::Solid { double_sided: false } => &self.mesh_solid,
             MeshDraw::Solid { double_sided: true } => &self.mesh_solid_double,
@@ -1718,6 +1678,18 @@ impl SceneRenderer {
     }
 
     fn sprite_pipeline(&self, kind: SpritePipelineKind) -> &wgpu::RenderPipeline {
+        if self.msaa == MsaaSamples::Four {
+            let draw_pipes = &self.msaa4.as_ref().expect("4× pipelines exist while Four is selected").draw;
+            return match kind {
+                SpritePipelineKind::LegacyCutout => &draw_pipes.sprite_cutout,
+                SpritePipelineKind::LegacyBlend | SpritePipelineKind::BlendDouble => &draw_pipes.sprite_blend,
+                SpritePipelineKind::OpaqueCulled => &draw_pipes.sprite_opaque,
+                SpritePipelineKind::OpaqueDouble => &draw_pipes.sprite_opaque_double,
+                SpritePipelineKind::MaskCulled => &draw_pipes.sprite_mask,
+                SpritePipelineKind::MaskDouble => &draw_pipes.sprite_mask_double,
+                SpritePipelineKind::BlendCulled => &draw_pipes.sprite_blend_culled,
+            };
+        }
         match kind {
             SpritePipelineKind::LegacyCutout => &self.sprite_cutout,
             SpritePipelineKind::LegacyBlend | SpritePipelineKind::BlendDouble => &self.sprite_blend,
@@ -2209,6 +2181,249 @@ impl SceneRenderer {
             GpuMesh { revision, last_used: self.frame, vertices, indices, index_count: mesh.indices.len() as u32 },
         );
     }
+
+    fn upload_camera(&mut self, gpu: &GpuContext, scene: &RenderScene, camera: &CameraPass) {
+        self.resource_stats.instance_buffer_grows +=
+            u64::from(self.opaque_instances.upload(gpu, &sprite_instances(&camera.opaque_sprites)));
+        self.resource_stats.instance_buffer_grows +=
+            u64::from(self.mask_instances.upload(gpu, &sprite_instances(&camera.mask_sprites)));
+        self.resource_stats.instance_buffer_grows +=
+            u64::from(self.cutout_instances.upload(gpu, &sprite_instances(&camera.cutout_sprites)));
+        self.resource_stats.instance_buffer_grows +=
+            u64::from(self.blend_instances.upload(gpu, &sprite_instances(&camera.blended_sprites)));
+        let mesh_data: Vec<GpuMeshInstance> = camera
+            .meshes
+            .iter()
+            .map(|mesh| GpuMeshInstance {
+                model: mesh.model.to_cols_array(),
+                color: mesh.color,
+                flags: [mesh.lit as u32, mesh.cutoff.to_bits(), 0, 0],
+            })
+            .collect();
+        self.resource_stats.instance_buffer_grows += u64::from(self.mesh_instances.upload(gpu, &mesh_data));
+        let blend_mesh_data: Vec<GpuMeshInstance> = camera
+            .blended_meshes
+            .iter()
+            .map(|mesh| GpuMeshInstance {
+                model: mesh.model.to_cols_array(),
+                color: mesh.color,
+                flags: [mesh.lit as u32, mesh.cutoff.to_bits(), 0, 0],
+            })
+            .collect();
+        self.resource_stats.instance_buffer_grows += u64::from(self.blend_mesh_instances.upload(gpu, &blend_mesh_data));
+        let globals =
+            GpuGlobals::from_camera(&camera.view, scene.ambient, scene.fog, scene.coplanar_thickness, &camera.lights);
+        gpu.queue.write_buffer(&self.globals, 0, bytemuck::bytes_of(&globals));
+    }
+
+    /// Direct shaded surface camera at 4×. The scene pass writes multisampled color and depth.
+    /// A later pass averages color into this camera's viewport only.
+    fn submit_direct_msaa(
+        &mut self,
+        gpu: &GpuContext,
+        scene: &RenderScene,
+        camera: &CameraPass,
+        first: bool,
+        target: &wgpu::TextureView,
+        stats: &mut FrameStats,
+    ) -> PassFrameStats {
+        self.upload_camera(gpu, scene, camera);
+        let fill_viewport = !first;
+        if fill_viewport {
+            let uniform =
+                ClearUniform { color: [camera.clear_color.r, camera.clear_color.g, camera.clear_color.b, 1.0] };
+            gpu.queue.write_buffer(&self.clear_uniform, 0, bytemuck::bytes_of(&uniform));
+        }
+        let (color_view, depth_view, resolve_group, msaa_clear, msaa_debug, resolve_pipeline, size) = {
+            let extra = self.msaa4.as_ref().expect("4× pipelines exist while Four is selected");
+            let images = extra.images.as_ref().expect("4× images were prepared for this frame");
+            (
+                images.color_attachment.clone(),
+                images.depth_attachment.clone(),
+                images.resolve_group.clone(),
+                extra.draw.clear.clone(),
+                extra.draw.debug.clone(),
+                extra.resolve_pipeline.clone(),
+                (images.width, images.height),
+            )
+        };
+
+        let mut one = PassFrameStats::default();
+        let mut encoder =
+            gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("msaa camera") });
+        {
+            let color_load = if first {
+                wgpu::LoadOp::Clear(attachment_clear(camera.clear_color.r, camera.clear_color.g, camera.clear_color.b))
+            } else {
+                wgpu::LoadOp::Load
+            };
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("msaa camera"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &color_view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations { load: color_load, store: wgpu::StoreOp::Store },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &depth_view,
+                    depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(0.0), store: wgpu::StoreOp::Discard }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            let (x, y, w, h) = clamp_viewport(camera.viewport_px, size);
+            pass.set_viewport(x, y, w, h, 0.0, 1.0);
+            pass.set_scissor_rect(x as u32, y as u32, w as u32, h as u32);
+            if fill_viewport {
+                pass.set_pipeline(&msaa_clear);
+                pass.set_bind_group(0, &self.clear_bind_group, &[]);
+                pass.draw(0..3, 0..1);
+                record_clear(stats, &mut one);
+            }
+            pass.set_bind_group(0, &self.globals_bind_group, &[]);
+            pass.set_vertex_buffer(1, self.mesh_instances.buffer.slice(..));
+            let mut i = 0;
+            while i < camera.meshes.len() {
+                let end = MeshInstance::run_end(&camera.meshes, i);
+                let draw = camera.meshes[i];
+                if let Some(mesh) = self.meshes.get(&draw.mesh.id()) {
+                    pass.set_pipeline(self.mesh_pipeline(draw.draw));
+                    let texture = draw.texture.and_then(|t| self.textures.get(&t.id())).unwrap_or(&self.white);
+                    pass.set_bind_group(1, &texture.bind_group, &[]);
+                    pass.set_vertex_buffer(0, mesh.vertices.slice(..));
+                    pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
+                    pass.draw_indexed(0..mesh.index_count, 0, i as u32..end as u32);
+                    record_world(stats, &mut one, (end - i) as u32);
+                }
+                i = end;
+            }
+            self.draw_sprites(&mut pass, &camera.opaque_sprites, &self.opaque_instances, stats, &mut one);
+            self.draw_sprites(&mut pass, &camera.mask_sprites, &self.mask_instances, stats, &mut one);
+            self.draw_sprites(&mut pass, &camera.cutout_sprites, &self.cutout_instances, stats, &mut one);
+            self.draw_transparent(&mut pass, camera, stats, &mut one);
+            if self.debug_vertex_count > 0 {
+                pass.set_pipeline(&msaa_debug);
+                pass.set_bind_group(0, &self.globals_bind_group, &[]);
+                pass.set_vertex_buffer(0, self.debug_vertices.buffer.slice(..));
+                pass.draw(0..self.debug_vertex_count, 0..1);
+                record_world(stats, &mut one, self.debug_vertex_count);
+            }
+        }
+        {
+            let load = if first {
+                wgpu::LoadOp::Clear(attachment_clear(camera.clear_color.r, camera.clear_color.g, camera.clear_color.b))
+            } else {
+                wgpu::LoadOp::Load
+            };
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("msaa resolve"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: target,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations { load, store: wgpu::StoreOp::Store },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            let (x, y, w, h) = clamp_viewport(camera.viewport_px, size);
+            pass.set_pipeline(&resolve_pipeline);
+            pass.set_bind_group(0, &resolve_group, &[]);
+            pass.set_viewport(x, y, w, h, 0.0, 1.0);
+            pass.set_scissor_rect(x as u32, y as u32, w as u32, h as u32);
+            pass.draw(0..3, 0..1);
+            record_resolve(stats, &mut one);
+        }
+        gpu.queue.submit([encoder.finish()]);
+        one
+    }
+
+    /// Allocates or reuses the 4× surface images. `false` leaves the selected count at 4× and
+    /// draws nothing for this frame.
+    fn prepare_msaa_images(&mut self, gpu: &GpuContext, size: (u32, u32)) -> bool {
+        if self.msaa4.is_none() {
+            log::warn!("4× MSAA images were not allocated: pipelines are missing");
+            return false;
+        }
+        let (width, height) = (size.0.max(1), size.1.max(1));
+        if let Err(error) = validate_texture_dimensions(width, height, self.dimension_limits(gpu)) {
+            log::warn!("4× MSAA images {width}x{height} were not allocated: {error}");
+            return false;
+        }
+        if let Some(current) = self.msaa4.as_ref().and_then(|extra| extra.images.as_ref()) {
+            if current.width == width && current.height == height {
+                return true;
+            }
+        }
+        let replacing = self.msaa4.as_ref().and_then(|extra| extra.images.as_ref()).is_some();
+        let images = MsaaImages::allocate(
+            gpu,
+            self.format,
+            width,
+            height,
+            &self.msaa4.as_ref().expect("checked above").resolve_layout,
+        );
+        self.resource_stats.bind_group_creates += 1;
+        if replacing {
+            self.resource_stats.msaa_image_reallocs += 1;
+        } else {
+            self.resource_stats.msaa_image_creates += 1;
+        }
+        self.msaa4.as_mut().expect("checked above").images = Some(images);
+        true
+    }
+
+    fn drop_msaa_images(&mut self) {
+        let dropped = self.msaa4.as_mut().and_then(|extra| extra.images.take()).is_some();
+        if dropped {
+            self.resource_stats.msaa_image_drops += 1;
+        }
+    }
+
+    fn warn_msaa_skip(&mut self, camera_id: u32, reason: MsaaSkip) {
+        if !self.msaa_skip_warned.insert((camera_id, reason)) {
+            return;
+        }
+        log::warn!("{}", reason.message(camera_id));
+    }
+
+    /// A 4× frame whose surface cameras were all skipped. Opaque black is defined output.
+    /// It is not the skipped camera's clear color, and it is not a one-sample scene.
+    fn clear_undefined_surface(&mut self, gpu: &GpuContext, target: &wgpu::TextureView) {
+        if !self.msaa_blank_logged {
+            self.msaa_blank_logged = true;
+            log::warn!(
+                "4× MSAA drew no surface camera; the destination was cleared to opaque black and 1× was not used"
+            );
+        }
+        let mut encoder = gpu
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("msaa undefined destination") });
+        {
+            let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("msaa undefined destination"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: target,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.0, g: 0.0, b: 0.0, a: 1.0 }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+        }
+        gpu.queue.submit([encoder.finish()]);
+    }
 }
 
 fn record_world(stats: &mut FrameStats, pass: &mut PassFrameStats, instances: u32) {
@@ -2238,6 +2453,27 @@ fn record_depth_view(stats: &mut FrameStats, pass: &mut PassFrameStats) {
     stats.draw_calls += 1;
     stats.depth_view_draws += 1;
     pass.depth_view_draws += 1;
+}
+
+fn record_resolve(stats: &mut FrameStats, pass: &mut PassFrameStats) {
+    stats.draw_calls += 1;
+    stats.resolve_draws += 1;
+    pass.resolve_draws += 1;
+}
+
+fn count_pass_instances(camera: &CameraPass, stats: &mut FrameStats, one: &mut PassFrameStats) {
+    one.sprite_instances = (camera.opaque_sprites.instances.len()
+        + camera.mask_sprites.instances.len()
+        + camera.cutout_sprites.instances.len()
+        + camera.blended_sprites.instances.len()) as u32;
+    one.mesh_instances = (camera.meshes.len() + camera.blended_meshes.len()) as u32;
+    stats.sprite_instances += one.sprite_instances;
+    stats.mesh_instances += one.mesh_instances;
+}
+
+/// Both formats must support 4 samples. `MULTISAMPLE_RESOLVE` is not required: the resolve is a shader.
+pub fn msaa4_supported(color: wgpu::TextureFormatFeatureFlags, depth: wgpu::TextureFormatFeatureFlags) -> bool {
+    color.sample_count_supported(4) && depth.sample_count_supported(4)
 }
 
 fn attachment_clear(r: f32, g: f32, b: f32) -> wgpu::Color {
@@ -2334,20 +2570,128 @@ fn depth_sample_bind_group(
     })
 }
 
-fn shader(device: &wgpu::Device, label: &str, body: &str) -> wgpu::ShaderModule {
-    device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some(label),
-        source: wgpu::ShaderSource::Wgsl(format!("{SHADER_COMMON}\n{body}").into()),
-    })
+struct Msaa4 {
+    draw: crate::draw_pipelines::DrawPipelines,
+    resolve_pipeline: wgpu::RenderPipeline,
+    resolve_layout: wgpu::BindGroupLayout,
+    images: Option<MsaaImages>,
 }
 
-fn depth_state(write: bool) -> wgpu::DepthStencilState {
-    wgpu::DepthStencilState {
-        format: DEPTH_FORMAT,
-        depth_write_enabled: Some(write),
-        depth_compare: Some(wgpu::CompareFunction::Greater),
-        stencil: wgpu::StencilState::default(),
-        bias: wgpu::DepthBiasState::default(),
+struct MsaaImages {
+    width: u32,
+    height: u32,
+    #[allow(dead_code)]
+    color: wgpu::Texture,
+    color_attachment: wgpu::TextureView,
+    #[allow(dead_code)]
+    depth: wgpu::Texture,
+    depth_attachment: wgpu::TextureView,
+    resolve_group: wgpu::BindGroup,
+}
+
+impl Msaa4 {
+    fn create(
+        gpu: &GpuContext,
+        format: wgpu::TextureFormat,
+        scene_layout: &wgpu::PipelineLayout,
+        debug_layout: &wgpu::PipelineLayout,
+        clear_pipeline_layout: &wgpu::PipelineLayout,
+    ) -> Self {
+        let draw = crate::draw_pipelines::make_draw_pipelines(
+            &gpu.device,
+            format,
+            4,
+            scene_layout,
+            debug_layout,
+            clear_pipeline_layout,
+        );
+        let resolve_layout = gpu.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("msaa resolve layout"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: true,
+                },
+                count: None,
+            }],
+        });
+        let shader = gpu.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("msaa resolve"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/msaa_resolve.wgsl").into()),
+        });
+        let resolve_pipeline = gpu.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("msaa resolve"),
+            layout: Some(&gpu.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("msaa resolve layout"),
+                bind_group_layouts: &[Some(&resolve_layout)],
+                immediate_size: 0,
+            })),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_resolve"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_resolve"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState { format, blend: None, write_mask: wgpu::ColorWrites::ALL })],
+            }),
+            primitive: wgpu::PrimitiveState { cull_mode: None, ..Default::default() },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+        Self { draw, resolve_pipeline, resolve_layout, images: None }
+    }
+}
+
+impl MsaaImages {
+    fn allocate(
+        gpu: &GpuContext,
+        format: wgpu::TextureFormat,
+        width: u32,
+        height: u32,
+        resolve_layout: &wgpu::BindGroupLayout,
+    ) -> Self {
+        let size = wgpu::Extent3d { width, height, depth_or_array_layers: 1 };
+        let color = gpu.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("msaa color"),
+            size,
+            mip_level_count: 1,
+            sample_count: 4,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let color_attachment = color.create_view(&wgpu::TextureViewDescriptor::default());
+        let color_sample = color.create_view(&wgpu::TextureViewDescriptor::default());
+        let depth = gpu.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("msaa depth"),
+            size,
+            mip_level_count: 1,
+            sample_count: 4,
+            dimension: wgpu::TextureDimension::D2,
+            format: DEPTH_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        let depth_attachment = depth.create_view(&wgpu::TextureViewDescriptor::default());
+        let resolve_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("msaa resolve"),
+            layout: resolve_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&color_sample),
+            }],
+        });
+        Self { width, height, color, color_attachment, depth, depth_attachment, resolve_group }
     }
 }
 
