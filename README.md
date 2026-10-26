@@ -171,6 +171,8 @@ green run on a machine without a GPU proves nothing about rendering. Set `DIMORA
 makes them fail with a message saying that no GPU adapter was found (on Linux it suggests
 `sudo apt install mesa-vulkan-drivers`). `scripts/check.sh` sets it. Run
 `cargo test -p engine-renderer-wgpu -- --nocapture` to see which adapter the tests used.
+`crates/engine/tests/window_msaa.rs` opens a real window. The Ubuntu CI jobs start Xvfb first so that
+test can run; the GPU adapter is still the Vulkan driver installed above.
 
 To see the failure path on purpose, remove the adapter: on Linux `VK_ICD_FILENAMES=/nonexistent`, on macOS
 `WGPU_BACKEND=vulkan` (Vulkan is not built on macOS, so no adapter is found), for example
