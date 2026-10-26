@@ -1,8 +1,22 @@
 use engine_assets::AssetManager;
-use engine_renderer::RenderScene;
+use engine_renderer::{MsaaSamples, RenderScene};
 
 use crate::present::{choose_surface_present, surface_presents_from_wgpu, wgpu_present_for, SurfacePresent};
 use crate::{GpuContext, RenderError, SceneRenderer};
+
+/// Usage the window swapchain is configured with.
+///
+/// A 4× `CameraClear::Load` samples a private frame image, so the native surface only needs to
+/// be a color attachment. `TEXTURE_BINDING` is not requested: several backends, including Metal,
+/// omit it from [`wgpu::SurfaceCapabilities::usages`], and configuring it is a validation error.
+pub(crate) fn window_surface_usage(available: wgpu::TextureUsages) -> Result<wgpu::TextureUsages, String> {
+    let requested = wgpu::TextureUsages::RENDER_ATTACHMENT;
+    if available.contains(requested) {
+        Ok(requested)
+    } else {
+        Err(format!("window surface does not support RENDER_ATTACHMENT; supported usages are {available:?}"))
+    }
+}
 
 /// A [`SceneRenderer`] presenting to a window surface.
 pub struct WindowRenderer {
@@ -10,6 +24,8 @@ pub struct WindowRenderer {
     pub scene: SceneRenderer,
     surface: wgpu::Surface<'static>,
     config: wgpu::SurfaceConfiguration,
+    /// Usages reported by the surface before configuration. The configured usage is a subset.
+    supported_usages: wgpu::TextureUsages,
     /// Set after a lost or outdated surface is logged, cleared after a frame is acquired.
     surface_loss_noted: bool,
 }
@@ -40,12 +56,25 @@ impl WindowRenderer {
         if let Some(srgb) = caps.formats.iter().copied().find(|f| f.is_srgb()) {
             config.format = srgb;
         }
-        // A later CameraClear::Load at 4× samples this resolved image. The scene pass does not
-        // bind it while the pass is also writing it.
-        config.usage |= wgpu::TextureUsages::TEXTURE_BINDING;
-        surface.configure(&gpu.device, &config);
+        config.usage = window_surface_usage(caps.usages).map_err(RenderError::Surface)?;
+        configure_surface(&surface, &gpu.device, &config)?;
         let scene = SceneRenderer::new(&gpu, config.format);
-        Ok(Self { gpu, scene, surface, config, surface_loss_noted: false })
+        Ok(Self { gpu, scene, surface, config, supported_usages: caps.usages, surface_loss_noted: false })
+    }
+
+    /// Format configured on the window surface.
+    pub fn surface_format(&self) -> wgpu::TextureFormat {
+        self.config.format
+    }
+
+    /// Usage the surface was configured with. This is [`wgpu::TextureUsages::RENDER_ATTACHMENT`].
+    pub fn surface_usage(&self) -> wgpu::TextureUsages {
+        self.config.usage
+    }
+
+    /// Usages the surface advertised before configuration.
+    pub fn supported_surface_usages(&self) -> wgpu::TextureUsages {
+        self.supported_usages
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
@@ -57,7 +86,9 @@ impl WindowRenderer {
         }
         self.config.width = width;
         self.config.height = height;
-        self.surface.configure(&self.gpu.device, &self.config);
+        if let Err(error) = configure_surface(&self.surface, &self.gpu.device, &self.config) {
+            log::error!("window surface resize was rejected: {error}");
+        }
     }
 
     /// Selects a present mode for `vsync` from this surface's capabilities and configures the
@@ -71,7 +102,9 @@ impl WindowRenderer {
         if self.config.present_mode != mode {
             self.config.present_mode = mode;
             if self.config.width > 0 && self.config.height > 0 {
-                self.surface.configure(&self.gpu.device, &self.config);
+                if let Err(error) = configure_surface(&self.surface, &self.gpu.device, &self.config) {
+                    log::error!("window surface present-mode change was rejected: {error}");
+                }
             }
         }
         choice
@@ -92,7 +125,9 @@ impl WindowRenderer {
             }
             Cst::Outdated | Cst::Lost => {
                 note_surface_loss(&mut self.surface_loss_noted);
-                self.surface.configure(&self.gpu.device, &self.config);
+                if let Err(error) = configure_surface(&self.surface, &self.gpu.device, &self.config) {
+                    log::error!("window surface reconfigure was rejected: {error}");
+                }
                 return Ok(());
             }
             // Timeout and occlusion can repeat every frame. They skip the present and are not logged.
@@ -100,9 +135,37 @@ impl WindowRenderer {
             Cst::Validation => return Err(RenderError::Surface("validation error acquiring frame".into())),
         };
         let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
-        self.scene.render(&self.gpu, scene, assets, &view, (self.config.width, self.config.height));
-        self.gpu.queue.present(frame);
-        Ok(())
+        let size = (self.config.width, self.config.height);
+        // One sample draws into the swapchain. Four samples resolve into a private image, because
+        // this surface is not shader-readable, then copy that image here.
+        let presented = if self.scene.msaa() == MsaaSamples::Four {
+            self.scene.present_to_surface(&self.gpu, scene, assets, &view, size)
+        } else {
+            self.scene.drop_surface_frame();
+            self.scene.render(&self.gpu, scene, assets, &view, size);
+            Ok(())
+        };
+        match presented {
+            Ok(()) => {
+                self.gpu.queue.present(frame);
+                Ok(())
+            }
+            Err(error) => Err(error),
+        }
+    }
+}
+
+/// Configures `surface` and returns a validation error instead of panicking.
+fn configure_surface(
+    surface: &wgpu::Surface<'_>,
+    device: &wgpu::Device,
+    config: &wgpu::SurfaceConfiguration,
+) -> Result<(), RenderError> {
+    let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
+    surface.configure(device, config);
+    match pollster::block_on(scope.pop()) {
+        Some(error) => Err(RenderError::Surface(format!("surface configuration was rejected: {error}"))),
+        None => Ok(()),
     }
 }
 
@@ -138,5 +201,21 @@ mod tests {
         noted = false;
         note_surface_loss(&mut noted);
         assert_eq!(capture::messages().len(), 2, "a later loss is a new occurrence");
+    }
+
+    #[test]
+    fn window_usage_is_the_color_attachment_when_that_usage_is_advertised() {
+        let available = wgpu::TextureUsages::COPY_SRC
+            | wgpu::TextureUsages::COPY_DST
+            | wgpu::TextureUsages::STORAGE_BINDING
+            | wgpu::TextureUsages::RENDER_ATTACHMENT;
+        assert_eq!(window_surface_usage(available).unwrap(), wgpu::TextureUsages::RENDER_ATTACHMENT);
+    }
+
+    #[test]
+    fn window_usage_fails_when_the_surface_cannot_be_a_color_attachment() {
+        let error = window_surface_usage(wgpu::TextureUsages::COPY_SRC).unwrap_err();
+        assert!(error.contains("RENDER_ATTACHMENT"));
+        assert!(error.contains("COPY_SRC"));
     }
 }

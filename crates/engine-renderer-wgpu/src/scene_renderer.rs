@@ -34,8 +34,8 @@ const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct FrameStats {
     /// Every `draw` and `draw_indexed`, including viewport color clears, depth-view draws,
-    /// 4× resolves, and load expansions. A one-sample frame has none of the last two, so its total
-    /// matches the world and clear draws.
+    /// 4× resolves, load expansions, and the 4× window frame copy. A one-sample frame has none
+    /// of the last three, so its total matches the world and clear draws.
     pub draw_calls: u32,
     /// Scene draws only. A viewport clear is not one of these.
     pub world_draw_calls: u32,
@@ -73,6 +73,10 @@ pub struct FrameStats {
     /// [`CameraClear::Load`] viewport. Not a world draw. Zero at one sample, for a first writer,
     /// for [`CameraClear::Color`], and for a depth presentation.
     pub expand_draws: u32,
+    /// One 1:1 copy of the private 4× frame image onto a window surface. Zero at one sample,
+    /// and zero for [`SceneRenderer::render`] and [`SceneRenderer::render_to_rgba`], which write a
+    /// sampleable destination directly.
+    pub frame_present_draws: u32,
     /// Cameras that were not drawn because their 4× images were not allocated. Zero at one sample.
     /// The selected count is not changed, and the camera is not drawn at one sample.
     pub msaa_skipped: u32,
@@ -164,6 +168,13 @@ pub struct GpuResourceStats {
     /// 4× images dropped because the renderer returned to one sample, a destination was removed
     /// or resized, or an internal camera stopped scaling.
     pub msaa_image_drops: u64,
+    /// Private single-sample frame images created for a 4× window composition. [`SceneRenderer::render`]
+    /// and [`SceneRenderer::render_to_rgba`] do not increment this.
+    pub surface_frame_creates: u64,
+    /// Private frame images replaced because the window size changed.
+    pub surface_frame_reallocs: u64,
+    /// Private frame images dropped because the renderer returned to one sample.
+    pub surface_frame_drops: u64,
 }
 
 /// 4× color and depth bytes retained for every live destination.
@@ -180,6 +191,17 @@ pub struct MsaaImageUsage {
     pub depth_bytes: u64,
     /// Retained 4× color images. Each has a matching depth image that is not a second count.
     pub image_count: u32,
+}
+
+/// Private single-sample color image a 4× window resolves into before presentation.
+///
+/// Bytes are `width * height * 4`: one sample and four bytes per pixel. This is a size
+/// calculation, not a measured driver allocation. The image is not a [`RenderTargetId`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SurfaceFrameUsage {
+    pub width: u32,
+    pub height: u32,
+    pub color_bytes: u64,
 }
 
 /// Private internal-resolution images retained after the latest frame.
@@ -312,6 +334,15 @@ struct InternalTarget {
     present_bind_group: wgpu::BindGroup,
     /// Multisample color and depth at this internal size. The present blit samples `view`.
     msaa: Option<MsaaImages>,
+}
+
+/// Single-sample color image that 4× surface cameras resolve into. Not a [`RenderTargetId`].
+/// The window copies it onto the swapchain. Absent at one sample.
+struct SurfaceFrame {
+    width: u32,
+    height: u32,
+    view: wgpu::TextureView,
+    present_bind_group: wgpu::BindGroup,
 }
 
 /// Growable vertex buffer rewritten every frame.
@@ -460,6 +491,8 @@ pub struct SceneRenderer {
     /// Destination size of the latest [`Self::render`]. Letterbox and presentation use this when
     /// 4× is selected, because that path does not keep the one-sample surface depth image.
     surface_size: (u32, u32),
+    /// Sampleable color image for 4× surface cameras. The native swapchain is not this image.
+    surface_frame: Option<SurfaceFrame>,
 }
 
 impl SceneRenderer {
@@ -820,6 +853,7 @@ impl SceneRenderer {
             msaa_skip_warned: HashSet::new(),
             msaa_blank_logged: false,
             surface_size: (1, 1),
+            surface_frame: None,
         }
     }
 
@@ -910,6 +944,7 @@ impl SceneRenderer {
             self.depth = None;
         } else {
             self.drop_msaa_images();
+            self.drop_surface_frame();
         }
         self.msaa = next;
         Ok(())
@@ -1810,6 +1845,76 @@ impl SceneRenderer {
         read_texture_level(gpu, &target.color, 0, target.width, target.height)
     }
 
+    /// The private image 4× window composition resolves into, if one is retained.
+    ///
+    /// [`MsaaSamples::One`] drops it. [`Self::render`] and [`Self::render_to_rgba`] do not create it.
+    pub fn surface_frame(&self) -> Option<SurfaceFrameUsage> {
+        self.surface_frame.as_ref().map(|frame| SurfaceFrameUsage {
+            width: frame.width,
+            height: frame.height,
+            color_bytes: u64::from(frame.width) * u64::from(frame.height) * 4,
+        })
+    }
+
+    /// Draws into `surface`.
+    ///
+    /// At one sample this is [`Self::render`]: the swapchain is the color attachment, and no
+    /// private frame image is kept. At four samples, surface cameras resolve into a private
+    /// single-sample image that can be sampled, then one fullscreen pass copies that image onto
+    /// `surface`. `surface` needs `RENDER_ATTACHMENT` only. The copy uses the same nearest shader
+    /// as an internal-resolution present, with scale 1 and origin 0. The destination attachment
+    /// is cleared and the triangle replaces every pixel of `surface`. A surface camera that drew
+    /// this frame is not cleared out of the private image. An empty surface frame clears that
+    /// private image to opaque black before the copy, so a previous frame is not presented again.
+    ///
+    /// A rejected four-sample frame image leaves the sample count at four and does not draw the
+    /// scene at one sample.
+    pub fn present_to_surface(
+        &mut self,
+        gpu: &GpuContext,
+        scene: &RenderScene,
+        assets: &AssetManager,
+        surface: &wgpu::TextureView,
+        size: (u32, u32),
+    ) -> Result<(), RenderError> {
+        if self.msaa != MsaaSamples::Four {
+            self.drop_surface_frame();
+            self.render(gpu, scene, assets, surface, size);
+            return Ok(());
+        }
+        self.ensure_surface_frame(gpu, size.0, size.1)?;
+        let frame_view = self.surface_frame.as_ref().expect("frame image").view.clone();
+        self.render(gpu, scene, assets, &frame_view, size);
+        if self.stats.surface_passes == 0 {
+            clear_color_target(gpu, &frame_view);
+        }
+        self.copy_surface_frame(gpu, surface, size);
+        Ok(())
+    }
+
+    /// Like [`Self::render_to_rgba`], but four-sample frames use [`Self::present_to_surface`].
+    ///
+    /// The readback image is `RENDER_ATTACHMENT | COPY_SRC`. It is not given `TEXTURE_BINDING`.
+    /// One sample still draws into that image directly.
+    pub fn present_to_rgba(
+        &mut self,
+        gpu: &GpuContext,
+        scene: &RenderScene,
+        assets: &AssetManager,
+        width: u32,
+        height: u32,
+    ) -> Result<Vec<u8>, RenderError> {
+        let texture = self.rgba_target(
+            gpu,
+            width,
+            height,
+            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        )?;
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        self.present_to_surface(gpu, scene, assets, &view, (width, height))?;
+        read_rgba_texture(gpu, &texture, width, height)
+    }
+
     /// Renders to an offscreen RGBA8 image and returns tightly packed pixels (sRGB encoded when
     /// this renderer's format is an sRGB format). Blocks until the GPU is done.
     pub fn render_to_rgba(
@@ -1820,73 +1925,131 @@ impl SceneRenderer {
         width: u32,
         height: u32,
     ) -> Result<Vec<u8>, RenderError> {
+        let texture = self.rgba_target(
+            gpu,
+            width,
+            height,
+            wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::COPY_SRC
+                | wgpu::TextureUsages::TEXTURE_BINDING,
+        )?;
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        self.render(gpu, scene, assets, &view, (width, height));
+        read_rgba_texture(gpu, &texture, width, height)
+    }
+
+    fn rgba_target(
+        &self,
+        gpu: &GpuContext,
+        width: u32,
+        height: u32,
+        usage: wgpu::TextureUsages,
+    ) -> Result<wgpu::Texture, RenderError> {
         assert!(
             matches!(self.format, wgpu::TextureFormat::Rgba8UnormSrgb | wgpu::TextureFormat::Rgba8Unorm),
-            "render_to_rgba needs an RGBA8 renderer format, got {:?}",
+            "RGBA readback needs an RGBA8 renderer format, got {:?}",
             self.format
         );
-        let size = wgpu::Extent3d { width, height, depth_or_array_layers: 1 };
-        let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
+        Ok(gpu.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("offscreen color"),
-            size,
+            size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: self.format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                | wgpu::TextureUsages::COPY_SRC
-                | wgpu::TextureUsages::TEXTURE_BINDING,
+            usage,
+            view_formats: &[],
+        }))
+    }
+
+    fn ensure_surface_frame(&mut self, gpu: &GpuContext, width: u32, height: u32) -> Result<(), RenderError> {
+        let (width, height) = (width.max(1), height.max(1));
+        if let Some(current) = &self.surface_frame {
+            if current.width == width && current.height == height {
+                return Ok(());
+            }
+        }
+        let allowed = gpu.adapter.get_texture_format_features(self.format).allowed_usages;
+        let needed = wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING;
+        if !allowed.contains(needed) {
+            return Err(RenderError::Device(format!(
+                "renderer format {:?} cannot be a sampleable color attachment; allowed usages are {allowed:?}",
+                self.format
+            )));
+        }
+        if let Err(error) = validate_texture_dimensions(width, height, self.dimension_limits(gpu)) {
+            return Err(RenderError::Device(format!("window frame image {width}x{height} was not allocated: {error}")));
+        }
+        let replacing = self.surface_frame.is_some();
+        let color = gpu.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("surface frame"),
+            size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: self.format,
+            usage: needed,
             view_formats: &[],
         });
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        self.render(gpu, scene, assets, &view, (width, height));
-
-        let unpadded = width * 4;
-        let padded = unpadded.next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
-        let readback = gpu.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("readback"),
-            size: (padded * height) as u64,
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
+        let view = color.create_view(&wgpu::TextureViewDescriptor::default());
+        let present_bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("surface frame present"),
+            layout: &self.present_layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&view) },
+                wgpu::BindGroupEntry { binding: 1, resource: self.present_uniform.as_entire_binding() },
+            ],
         });
-        let mut encoder =
-            gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("readback") });
-        encoder.copy_texture_to_buffer(
-            wgpu::TexelCopyTextureInfo {
-                texture: &texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            wgpu::TexelCopyBufferInfo {
-                buffer: &readback,
-                layout: wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(padded),
-                    rows_per_image: Some(height),
-                },
-            },
-            size,
-        );
-        gpu.queue.submit([encoder.finish()]);
-
-        let (tx, rx) = std::sync::mpsc::channel();
-        readback.slice(..).map_async(wgpu::MapMode::Read, move |r| {
-            let _ = tx.send(r);
-        });
-        gpu.device.poll(wgpu::PollType::wait_indefinitely()).map_err(|e| RenderError::Readback(e.to_string()))?;
-        rx.recv()
-            .map_err(|e| RenderError::Readback(e.to_string()))?
-            .map_err(|e| RenderError::Readback(e.to_string()))?;
-
-        let data = readback.slice(..).get_mapped_range().map_err(|e| RenderError::Readback(e.to_string()))?;
-        let mut out = Vec::with_capacity((unpadded * height) as usize);
-        for row in data.chunks(padded as usize).take(height as usize) {
-            out.extend_from_slice(&row[..unpadded as usize]);
+        self.resource_stats.bind_group_creates += 1;
+        if replacing {
+            self.resource_stats.surface_frame_reallocs += 1;
+        } else {
+            self.resource_stats.surface_frame_creates += 1;
         }
-        drop(data);
-        readback.unmap();
-        Ok(out)
+        self.surface_frame = Some(SurfaceFrame { width, height, view, present_bind_group });
+        Ok(())
+    }
+
+    /// Drops the private 4× frame image when one is retained.
+    pub fn drop_surface_frame(&mut self) {
+        if self.surface_frame.take().is_some() {
+            self.resource_stats.surface_frame_drops += 1;
+        }
+    }
+
+    fn copy_surface_frame(&mut self, gpu: &GpuContext, destination: &wgpu::TextureView, size: (u32, u32)) {
+        let group = self.surface_frame.as_ref().expect("frame image").present_bind_group.clone();
+        let uniform = PresentUniform { origin: [0.0, 0.0], scale: 1, _pad: 0 };
+        gpu.queue.write_buffer(&self.present_uniform, 0, bytemuck::bytes_of(&uniform));
+        let mut encoder =
+            gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("surface frame") });
+        {
+            let (width, height) = (size.0.max(1), size.1.max(1));
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("surface frame"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: destination,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(&self.present_pipeline);
+            pass.set_bind_group(0, &group, &[]);
+            pass.set_viewport(0.0, 0.0, width as f32, height as f32, 0.0, 1.0);
+            pass.set_scissor_rect(0, 0, width, height);
+            pass.draw(0..3, 0..1);
+        }
+        gpu.queue.submit([encoder.finish()]);
+        self.stats.draw_calls += 1;
+        self.stats.frame_present_draws += 1;
     }
 
     /// Allocates, resizes, or drops offscreen images so they match `targets` before any pass.
@@ -3463,6 +3626,40 @@ fn pack_rect(rgba: &[u8], texture_width: u32, texture_height: u32, rect: TexelRe
         out[dest..dest + src.len()].copy_from_slice(src);
     }
     Some(out)
+}
+
+fn clear_color_target(gpu: &GpuContext, view: &wgpu::TextureView) {
+    let mut encoder =
+        gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("surface frame clear") });
+    {
+        let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("surface frame clear"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.0, g: 0.0, b: 0.0, a: 1.0 }),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+    }
+    gpu.queue.submit([encoder.finish()]);
+}
+
+fn read_rgba_texture(
+    gpu: &GpuContext,
+    texture: &wgpu::Texture,
+    width: u32,
+    height: u32,
+) -> Result<Vec<u8>, RenderError> {
+    read_texture_level(gpu, texture, 0, width, height)
+        .ok_or_else(|| RenderError::Readback("could not map the frame".into()))
 }
 
 fn read_texture_level(

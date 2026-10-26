@@ -108,6 +108,7 @@ fn main() {
         }
     }
     switch_samples(&gpu, &assets, &scene);
+    measure_presented(&gpu, &assets, &scene);
 }
 
 fn measure(
@@ -376,6 +377,72 @@ fn switch_samples(gpu: &GpuContext, assets: &AssetManager, scene: &engine_render
         "switch pipelines={pipelines} pipelines_after_return={pipelines_kept} first_image_creates={created} steady_extra_creates={steady} reallocs_on_resize={reallocs} drops_on_return={drops} images_after_return={released} restored_images={} restored_color_bytes={} restored_depth_bytes={}",
         restored.image_count, restored.color_bytes, restored.depth_bytes
     );
+}
+
+fn measure_presented(gpu: &GpuContext, assets: &AssetManager, scene: &engine_renderer::RenderScene) {
+    println!(
+        "presented run samples encode_median_ns encode_p95_ns completion_median_ns completion_p95_ns world_draws resolve_draws expand_draws frame_presents surface_frame_bytes msaa_color_bytes frame_creates steady_frame_creates frame_reallocs"
+    );
+    for run in 1..=2 {
+        for samples in [MsaaSamples::One, MsaaSamples::Four] {
+            let mut renderer = SceneRenderer::new(gpu, wgpu::TextureFormat::Rgba8Unorm);
+            let destination = color_target(gpu, WIDTH, HEIGHT, wgpu::TextureUsages::RENDER_ATTACHMENT);
+            renderer.set_msaa(gpu, samples).unwrap();
+            renderer.present_to_surface(gpu, scene, assets, &destination.1, (WIDTH, HEIGHT)).unwrap();
+            let _ = wait(gpu);
+            for _ in 0..WARMUP {
+                renderer.present_to_surface(gpu, scene, assets, &destination.1, (WIDTH, HEIGHT)).unwrap();
+                let _ = wait(gpu);
+            }
+            let creates_before = renderer.resource_stats().surface_frame_creates;
+            let mut encode = Vec::with_capacity(SAMPLES);
+            let mut completion = Vec::with_capacity(SAMPLES);
+            for _ in 0..SAMPLES {
+                let started = Instant::now();
+                renderer.present_to_surface(gpu, scene, assets, &destination.1, (WIDTH, HEIGHT)).unwrap();
+                encode.push(started.elapsed().as_nanos() as u64);
+                let started = Instant::now();
+                if wait(gpu) {
+                    completion.push(started.elapsed().as_nanos() as u64);
+                }
+            }
+            let stats = renderer.stats();
+            let resources = renderer.resource_stats();
+            let frame_bytes = renderer.surface_frame().map(|frame| frame.color_bytes).unwrap_or(0);
+            let label = match samples {
+                MsaaSamples::One => "1x",
+                MsaaSamples::Four => "4x",
+            };
+            println!(
+                "presented {run} {label} {SAMPLES} {} {} {} {} {} {} {} {} {} {} {} {} {}",
+                median(&encode),
+                p95(&encode),
+                median(&completion),
+                p95(&completion),
+                stats.world_draw_calls,
+                stats.resolve_draws,
+                stats.expand_draws,
+                stats.frame_present_draws,
+                frame_bytes,
+                renderer.msaa_images().color_bytes,
+                resources.surface_frame_creates,
+                resources.surface_frame_creates - creates_before,
+                resources.surface_frame_reallocs,
+            );
+            if samples == MsaaSamples::Four {
+                let half = color_target(gpu, WIDTH / 2, HEIGHT / 2, wgpu::TextureUsages::RENDER_ATTACHMENT);
+                renderer.present_to_surface(gpu, scene, assets, &half.1, (WIDTH / 2, HEIGHT / 2)).unwrap();
+                let _ = wait(gpu);
+                renderer.set_msaa(gpu, MsaaSamples::One).unwrap();
+                let after = renderer.surface_frame().is_none() && renderer.msaa_images().image_count == 0;
+                println!(
+                    "presented-switch reallocs={} dropped_frame_and_msaa={after} frame_drops={}",
+                    renderer.resource_stats().surface_frame_reallocs,
+                    renderer.resource_stats().surface_frame_drops
+                );
+            }
+        }
+    }
 }
 
 fn color_target(
