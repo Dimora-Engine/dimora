@@ -1,10 +1,10 @@
 # ADR-0024: Optional renderer-wide 4× MSAA
 
-* **Status:** Proposed. Stage 2 is implemented on `feat/m6-d06c-msaa` (`2bc97fa`). A later window-compatibility correction on the same branch resolves 4× surface cameras into a private single-sample image and presents that image. Neither is accepted. This does not close D-06, and it does not complete M6.
+* **Status:** Settled for the verified 1×/4× contract, including private-frame window presentation. This does not close D-06, and it does not complete M6.
 * **Date:** 2026-10-26
 * **Backlog id:** The MSAA slice of D-06 (D-06C). Per-object snapping stays open.
-* **Decided by:** Proposed for review. Cal approved the core design for this implementation on 2026-10-26. That approval is not an acceptance of the record.
-* **Affects:** The renderer's sample count and `Game::set_msaa`. Not a camera field and not a component. Not [ADR-0004](0004-one-spatial-world-many-camera-configurations.md)'s one-camera model, not the [ADR-0022](0022-orthographic-pixel-snap.md) snap, and not the [ADR-0023](0023-integer-resolution-camera-presentation.md) blit. The blit still samples a resolved one-sample image. `CameraClear::Load` with an internal resolution stays rejected by that record.
+* **Decided by:** Cal, 2026-10-26, accepting the verified 1×/4× behavior on `feat/m6-d06c-msaa`. Not an acceptance of the rest of D-06 or of M6.
+* **Affects:** The renderer's sample count and `Game::set_msaa`. Not a camera field and not a component. Not [ADR-0004](0004-one-spatial-world-many-camera-configurations.md)'s one-camera model, not the [ADR-0019](0019-reverse-z.md) depth convention, not the [ADR-0022](0022-orthographic-pixel-snap.md) snap, and not the [ADR-0023](0023-integer-resolution-camera-presentation.md) blit. The blit still samples a resolved one-sample image. `CameraClear::Load` with an internal resolution stays rejected by that record. A window surface is not assumed to be shader-readable.
 
 ## Context and problem
 
@@ -18,7 +18,7 @@ A failed 4× request must not be reported as success and must not keep drawing a
 
 * `MsaaSamples::One` and `MsaaSamples::Four` only. `One` is the default. The count is renderer-wide. There is no per-camera count and no per-material count.
 * The public game API does not expose `wgpu` types. The setting is not a camera field and is not in the component registry. A later editor can read the selected count and whether 4× is available.
-* Four is stored only when the adapter reports 4 samples for the renderer's color format and for `Depth32Float`. The color formats in use are `Rgba8Unorm` and `Rgba8UnormSrgb`. A rejection leaves the previous count in place. The renderer never reports 4× while the frame is one sample. A request stored before a renderer exists is not the active count. `Game::msaa` reports the active count, or `One` when no renderer exists.
+* Four is stored only when the adapter reports 4 samples for the renderer's color format and for `Depth32Float`. Headless readback uses `Rgba8Unorm` and `Rgba8UnormSrgb`. A window uses the format the surface selects. On Apple M5 Metal that format is `Bgra8UnormSrgb`. A rejection leaves the previous count in place. The renderer never reports 4× while the frame is one sample. A request stored before a renderer exists is not the active count. `Game::msaa` reports the active count, or `One` when no renderer exists.
 * The one-sample path stays the historical path: same pipelines, no 4× images, no resolve draw, no load-expansion draw. Historical screenshots stay on that default.
 * The resolve reads the four color samples, averages them in the numerical space `textureLoad` already returns, and writes only the camera viewport. An sRGB attachment encodes on store. The shader does not apply a second gamma. Material shaders are unchanged.
 * Reverse-Z stays `Greater` with a depth clear of 0. `alpha_to_coverage` stays off. Sampler defaults stay. MSAA changes geometric coverage. A mask or cutout still discards a whole fragment. Texture filtering, orthographic pixel snap, and integer presentation stay independent.
@@ -27,6 +27,7 @@ A failed 4× request must not be reported as success and must not keep drawing a
 * A public render target stays one sample. Its 4× color and depth are private. A later camera samples the resolved target.
 * An internal-resolution camera renders at the internal pixel size, resolves into the existing one-sample internal image, then uses the existing nearest blit. The multisample images are the internal size. `CameraClear::Load` with an internal resolution stays rejected. Scale 0 still skips the scene and allocates no private image.
 * One is always usable.
+* The engine must not assume a surface is shader-readable, even when the selected surface texture format supports texture sampling. Optional 4× window rendering resolves into a private single-sample image and then runs one presentation pass. The swapchain needs `RENDER_ATTACHMENT` only.
 
 ## Options considered
 
@@ -52,9 +53,9 @@ A failed 4× request must not be reported as success and must not keep drawing a
 
 ## Decision and rationale
 
-Option A, proposed. It is not settled.
+Option A, settled for this 1×/4× contract.
 
-`MsaaSamples` lives in `engine-renderer`. `select_msaa` accepts `Four` only when both format checks pass. `Err` means the caller keeps the previous count. `msaa4_camera_skip` does not reject a camera combination. `Load` with an internal resolution is still omitted by presentation fit, before a pass exists. An image that `validate_texture_dimensions` rejects is `MsaaSkip::ImagesUnavailable` at draw time. The count stays `Four`. That camera is not drawn at one sample.
+`MsaaSamples` lives in `engine-renderer`. `select_msaa` accepts `Four` only when both format checks pass. `Err` means the caller keeps the previous count. `msaa4_camera_skip` remains public and returns `None` for every combination the one-sample path draws. It is not the rejection API. `Load` with an internal resolution is still omitted by presentation fit, before a pass exists. An image that `validate_texture_dimensions` rejects is `MsaaSkip::ImagesUnavailable` at draw time. The count stays `Four`. That camera is not drawn at one sample.
 
 `SceneRenderer::set_msaa` asks the adapter with `sample_count_supported(4)` and then calls `select_msaa`. The first successful `Four` builds the 4× pipelines once, including the load-expansion pipeline and the multisample depth-view pipeline. A second `Four` does not rebuild them. Returning to `One` drops every 4× image and keeps the pipelines. `Game::set_msaa` stores a request. `Game::msaa` reports the headless renderer's active count, or `One` when no renderer exists, including when a four-sample request is only stored. `Game::msaa4_available` is `None` until that renderer exists. `render_to_rgba` applies the request before drawing and returns `RenderError::Device` on rejection, without drawing. Window startup applies it before the frame loop; a rejection logs, stores the error, and does not keep a one-sample renderer under a four-sample request.
 
@@ -76,13 +77,13 @@ A four-sample window does not resolve into that swapchain. Surface cameras resol
 
 ## Consequences and follow-up
 
-* This implementation is not an accepted MSAA feature until this record is settled. D-06 stays open because per-object snap is still open. M6 stays open.
+* This record accepts the verified 1×/4× contract. D-06 stays open because per-object snap is still open. M6 stays open.
 * Mask and cutout edges do not gain alpha-to-coverage smoothing. Fully covered interiors can match one sample within a channel. Geometric edges of opaque triangles can carry intermediate coverage.
 * The depth diagnostic is the nearest covered sample. A pixel with one covered sample and three clear samples shows that surface, not the empty color and not a blend toward it.
 * `CameraClear::Load` with an internal resolution stays rejected. This record does not change that ADR-0023 rule.
 * Pipelines stay after a return to one sample. Images do not. The next `Four` frame allocates images again and does not rebuild pipelines. A resize replaces the pair for that destination. Removing a target or an internal camera drops its pair. Steady frames do not create images.
 * Vulkan, DirectX, OpenGL, and lavapipe are not verified. The GPU evidence is Apple M5, Metal.
-* The headless `Load` path is pixel-tested, including the private-frame copy against a sampleable target of the same scene. A live window on Apple M5 Metal presented 1× and 4×, resized, changed present mode, and returned to 1×. Swapchain pixels were not read back. The window format was `Bgra8UnormSrgb`. Exact byte equality of the copy was measured on headless `Rgba8Unorm` and `Rgba8UnormSrgb`, not on the swapchain.
+* The headless `Load` path is pixel-tested, including the private-frame copy against a sampleable target of the same scene. A live window on Apple M5 Metal presented 1× and 4×, resized, changed present mode, and returned to 1×. Swapchain pixels were not read back. Lost or outdated acquisition was not injected. The window format was `Bgra8UnormSrgb`. Exact byte equality of the copy was measured on headless `Rgba8Unorm`, `Rgba8UnormSrgb`, and `Bgra8UnormSrgb`. The BGRA readback is a headless texture with `RENDER_ATTACHMENT | COPY_SRC`, not the swapchain. Stored bytes are physical B, G, R, A. Linear `(0.5, 0.25, 0.75)` stored as `[225, 137, 188, 255]`, matching the IEC sRGB encode and the one-sample image of the same clear. Opaque red stored as `[0, 0, 255, 255]` and opaque blue as `[255, 0, 0, 255]`, with the top row red and the bottom row blue. A blended center matched the one-sample image exactly, `[187, 188, 0, 255]`, and kept alpha 255.
 * Per-object snap is not added. Sprite samplers are unchanged. There is no 2× or 8× count.
 * The editor is not built. `Game::msaa` and `Game::msaa4_available` are the inspection points, once a renderer exists.
 * GPU pass timestamps were not measured. `msaa_bench` completion waits for the device queue. That is not a pass time.
@@ -95,6 +96,6 @@ Stage 2 pixels, on that machine: a later `Load` keeps an uncovered red pixel and
 
 `DIMORA_REQUIRE_GPU=1 scripts/check.sh` on 2026-10-26 at 1:13 PM America/Chicago: exit 0, 927 passed, 0 failed, 0 ignored, 80 suites, `rustc 1.99.0`. The screenshot hashes are in [../../TASKS.md](../../TASKS.md). Release encode, extraction, and calculated image bytes are in [../PERFORMANCE.md](../PERFORMANCE.md). GPU pass timestamps were not measured.
 
-The window correction is later on the same branch. `window_msaa` presented a native Apple M5 Metal window at one sample and at four, including resize, a vsync toggle, and a return to one sample. `surface_frame.rs` compares the private-frame copy with a direct sampleable target. `DIMORA_REQUIRE_GPU=1 scripts/check.sh` on 2026-10-26 at 2:31 PM America/Chicago: exit 0, 937 passed, 0 failed, 0 ignored, 81 suites, plus the harness-false `window_msaa` binary in that same run, `rustc 1.99.0`. Release screenshot hashes from binaries built after the correction match the stage 2 hashes. Details are in [../../TASKS.md](../../TASKS.md).
+The window correction is later on the same branch. `window_msaa` presented a native Apple M5 Metal window at one sample and at four, including resize, a vsync toggle, and a return to one sample. `surface_frame.rs` compares the private-frame copy with a direct sampleable target. `a_bgra_srgb_private_frame_keeps_channel_order_and_encoding` reads a headless `Bgra8UnormSrgb` copy. Acceptance on 2026-10-26 settles this record for that contract. `DIMORA_REQUIRE_GPU=1 scripts/check.sh` on 2026-10-26 at 2:53 PM America/Chicago: exit 0, 938 passed, 0 failed, 0 ignored, 81 suites, plus the harness-false `window_msaa` binary in that same run, `rustc 1.99.0`. The 2:31 PM check was 937 before that BGRA test. Release screenshot hashes match the historical hashes. Details are in [../../TASKS.md](../../TASKS.md).
 
-Settle this record only after review of that evidence. A measured cost that makes 4× the wrong default sample count would reopen the count, not the one-sample path. Proposing this record does not close D-06.
+A measured cost that makes 4× the wrong default sample count would reopen the count, not the one-sample path. Settling this record does not close D-06 and does not complete M6. Vulkan, DirectX, OpenGL, and lavapipe remain unverified. GPU execution timestamps remain unmeasured. Alpha-to-coverage and per-object snapping are not part of this contract. `CameraClear::Load` with an internal resolution stays rejected.

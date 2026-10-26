@@ -847,7 +847,7 @@ Acceptance on 2026-10-25 did not change fit, batching, or the blit. The table wa
 
 ## Optional 4× MSAA
 
-Recorded 2026-10-26 at 11:39 AM America/Chicago, on `feat/m6-d06c-msaa`, Apple M5, Metal, macOS arm64. This section does not replace the integer-resolution table. The scene is one direct orthographic camera, 64 cutout sprites, and 4 shared cuboids, at 1280×720. [ADR-0024](adr/0024-optional-4x-msaa.md) is proposed. Stage 1 is not an accepted engine-wide MSAA feature.
+Recorded 2026-10-26 at 11:39 AM America/Chicago, on `feat/m6-d06c-msaa`, Apple M5, Metal, macOS arm64. This section does not replace the integer-resolution table. The scene is one direct orthographic camera, 64 cutout sprites, and 4 shared cuboids, at 1280×720. [ADR-0024](adr/0024-optional-4x-msaa.md) is settled for the 1×/4× contract. These rows are the measured cost, not a GPU pass time. D-06 and M6 stay open.
 
 | | |
 |---|---|

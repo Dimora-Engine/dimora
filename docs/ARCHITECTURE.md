@@ -131,7 +131,7 @@ is exact only for uniform scale.
   are that internal size. `render_pixel` maps a destination pixel into the displayed image.
   Letterbox bars contain the camera and return no ray. A rejected presentation, including `Load`
   with an internal resolution, contains no pixel. There is no second camera and no shader snap.
-* Renderer sample count ([ADR-0024](adr/0024-optional-4x-msaa.md), proposed, not settled). `MsaaSamples::One`
+* Renderer sample count ([ADR-0024](adr/0024-optional-4x-msaa.md), settled for the 1×/4× contract). `MsaaSamples::One`
   is the default and builds no 4× pipelines. `Four` is renderer-wide. It is stored only when the adapter
   supports 4 samples for the color format and for `Depth32Float`. A rejection keeps the previous count.
   `Game::msaa` reports the active count, not a request stored before a renderer exists. The scene pass

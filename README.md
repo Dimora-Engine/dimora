@@ -182,7 +182,7 @@ Dimora is early. The living record of what runs is [docs/CAPABILITIES.md](docs/C
 is [ROADMAP.md](ROADMAP.md). Evidence for the current milestone is [TASKS.md](TASKS.md). M3a, M3b, M4, and M5 are
 complete, and M6 is in progress. The integrated M6 checkpoints through `8d0cee4` are on `origin/main`. M6 is not
 complete. Orthographic camera-view pixel snapping (D-06A, [ADR-0022](docs/adr/0022-orthographic-pixel-snap.md)) is
-settled for that slice. Integer-resolution presentation (D-06B, [ADR-0023](docs/adr/0023-integer-resolution-camera-presentation.md)) is settled for that contract. Optional 4× MSAA is implemented and not accepted ([ADR-0024](docs/adr/0024-optional-4x-msaa.md), proposed, not settled). A 4× window composes into a private image because the native surface is not shader-readable. Per-object
+settled for that slice. Integer-resolution presentation (D-06B, [ADR-0023](docs/adr/0023-integer-resolution-camera-presentation.md)) is settled for that contract. Optional 4× MSAA is settled for the verified 1×/4× contract ([ADR-0024](docs/adr/0024-optional-4x-msaa.md)). A 4× window composes into a private image. The engine does not assume a native surface is shader-readable. Per-object
 snapping remains open, so D-06 is not complete. Gameplay orientation is still open. Other GPU backends are not
 verified. There are no particles, collision, audio, UI, shadows, scene serialization, asset bundling, or editor.
 

@@ -208,7 +208,7 @@ Orthographic `pixel_snap` uses the internal height. Perspective and custom still
 
 ### Sample count
 
-`MsaaSamples` is a renderer setting, not a camera field ([ADR-0024](adr/0024-optional-4x-msaa.md), proposed, not settled). `One` is the default. `Four` asks for four coverage samples on scene color and depth. It does not change texture samplers, orthographic snap, or integer presentation. It does not enable alpha-to-coverage. A mask or cutout edge still discards the whole fragment. Geometric edges of opaque triangles can land between 0 and 1.
+`MsaaSamples` is a renderer setting, not a camera field ([ADR-0024](adr/0024-optional-4x-msaa.md), settled for the 1×/4× contract). `One` is the default. `Four` asks for four coverage samples on scene color and depth. It does not change texture samplers, orthographic snap, or integer presentation. It does not enable alpha-to-coverage. A mask or cutout edge still discards the whole fragment. Geometric edges of opaque triangles can land between 0 and 1.
 
 The resolve averages the four color samples in a shader and writes only the camera viewport. The average stays in the space `textureLoad` returns. An sRGB destination encodes once. A hardware resolve is not used, because that store covers the whole attachment. The one-sample path records no resolve draw and no load-expansion draw.
 
