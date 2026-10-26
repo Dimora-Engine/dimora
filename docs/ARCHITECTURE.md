@@ -131,6 +131,15 @@ is exact only for uniform scale.
   are that internal size. `render_pixel` maps a destination pixel into the displayed image.
   Letterbox bars contain the camera and return no ray. A rejected presentation, including `Load`
   with an internal resolution, contains no pixel. There is no second camera and no shader snap.
+* Renderer sample count ([ADR-0024](adr/0024-optional-4x-msaa.md), proposed, not settled). `MsaaSamples::One`
+  is the default and builds no 4× pipelines. `Four` is renderer-wide. It is stored only when the adapter
+  supports 4 samples for the color format and for `Depth32Float`. A rejection keeps the previous count.
+  Stage 1 draws 4× for a direct shaded surface camera that clears color. The scene pass writes a 4× color
+  image and a 4× `Depth32Float` image, reverse-Z greater-than, depth clear 0. A later pass averages the
+  four color samples into that camera's viewport only. `resolve_target` is not used. `alpha_to_coverage`
+  stays off. Returning to one sample drops the 4× images and keeps the pipelines. `Load`, depth
+  presentation, offscreen targets, and internal resolution are skipped at 4× and are not drawn at one
+  sample. The 4× images are one surface-sized pair. This does not close D-06.
 * The `Projection` trait (`matrix(aspect)`, default `project()`) is implemented by `Orthographic`,
   `Perspective` and the enum. A caller-supplied matrix is `CameraProjection::Custom`, not a trait
   object.

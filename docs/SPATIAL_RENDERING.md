@@ -206,6 +206,14 @@ The scene pass is the existing one, into a private one-sample color image and a 
 
 Orthographic `pixel_snap` uses the internal height. Perspective and custom still ignore the flag. The entity transform is not written.
 
+### Sample count
+
+`MsaaSamples` is a renderer setting, not a camera field ([ADR-0024](adr/0024-optional-4x-msaa.md), proposed, not settled). `One` is the default. `Four` asks for four coverage samples on scene color and depth. It does not change texture samplers, orthographic snap, or integer presentation. It does not enable alpha-to-coverage. A mask or cutout edge still discards the whole fragment. Geometric edges of opaque triangles can land between 0 and 1.
+
+Stage 1 resolves by averaging the four samples in a shader and writing only the camera viewport. The average stays in the space `textureLoad` returns. An sRGB destination encodes once. A hardware resolve is not used, because that store covers the whole attachment. The one-sample path records no resolve draw.
+
+While 4× is selected, a camera that is not a direct shaded surface clear is skipped. `CameraClear::Load`, depth presentation, an offscreen target, and an internal resolution are in that set. The skip is logged, the count stays 4×, and the camera is not drawn at one sample. Direct `Load` at one sample is unchanged. Two non-overlapping direct clears keep their own rectangles. Overlapping views, `Load` expansion, depth reduction, resolve-before-blit, and sampling a resolved offscreen image are stage 2. The stage-1 multisample images are one surface-sized pair, so a later internal or offscreen size needs its own images. D-06 and M6 stay open.
+
 `CameraProjection::Custom` stores that view-to-clip matrix. `matrix(aspect)` returns it unchanged, so a
 viewport resize changes pixel mapping and does not rebuild the matrix. Perspective and orthographic still
 recompute from the viewport aspect. `with_clip_range` edits only those two descriptors. The matrix must use
@@ -506,7 +514,7 @@ of view, clip `1..4000`, and the sky clear. Isometric is an orthographic camera,
 changes only the camera and the transform. Extraction and the wgpu backend have no branch on the name.
 A preset does not set gameplay orientation: which way a character faces is not read from the camera.
 D-06A (`4a87bb0`) can snap an orthographic view translation. These rows leave `pixel_snap` off.
-`perspective`, `steep`, and `custom` would ignore the flag if it were set. Integer-resolution scaling and MSAA are not part of this table.
+`perspective`, `steep`, and `custom` would ignore the flag if it were set. Integer-resolution scaling is a camera field and is off in this table. MSAA is a renderer setting, default one sample, and is not part of this table.
 
 | Name | Projection | Placement | Holds in the tests | Does not |
 |---|---|---|---|---|

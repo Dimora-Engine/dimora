@@ -845,3 +845,29 @@ The second 320×180 frame reuses the images. The size change reallocates once an
 
 Acceptance on 2026-10-25 did not change fit, batching, or the blit. The table was not re-run. GPU tests in `internal_resolution.rs` cover index reuse, sixteen create-and-remove cycles, reorder, and a move onto an offscreen target. Those tests count creates, drops, and bytes. They are not timings. GPU pass timestamps are still unmeasured.
 
+## Optional 4× MSAA
+
+Recorded 2026-10-26 at 11:39 AM America/Chicago, on `feat/m6-d06c-msaa`, Apple M5, Metal, macOS arm64. This section does not replace the integer-resolution table. The scene is one direct orthographic camera, 64 cutout sprites, and 4 shared cuboids, at 1280×720. [ADR-0024](adr/0024-optional-4x-msaa.md) is proposed. Stage 1 is not an accepted engine-wide MSAA feature.
+
+| | |
+|---|---|
+| Command | `cargo run --release -p engine-renderer-wgpu --example msaa_bench` |
+| Scene | 64 cutout sprites and 4 cuboids, one direct orthographic camera, viewport 1280×720 |
+| Samples | 4 warmup, then 11, and the pair of modes twice. Median is the middle sample. p95 is the slowest sample |
+| Encode | `SceneRenderer::render` after the previous completion wait. Records and submits. Does not map a readback |
+| Completion | The following `device.poll(wait_indefinitely)`. GPU execution and driver synchronization together. Not a timestamp query in the scene pass or the resolve |
+| Bytes | `width * height * 4 * 4` for 4× color and the same for 4× depth. A size calculation, not a driver allocation measurement |
+
+`set_msaa` runs before the timed samples, so 4× pipeline creation is outside the loop. The first render before warmup creates the images. A steady frame does not create or reallocate them. The one-sample rows retain no 4× image. While 4× is selected the one-sample surface depth is not also kept. One sample of 1280×720 color or depth is 3,686,400 bytes. Each 4× image is 14,745,600 bytes. The pair is 29,491,200 bytes, calculated.
+
+World draws stay 2. Resolve draws are 0 at one sample and 1 at four. Pipeline creates are 0 and 1. Image creates are 0 and 1.
+
+| Run | Mode | encode median ns | encode p95 ns | completion median ns | completion p95 ns | world draws | resolve draws | pipeline creates | image creates | color bytes | depth bytes |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | 1× | 50,500 | 64,375 | 472,708 | 619,125 | 2 | 0 | 0 | 0 | 0 | 0 |
+| 1 | 4× | 56,000 | 73,541 | 680,291 | 1,045,834 | 2 | 1 | 1 | 1 | 14,745,600 | 14,745,600 |
+| 2 | 1× | 31,209 | 63,791 | 372,958 | 2,407,917 | 2 | 0 | 0 | 0 | 0 | 0 |
+| 2 | 4× | 33,500 | 78,750 | 329,333 | 413,834 | 2 | 1 | 1 | 1 | 14,745,600 | 14,745,600 |
+
+Encode medians at 4× are about 5.5 µs above one sample on run 1 and about 2.3 µs above it on run 2, on an encode of a few tens of microseconds. That is CPU time recording the extra resolve. It is not a GPU pass time. Completion medians overlap. Run 2's 4× median is lower than its one-sample median, and run 2's one-sample p95 is an outlier above 2 ms. No GPU cost is claimed. GPU pass timestamps were not measured.
+
