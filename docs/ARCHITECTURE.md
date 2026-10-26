@@ -384,7 +384,9 @@ here are binding on milestone designs; open choices point to a decision in [DECI
 `view_proj`; one `Depth32Float` buffer; a depth presentation reads that same buffer after the camera's
 scene pass and does not extract a second scene; GPU tests show a nearer mesh occluding a sprite and the reverse
 (`nearer_mesh_occludes_sprite_and_farther_mesh_does_not`), blended sprites interleaving with meshes
-(`blended_sprites_interleave_with_meshes_by_depth`), and `sprites_and_meshes_share_one_spatial_world`.
+(`blended_sprites_interleave_with_meshes_by_depth` on one camera, and
+`a_blended_sprite_interleaves_with_meshes_by_depth_in_every_configuration` on the seven example cameras),
+and `sprites_and_meshes_share_one_spatial_world`.
 Blended meshes and blended sprites share `RenderScene.transparent` and one GPU submission order.
 *Requirement:* any new renderable (tile, particle, skinned mesh, world-UI quad) enters through the same
 transform, camera and depth contract and declares one **transparency class**: opaque, cutout, or blended.

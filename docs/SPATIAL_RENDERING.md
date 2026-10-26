@@ -372,19 +372,21 @@ on that entity already applies.
 
 Verified on Apple M5, Metal, with reverse-Z. Other backends are not verified.
 
-### Coplanar conflicts the test scene verified (2026-10-14)
+### Coplanar content in the test scene
 
-`spatial_scene` lays flat `Fixed` decals on the `XZ` ground and samples their overlap under every
-configuration that is not edge-on to them (`side` is excluded: a flat decal has no area). These three are
-verified limitations of content that has not opted in. The scene was not given `CoplanarPriority` when
-ADR-0020 landed, so the tests still pin this behaviour. They should be updated in the same change that opts
-those decals in. None of them is a chosen design.
+`spatial_scene` lays flat `Fixed` decals on the `XZ` ground. `side` is excluded from those samples: a flat decal has no area. The scene still does not attach `CoplanarPriority` in normal play.
 
-| Conflict | What happens | Test |
+On 2026-10-14, Apple M5 Metal, content that had not opted in produced camera-specific winners: the first equal-height cutout kept the overlap, a decal in the slab plane was shown in orthographic and hidden in the other downward views, and a blended decal level with a cutout was shown in isometric and hidden in the others. Those splits are one GPU's rounding. ADR-0020 does not promise them. Lavapipe on the 2026-10-25 GitHub `ubuntu-latest` job did not reproduce them. The tests no longer require a Metal tie.
+
+What the configuration tests require instead, on every downward camera:
+
+| Situation | Guaranteed result | Test |
 |---|---|---|
-| Two cutout decals at the same height, overlapping in `XZ` | The one spawned first keeps the overlap in every configuration that can see the ground. Swapping the tints makes the first entity's new colour win, so nothing spatial decided it | `equal_height_cutout_decals_are_decided_by_draw_order_not_by_space` |
-| A cutout decal in the same plane as the slab tops (`Y = 0`) | Shown under some cameras and hidden under others. The test requires at least one of the five downward configurations to show it (≥ 90% of samples) and at least one to hide it (≤ 10%). On Apple M5 (Metal) that day, orthographic showed it and perspective, isometric, top-down and steep hid it. That named split is one GPU's rounding, not a portable rule | `known_conflict_a_decal_coplanar_with_a_mesh_is_hidden_or_shown_by_rounding` |
-| A blended decal at the same height as a cutout one | Visible under some cameras and hidden under others. The test requires the blended colour over the cutout in ≥ 80% of samples under at least one configuration and in < 20% under at least one other. On the same machine, isometric showed it (about 99%) and the other four hid it. Same caveat: the names are that run, the split is the limit | `known_conflict_a_blended_decal_at_the_same_height_as_a_cutout_one_depends_on_the_camera` |
+| Two equal-height cutouts | Each is visible outside the overlap. Overlap pixels are only those two colours. Level 2 beats level 0 either way, with thickness 1 | `equal_height_cutouts_contest_only_each_other_until_priority_selects_one` |
+| A cutout one unit above a slab, inside the slab, or on the slab with level 0 | Above wins. Inside is occluded. On the slab without priority, each sample is the decal or the slab colour from the occluded render. Level 0 wins the slab | `a_decal_on_a_slab_follows_depth_and_priority_is_not_a_camera_tie` |
+| A blend level with a cutout, one unit behind it, or opted in at level 0 | Beside the overlap, each decal draws. The overlap is the cutout or the 0.6 cyan composite, not a third colour. Behind, the cutout wins. Opted in, the composite wins, so alpha is unchanged | `a_level_blend_and_cutout_stay_a_tie_until_the_blend_opts_in` |
+
+`CoplanarPriority` still does not move meshes or tiles, and it does not reorder two blends. That stays `RenderOrder` and camera-space Z.
 
 Cutout decals one unit apart in height, and a blended decal one unit above a cutout one, resolve by depth
 in all five downward configurations (`decals_a_little_apart_in_height_resolve_by_depth_in_every_configuration`).

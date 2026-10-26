@@ -351,9 +351,10 @@ Missing from the original category list and now tracked: **save games** (34), **
 * **Integration.** UI world anchors, picking, audio listener, directional frames (D-31) and the editor
   viewport all read the active camera's view.
 * **Performance.** Each camera builds its own instances and submits its own pass. The sprite prepare walk is once per extract. Seven cameras over 10,000 opaque sprites take about 2.4× one camera's extract time and keep 7× the instance-vector capacity ([PERFORMANCE.md](PERFORMANCE.md)).
-* **Tests/examples.** `examples/spatial_scene/tests/configurations.rs` (19 tests, 2026-10-22): the same world
-  under all seven configurations, project-then-pick, mesh/sprite occlusion both ways, orientation, the three
-  coplanar conflicts, and the example `custom` shear, picking, and GPU pixels. M6-2B adds
+* **Tests/examples.** `examples/spatial_scene/tests/configurations.rs` (20 tests): the same world
+  under all seven configurations, project-then-pick, mesh/sprite occlusion both ways, orientation,
+  unordered coplanar ties with opt-in priority, depth-separated sprite/mesh interleaving, and the example
+  `custom` shear, picking, and GPU pixels. M6-2B adds
   `engine-renderer` `tests/multi_camera.rs` and `engine-renderer-wgpu` `tests/multi_camera.rs`:
   split viewports, overlap, picture-in-picture color and load, per-camera depth, mixed projections,
   per-camera transparency, and two-camera batch counts. M6-2C adds `tests/render_target.rs` in both
@@ -389,17 +390,16 @@ Missing from the original category list and now tracked: **save games** (34), **
   that sequence. `RenderOrder { layer, order }` overrides order inside it only. A missing component is
   `(0, 0)`. Sprite depth is the quad centre. Mesh depth is the camera-space Z of the world-space
   bounding-sphere centre. Sprites are visited before meshes, so an equal key draws the sprite first.
-  By decision (ADR-0004, amended 2026-10-13) spatial depth, transparency sorting, render layers or queues and explicit order are distinct concepts. Coplanar priority is opt-in ([ADR-0020](adr/0020-coplanar-priority.md)): `CoplanarPriority(u8)` in `0..=7` on a sprite, and one `CoplanarSettings.thickness` in world units. No component is ordinary spatial depth. No resource uses `1/256`. The sprite shader changes depth only, by `(1 + level) * thickness` toward the camera, and keeps `clip.xy` and `clip.w`. Meshes, tiles, and blend-versus-blend order do not read it. Verified on Apple M5, Metal. The M6 scene does not opt in, so its three limits still describe that scene, each pinned by a test in `configurations.rs`: equal-height cutout decals follow spawn order (`equal_height_cutout_decals_are_decided_by_draw_order_not_by_space`); a cutout decal coplanar with a slab is shown or hidden depending on the camera (`known_conflict_a_decal_coplanar_with_a_mesh_is_hidden_or_shown_by_rounding`); a blended decal at the same height as a cutout one is likewise camera-dependent (`known_conflict_a_blended_decal_at_the_same_height_as_a_cutout_one_depends_on_the_camera`). GPU tests: nearer mesh occludes a
-  sprite, farther does not, under all seven example configurations; a blended mesh, a blended sprite, and
-  another blended mesh composite in depth order; the opposite arrangement puts the sprite in front.
+  By decision (ADR-0004, amended 2026-10-13) spatial depth, transparency sorting, render layers or queues and explicit order are distinct concepts. Coplanar priority is opt-in ([ADR-0020](adr/0020-coplanar-priority.md)): `CoplanarPriority(u8)` in `0..=7` on a sprite, and one `CoplanarSettings.thickness` in world units. No component is ordinary spatial depth. No resource uses `1/256`. The sprite shader changes depth only, by `(1 + level) * thickness` toward the camera, and keeps `clip.xy` and `clip.w`. Meshes, tiles, and blend-versus-blend order do not read it. Verified on Apple M5, Metal. The M6 scene does not opt in during play. Unordered ties are not a portable winner: the configuration tests require the overlap to be only the two participants, a real depth gap to resolve, and `CoplanarPriority` to select the sprite result (`equal_height_cutouts_contest_only_each_other_until_priority_selects_one`, `a_decal_on_a_slab_follows_depth_and_priority_is_not_a_camera_tie`, `a_level_blend_and_cutout_stay_a_tie_until_the_blend_opts_in`). GPU tests: nearer mesh occludes a
+  sprite, farther does not, under all seven example configurations; `a_blended_sprite_interleaves_with_meshes_by_depth_in_every_configuration` composites a blended sprite between an opaque mesh and a blended mesh, and the sprite-in-front arrangement is a different composite, in perspective, orthographic, isometric, top-down, steep, side, and custom.
   Limits: the mesh centre does not order intersections, cyclic overlaps, or a mesh that spans another
   object's depth (KI-14). Unassigned meshes stay opaque.
 * **Required.** One documented rule for opaque, cutout and blended content from sprites, meshes, tiles,
   particles and skinned characters; defined behaviour when blended objects intersect.
 * **Planned.** Particles and skinned characters join the same transparent sequence when they exist.
-  **Depends on.** M5-5B (`3b3cd4a`), M5-5C (`ab1b6f7`), and M5-5D (`a7efd6c`). The three `spatial_scene` conflicts stay until that scene opts in. Mesh, tile, and skeletal-attachment priority are not part of ADR-0020.
+  **Depends on.** M5-5B (`3b3cd4a`), M5-5C (`ab1b6f7`), and M5-5D (`a7efd6c`). The M6 scene still does not opt in during play. Mesh, tile, and skeletal-attachment priority are not part of ADR-0020.
 * **Integration.** Shadows, particles and skinned meshes all pick a class; UI is outside this model.
-* **Tests/examples.** `blend.rs` reads back a blended mesh behind a sprite and another in front, and the sprite-in-front arrangement.
+* **Tests/examples.** `blend.rs` reads back a blended mesh behind a sprite and another in front, and the sprite-in-front arrangement. `configurations.rs` repeats depth-separated sprite/mesh interleaving on all seven example cameras.
 * **Not initially.** Order-independent transparency, per-pixel sorting.
 
 ### 11. Meshes and materials

@@ -1,9 +1,12 @@
 //! The same world under every camera configuration: what stays coherent and what does not.
 //!
-//! GPU tests skip without an adapter unless `DIMORA_REQUIRE_GPU=1`, like the engine's own. Tests named
-//! `known_conflict_*` pin a behaviour that is a recorded rendering conflict (docs/SPATIAL_RENDERING.md,
-//! "Findings"). They are expected to fail the day a mechanism removes the conflict, and then the finding and
-//! the test should be updated together.
+//! GPU tests skip without an adapter unless `DIMORA_REQUIRE_GPU=1`, like the engine's own.
+//!
+//! Equal-depth cutouts, a cutout on a slab, and a blend sharing a cutout's plane are ties.
+//! ADR-0020 does not promise which fragment wins, and the winner can change with the GPU.
+//! These tests check that the overlap is only those participants, that a real depth gap
+//! resolves, and that `CoplanarPriority` on a sprite selects the opted-in result. They do
+//! not treat a Metal tie as the contract.
 
 mod common;
 
@@ -262,51 +265,231 @@ fn decals_a_little_apart_in_height_resolve_by_depth_in_every_configuration() {
 
 const DECAL_TOP: f32 = scene::DECAL_LIFT + 1.0;
 
+fn either(pixels: &[[u8; 4]], a: [u8; 3], b: [u8; 3]) -> f32 {
+    pixels.iter().filter(|p| near(**p, a) || near(**p, b)).count() as f32 / pixels.len().max(1) as f32
+}
+
+fn close_rgb(pixel: [u8; 4], other: [u8; 4], tolerance: i32) -> bool {
+    (0..3).all(|i| (pixel[i] as i32 - other[i] as i32).abs() <= tolerance)
+}
+
+/// Scene-scale step. The fallback `1/256` is legal and is not what these large views rely on.
+const SCENE_COPLANAR_THICKNESS: f32 = 1.0;
+
+fn use_scene_thickness(game: &mut Game) {
+    game.world.insert_resource(CoplanarSettings::new(SCENE_COPLANAR_THICKNESS).unwrap());
+}
+
+fn set_priority(game: &mut Game, name: &str, level: u8) {
+    let entity = entity(game, name);
+    game.world.insert(entity, (CoplanarPriority::new(level).unwrap(),)).unwrap();
+}
+
+fn set_height(game: &mut Game, name: &str, y: f32) {
+    let entity = entity(game, name);
+    game.world.component_mut::<Transform>(entity).unwrap().position.y = y;
+}
+
+/// `decal equal a` covers this X range alone. `decal equal b` starts at -565.
+fn equal_only_a(game: &Game, img: &[u8]) -> Vec<[u8; 4]> {
+    sample_grid(game, img, scene::DECAL_LIFT, (-590.0, -570.0), (235.0, 265.0), 5)
+}
+
+/// `decal equal b` covers this X range alone. `decal equal a` ends at -525.
+fn equal_only_b(game: &Game, img: &[u8]) -> Vec<[u8; 4]> {
+    sample_grid(game, img, scene::DECAL_LIFT, (-520.0, -500.0), (235.0, 265.0), 5)
+}
+
+fn prepare_equal_pair(config: usize) -> Game {
+    let mut game = game(config);
+    isolate(&mut game, &["decal equal a", "decal equal b"]);
+    aim_at(&mut game, Vec3::new(-545.0, scene::DECAL_LIFT, 250.0));
+    game
+}
+
 #[test]
-fn equal_height_cutout_decals_are_decided_by_draw_order_not_by_space() {
+fn equal_height_cutouts_contest_only_each_other_until_priority_selects_one() {
     for (i, name) in looking_down() {
-        let Some((g, img)) = bench(i) else { return };
-        let p = overlap(&g, &img, scene::DECAL_LIFT, 250.0);
+        let mut game = prepare_equal_pair(i);
+        let Some(img) = render(&mut game) else { return };
+        let only_a = equal_only_a(&game, &img);
+        let only_b = equal_only_b(&game, &img);
+        let shared = overlap(&game, &img, scene::DECAL_LIFT, 250.0);
+        assert!(only_a.len() >= 16 && only_b.len() >= 16 && shared.len() >= 40, "{name}: decals left the frame");
         assert!(
-            fraction(&p, RED) >= 0.99,
-            "{name}: the decal drawn first (a) keeps the overlap: {:.2}",
-            fraction(&p, RED)
+            fraction(&only_a, RED) >= 0.9,
+            "{name}: decal A is red outside the overlap: {:.2}",
+            fraction(&only_a, RED)
+        );
+        assert!(
+            fraction(&only_b, GREEN) >= 0.9,
+            "{name}: decal B is green outside the overlap: {:.2}",
+            fraction(&only_b, GREEN)
+        );
+        assert!(
+            either(&shared, RED, GREEN) >= 0.95,
+            "{name}: the tie is only the two cutouts ({:.2} red, {:.2} green)",
+            fraction(&shared, RED),
+            fraction(&shared, GREEN)
+        );
+
+        let mut higher_b = prepare_equal_pair(i);
+        use_scene_thickness(&mut higher_b);
+        set_priority(&mut higher_b, "decal equal a", 0);
+        set_priority(&mut higher_b, "decal equal b", 2);
+        let img = render(&mut higher_b).unwrap();
+        let shared = overlap(&higher_b, &img, scene::DECAL_LIFT, 250.0);
+        assert!(
+            fraction(&shared, GREEN) >= 0.9,
+            "{name}: level 2 beats level 0: {:.2} green, pixel {:?}",
+            fraction(&shared, GREEN),
+            shared.first()
+        );
+
+        let mut higher_a = prepare_equal_pair(i);
+        use_scene_thickness(&mut higher_a);
+        set_priority(&mut higher_a, "decal equal a", 2);
+        set_priority(&mut higher_a, "decal equal b", 0);
+        let img = render(&mut higher_a).unwrap();
+        let shared = overlap(&higher_a, &img, scene::DECAL_LIFT, 250.0);
+        assert!(
+            fraction(&shared, RED) >= 0.9,
+            "{name}: the higher level follows A when the levels swap: {:.2}",
+            fraction(&shared, RED)
         );
     }
-    // Swap the colours: the winner follows the entity, not the colour, so nothing spatial decided it.
-    let top_down = cameras::by_name("top-down").unwrap();
-    let mut g = game(top_down);
-    let (a, b) = (entity(&g, "decal equal a"), entity(&g, "decal equal b"));
-    g.world.component_mut::<Sprite>(a).unwrap().tint = Color::rgb(0.1, 0.8, 0.1);
-    g.world.component_mut::<Sprite>(b).unwrap().tint = Color::rgb(1.0, 0.1, 0.1);
-    aim_at(&mut g, BENCH_CENTRE);
-    let Some(img) = render(&mut g) else { return };
-    let p = overlap(&g, &img, scene::DECAL_LIFT, 250.0);
-    assert!(fraction(&p, GREEN) >= 0.99, "the first entity still wins: {:.2}", fraction(&p, GREEN));
+}
+
+fn slab_samples(game: &Game, img: &[u8]) -> Vec<[u8; 4]> {
+    sample_grid(game, img, 0.0, (-585.0, -535.0), (95.0, 145.0), 9)
+}
+
+fn prepare_slab_decal(config: usize, y: f32, priority: Option<u8>) -> Game {
+    let mut game = game(config);
+    set_height(&mut game, "decal on slab", y);
+    if let Some(level) = priority {
+        use_scene_thickness(&mut game);
+        set_priority(&mut game, "decal on slab", level);
+    }
+    aim_at(&mut game, Vec3::new(-560.0, 0.0, 120.0));
+    game
 }
 
 #[test]
-fn known_conflict_a_decal_coplanar_with_a_mesh_is_hidden_or_shown_by_rounding() {
-    let mut shown = Vec::new();
+fn a_decal_on_a_slab_follows_depth_and_priority_is_not_a_camera_tie() {
     for (i, name) in looking_down() {
-        let Some((g, img)) = bench(i) else { return };
-        let p = sample_grid(&g, &img, 0.0, (-585.0, -535.0), (95.0, 145.0), 9);
-        shown.push((name, fraction(&p, RED)));
+        let mut above = prepare_slab_decal(i, 1.0, None);
+        let Some(above_img) = render(&mut above) else { return };
+        let above_px = slab_samples(&above, &above_img);
+        assert!(above_px.len() >= 40, "{name}: the raised decal left the frame");
+        assert!(
+            fraction(&above_px, RED) >= 0.9,
+            "{name}: a decal one unit above the slab wins by depth: {:.2}",
+            fraction(&above_px, RED)
+        );
+
+        let mut below = prepare_slab_decal(i, -0.5, None);
+        let below_img = render(&mut below).unwrap();
+        let below_px = slab_samples(&below, &below_img);
+        assert_eq!(below_px.len(), above_px.len(), "{name}");
+        assert!(
+            fraction(&below_px, RED) <= 0.1,
+            "{name}: the slab top occludes a decal inside the slab: {:.2} {:?}",
+            fraction(&below_px, RED),
+            below_px.first()
+        );
+
+        let mut tied = prepare_slab_decal(i, 0.0, None);
+        let tied_img = render(&mut tied).unwrap();
+        let tied_px = slab_samples(&tied, &tied_img);
+        assert_eq!(tied_px.len(), below_px.len(), "{name}");
+        let contest = tied_px
+            .iter()
+            .zip(&below_px)
+            .filter(|(pixel, surface)| near(**pixel, RED) || close_rgb(**pixel, **surface, 12))
+            .count();
+        assert!(
+            contest as f32 / tied_px.len() as f32 >= 0.95,
+            "{name}: a coplanar decal without priority is the decal or the slab, not a third surface ({contest}/{})",
+            tied_px.len()
+        );
+
+        let mut opted = prepare_slab_decal(i, 0.0, Some(0));
+        let opted_img = render(&mut opted).unwrap();
+        let opted_px = slab_samples(&opted, &opted_img);
+        assert!(
+            fraction(&opted_px, RED) >= 0.9,
+            "{name}: level 0 pulls the decal in front of the coplanar slab: {:.2} {:?}",
+            fraction(&opted_px, RED),
+            opted_px.first()
+        );
     }
-    assert!(shown.iter().any(|&(_, f)| f < 0.1), "hidden by the slab under at least one configuration: {shown:?}");
-    assert!(shown.iter().any(|&(_, f)| f > 0.9), "fully shown under at least one other: {shown:?}");
+}
+
+/// Interior of the overlap. The full 40-unit overlap includes edge samples that miss a foreshortened quad.
+fn blend_overlap(game: &Game, img: &[u8]) -> Vec<[u8; 4]> {
+    sample_grid(game, img, scene::DECAL_LIFT, (-552.0, -538.0), (478.0, 502.0), 7)
+}
+
+fn blend_pair(config: usize) -> Game {
+    let mut game = game(config);
+    isolate(&mut game, &["decal cutout under equal", "decal blended equal"]);
+    aim_at(&mut game, Vec3::new(-545.0, scene::DECAL_LIFT, 490.0));
+    game
 }
 
 #[test]
-fn known_conflict_a_blended_decal_at_the_same_height_as_a_cutout_one_depends_on_the_camera() {
-    let mut visible = Vec::new();
+fn a_level_blend_and_cutout_stay_a_tie_until_the_blend_opts_in() {
     for (i, name) in looking_down() {
-        let Some((g, img)) = bench(i) else { return };
-        let p = overlap(&g, &img, scene::DECAL_LIFT, 490.0);
-        visible.push((name, fraction(&p, CYAN_ON_ORANGE)));
+        let mut game = blend_pair(i);
+        let Some(img) = render(&mut game) else { return };
+        let cutout_only = sample_grid(&game, &img, scene::DECAL_LIFT, (-590.0, -570.0), (475.0, 505.0), 5);
+        let blend_only = sample_grid(&game, &img, scene::DECAL_LIFT, (-520.0, -500.0), (475.0, 505.0), 5);
+        let shared = blend_overlap(&game, &img);
+        assert!(cutout_only.len() >= 16 && blend_only.len() >= 16 && shared.len() >= 40, "{name}");
+        assert!(
+            fraction(&cutout_only, ORANGE) >= 0.9,
+            "{name}: the cutout is orange beside the blend: {:.2} {:?}",
+            fraction(&cutout_only, ORANGE),
+            cutout_only.first()
+        );
+        assert!(
+            blend_only.iter().all(|p| p[1] > p[0] && p[2] > p[0] && p[1] > 140),
+            "{name}: the blend composites over the sky beside the cutout: {:?}",
+            blend_only.first()
+        );
+        assert!(
+            either(&shared, ORANGE, CYAN_ON_ORANGE) >= 0.9,
+            "{name}: the tie is the cutout ({:.2}) or the blend over it ({:.2}), pixel {:?}",
+            fraction(&shared, ORANGE),
+            fraction(&shared, CYAN_ON_ORANGE),
+            shared.first()
+        );
+
+        let mut behind = blend_pair(i);
+        set_height(&mut behind, "decal blended equal", scene::DECAL_LIFT - 1.0);
+        aim_at(&mut behind, Vec3::new(-545.0, scene::DECAL_LIFT, 490.0));
+        let img = render(&mut behind).unwrap();
+        let shared = blend_overlap(&behind, &img);
+        assert!(
+            fraction(&shared, ORANGE) >= 0.9,
+            "{name}: a blend one unit behind fails the depth test: {:.2} {:?}",
+            fraction(&shared, ORANGE),
+            shared.first()
+        );
+
+        let mut opted = blend_pair(i);
+        use_scene_thickness(&mut opted);
+        set_priority(&mut opted, "decal blended equal", 0);
+        let img = render(&mut opted).unwrap();
+        let shared = blend_overlap(&opted, &img);
+        assert!(
+            fraction(&shared, CYAN_ON_ORANGE) >= 0.9,
+            "{name}: an opted-in coplanar blend composites over the cutout and keeps its alpha: {:.2} {:?}",
+            fraction(&shared, CYAN_ON_ORANGE),
+            shared.first()
+        );
     }
-    assert!(visible.iter().any(|&(_, f)| f > 0.8), "blended decal visible under one configuration: {visible:?}");
-    assert!(visible.iter().any(|&(_, f)| f < 0.2), "and hidden under another: {visible:?}");
 }
 
 /// Colour at the middle of the overlap of the "ordered" ghost pair, alone in the world, with explicit
@@ -351,6 +534,89 @@ fn render_order_order_only_breaks_ties_at_equal_view_depth() {
         } else {
             assert_ne!(natural, a_first, "{name}: at equal view depth `order` decides");
         }
+    }
+}
+
+// ---- blended sprite and mesh order under every configuration (GPU) ------------------------------------
+
+/// Centre of a sprite between two meshes: red 0.5 over (green 0.5 over opaque blue).
+fn composite_is_sprite_between_meshes(pixel: [u8; 4]) -> bool {
+    let (r, g, b) = (pixel[0] as i32, pixel[1] as i32, pixel[2] as i32);
+    r > g + 25 && r > b + 25 && (g - b).abs() < 45 && g > 40
+}
+
+/// Centre when the green sprite is nearest: green 0.5 over (red 0.5 over opaque blue).
+fn composite_is_sprite_in_front(pixel: [u8; 4]) -> bool {
+    let (r, g, b) = (pixel[0] as i32, pixel[1] as i32, pixel[2] as i32);
+    g > r + 25 && g > b + 25 && r > 40
+}
+
+/// A point on the sprite and the far mesh, outside the near mesh: green 0.5 over opaque blue.
+fn composite_is_sprite_over_far_mesh(pixel: [u8; 4]) -> bool {
+    let (r, g, b) = (pixel[0] as i32, pixel[1] as i32, pixel[2] as i32);
+    r < 80 && g > 120 && b > 120 && (g - b).abs() < 45
+}
+
+fn interleave(config: usize, sprite_in_front: bool) -> Option<([u8; 4], [u8; 4])> {
+    let mut game = game(config);
+    isolate(&mut game, &[]);
+    let far = game.assets().insert("interleave-far", MaterialAsset::unlit(Color::rgb(0.0, 0.0, 1.0))).unwrap();
+    let near = game
+        .assets()
+        .insert(
+            "interleave-near",
+            MaterialAsset::unlit(Color::rgba(1.0, 0.0, 0.0, 0.5)).with_alpha_mode(AlphaMode::Blend),
+        )
+        .unwrap();
+    game.assets()
+        .insert("interleave-card", MeshData::cuboid(Vec3::new(1.0, 1.0, 4.0)).expect("card dimensions"))
+        .unwrap();
+    let camera = game.world.resource::<scene::Scene>().camera;
+    let pose = *game.world.component::<Transform>(camera).unwrap();
+    let at = |distance: f32| pose.position + pose.forward() * distance;
+    // Cards face this camera, so a yawed or pitched view does not let an axis-aligned cube
+    // reach back along the view and swallow the sprite. Thickness stays 4 units.
+    let card = |distance: f32, span: f32| {
+        Transform::from_position(at(distance)).with_rotation(pose.rotation).with_scale(Vec3::new(span, span, 1.0))
+    };
+    let (sprite_distance, near_distance) = if sprite_in_front { (80.0, 180.0) } else { (180.0, 100.0) };
+    let (sprite_at, near_at) = (at(sprite_distance), at(near_distance));
+    game.world.spawn((card(340.0, 600.0), Mesh::new("interleave-card").with_material_asset(far)));
+    game.world.spawn((card(near_distance, 80.0), Mesh::new("interleave-card").with_material_asset(near)));
+    game.world.spawn((
+        Transform::from_position(sprite_at),
+        Sprite::new("swatch")
+            .with_size(Vec2::splat(220.0))
+            .with_anchor(Vec2::splat(0.5))
+            .with_tint(Color::rgba(0.0, 1.0, 0.0, 0.5))
+            .unlit(),
+    ));
+    game.step(Duration::from_millis(16));
+    let img = render(&mut game)?;
+    let centre_at = if sprite_in_front { sprite_at } else { near_at };
+    let (cx, cy) = pixel_of(&game, centre_at).expect("the stack is in front of the camera");
+    let (bx, by) = pixel_of(&game, sprite_at + pose.right() * 90.0).unwrap();
+    Some((px(&img, cx, cy), px(&img, bx, by)))
+}
+
+#[test]
+fn a_blended_sprite_interleaves_with_meshes_by_depth_in_every_configuration() {
+    for (i, name) in config_names() {
+        let Some((between, beside)) = interleave(i, false) else { return };
+        assert!(
+            composite_is_sprite_between_meshes(between),
+            "{name}: a green sprite between a far blue mesh and a near red mesh composites in depth order: {between:?}"
+        );
+        assert!(
+            composite_is_sprite_over_far_mesh(beside),
+            "{name}: beside the near mesh the sprite still composites over the far mesh: {beside:?}"
+        );
+        let (front, _) = interleave(i, true).unwrap();
+        assert!(
+            composite_is_sprite_in_front(front),
+            "{name}: the same sprite in front of both meshes is a different composite: {front:?}"
+        );
+        assert_ne!(between, front, "{name}: depth order changed the pixel");
     }
 }
 
