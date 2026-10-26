@@ -902,3 +902,18 @@ Run 1 is the same shape. Its 4× encode medians are 39,417 (sprites), 33,375 (me
 
 The load row's extra encode, about 28 µs on run 2, is the CPU recording the expansion pass plus the second scene pass. Extraction does not change with the sample count. Switching sample counts on one renderer created the pipelines once, allocated one surface pair, allocated nothing on the next steady frame, reallocated once when the surface became 640×360, dropped that pair on the return to one sample (`image_count` 0), and created the 1280×720 pair again without a second pipeline. Restored calculated bytes were 14,745,600 for color and the same for depth.
 
+### Window composition
+
+Recorded 2026-10-26 at 2:26 PM America/Chicago, same command, machine, viewport, warmup, and sample count, after 4× window output moved to a private image. The direct-scene and stage 2 tables above were produced again in the same process and are not replaced. Their draw counts and calculated 4× bytes match the 1:08 PM rows. Run 2 encode medians on that direct path were higher: sprites 42,584 ns, meshes 36,250, mixed 35,208, split 251,583, offscreen 39,500, internal 45,042, load 162,833, depth 104,084. Split run 1 encode p95 was 2,733,792 ns and load run 2 encode p95 was 2,021,042 ns. Those waits are CPU samples with outliers. They are not a GPU pass time and they are not a claim that the direct path got slower by a stable amount.
+
+The presented rows call `present_to_surface` on the 64-sprite, 4-cuboid scene. The destination usage is `RENDER_ATTACHMENT` only. Encode is still CPU recording and submit. Completion is still `device.poll(wait_indefinitely)`, not a timestamp query. `surface_frame_bytes` is `width * height * 4`, a size calculation. At 1280×720 that is 3,686,400 bytes, one sample, in addition to the 4× color image. The printed `msaa_color_bytes` column is the 4× color calculation and does not include 4× depth. That depth image remains 14,745,600 bytes on the direct 4× rows. `steady_frame_creates` is the create counter during the 11 timed frames.
+
+| Run | Mode | encode median ns | encode p95 ns | completion median ns | completion p95 ns | world | resolve | expand | frame present | frame bytes | 4× color bytes | frame creates | steady creates | reallocs |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | 1× | 77,917 | 121,875 | 324,917 | 361,708 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| 1 | 4× | 147,167 | 309,125 | 533,209 | 600,125 | 2 | 1 | 0 | 1 | 3,686,400 | 14,745,600 | 1 | 0 | 0 |
+| 2 | 1× | 99,542 | 192,625 | 222,541 | 243,500 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| 2 | 4× | 163,208 | 253,208 | 721,791 | 1,547,708 | 2 | 1 | 0 | 1 | 3,686,400 | 14,745,600 | 1 | 0 | 0 |
+
+One sample allocates no private frame and records no frame-present draw. Four samples add one present draw. Timed frames do not create another frame image. After the timed 4× samples, presenting at 640×360 reallocates the private image once (`reallocs` 1) and returning to one sample drops that image and the 4× images (`dropped_frame_and_msaa` true, `frame_drops` 1). Run 2's 4× encode median is about 64 µs above its one-sample presented median. That is CPU time recording the resolve and the copy. It is not a GPU cost. The one-sample presented encode is the same scene call path as a direct render plus a drop of an image that was never created. Its median sits inside the spread of the direct one-sample encodes from this run. No separate 1× tax is claimed.
+

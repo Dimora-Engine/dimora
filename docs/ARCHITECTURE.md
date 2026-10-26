@@ -140,8 +140,11 @@ is exact only for uniform scale.
   `alpha_to_coverage` stays off. A later direct `Load` copies the resolved destination into the four
   samples of its viewport before the scene. Depth presentation shows the maximum stored sample. An
   offscreen target and an internal-resolution camera keep a private pair at their render size and resolve
-  into the existing one-sample image. The integer blit samples that image. Returning to one sample drops
-  the 4× images and keeps the pipelines. This does not close D-06.
+  into the existing one-sample image. The integer blit samples that image. A one-sample window draws
+  into the swapchain, which is configured as `RENDER_ATTACHMENT` only. A four-sample window resolves
+  surface cameras into a private single-sample image that is not a `RenderTargetId`, then one fullscreen
+  copy writes the swapchain. Returning to one sample drops the 4× images and that frame image and keeps
+  the pipelines. This does not close D-06.
 * The `Projection` trait (`matrix(aspect)`, default `project()`) is implemented by `Orthographic`,
   `Perspective` and the enum. A caller-supplied matrix is `CameraProjection::Custom`, not a trait
   object.
