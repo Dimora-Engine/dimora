@@ -7,7 +7,7 @@ use engine_assets::{AssetManager, ColorSpace, SpriteAsset, Texture};
 use engine_core::Color;
 use engine_math::{Transform, Vec2};
 use engine_renderer::*;
-use engine_renderer_wgpu::{GpuContext, SceneRenderer};
+use engine_renderer_wgpu::{wgpu, GpuContext, SceneRenderer};
 use engine_world::{propagate_transforms, World};
 
 fn gpu() -> Option<GpuContext> {
@@ -323,4 +323,188 @@ fn a_reused_entity_index_does_not_keep_the_old_internal_image() {
     let internal_bytes = 8 * 10 * 4 * 4;
     assert!(usage.color_bytes >= internal_bytes);
     assert_eq!(renderer.internal_targets().color_bytes, 8 * 10 * 4);
+}
+
+/// IEC 61966-2-1 encode, the inverse of `engine_core::srgb_to_linear`, rounded to 8 bits.
+fn srgb_unorm(linear: f32) -> u8 {
+    let encoded = if linear <= 0.0031308 { linear * 12.92 } else { 1.055 * linear.powf(1.0 / 2.4) - 0.055 };
+    (encoded.clamp(0.0, 1.0) * 255.0).round() as u8
+}
+
+/// Physical bytes of a `Bgra8UnormSrgb` texel.
+///
+/// The shader writes logical RGBA. `copy_texture_to_buffer` returns the stored order B, G, R, A.
+fn stored_bgra(linear_r: f32, linear_g: f32, linear_b: f32) -> [u8; 4] {
+    [srgb_unorm(linear_b), srgb_unorm(linear_g), srgb_unorm(linear_r), 255]
+}
+
+fn bgra_supported(gpu: &GpuContext) -> Result<(), String> {
+    let format = wgpu::TextureFormat::Bgra8UnormSrgb;
+    let color = gpu.adapter.get_texture_format_features(format);
+    let depth = gpu.adapter.get_texture_format_features(wgpu::TextureFormat::Depth32Float);
+    let frame = wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING;
+    let readback = frame | wgpu::TextureUsages::COPY_SRC;
+    if !color.allowed_usages.contains(readback) {
+        return Err(format!(
+            "Bgra8UnormSrgb cannot be a sampleable copied color attachment; allowed usages are {:?}",
+            color.allowed_usages
+        ));
+    }
+    if !color.flags.sample_count_supported(4) {
+        return Err(format!("Bgra8UnormSrgb does not support 4 samples; flags are {:?}", color.flags));
+    }
+    if !depth.flags.sample_count_supported(4) {
+        return Err("Depth32Float does not support 4 samples".into());
+    }
+    Ok(())
+}
+
+fn bgra_target(gpu: &GpuContext, width: u32, height: u32, usage: wgpu::TextureUsages) -> wgpu::Texture {
+    gpu.device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("bgra present"),
+        size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Bgra8UnormSrgb,
+        usage,
+        view_formats: &[],
+    })
+}
+
+fn read_color(gpu: &GpuContext, texture: &wgpu::Texture, width: u32, height: u32) -> Vec<u8> {
+    let row_bytes = width * 4;
+    let padded = row_bytes.next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+    let buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("bgra readback"),
+        size: u64::from(padded) * u64::from(height),
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("bgra read") });
+    encoder.copy_texture_to_buffer(
+        wgpu::TexelCopyTextureInfo {
+            texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        wgpu::TexelCopyBufferInfo {
+            buffer: &buffer,
+            layout: wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(padded),
+                rows_per_image: Some(height),
+            },
+        },
+        wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+    );
+    gpu.queue.submit([encoder.finish()]);
+    let (tx, rx) = std::sync::mpsc::channel();
+    buffer.slice(..).map_async(wgpu::MapMode::Read, move |result| {
+        let _ = tx.send(result);
+    });
+    gpu.device.poll(wgpu::PollType::wait_indefinitely()).expect("bgra readback poll");
+    rx.recv().expect("bgra map callback").expect("bgra map");
+    let data = buffer.slice(..).get_mapped_range().expect("bgra mapped range");
+    let mut out = Vec::with_capacity((row_bytes as usize) * height as usize);
+    for row in data.chunks(padded as usize).take(height as usize) {
+        out.extend_from_slice(&row[..row_bytes as usize]);
+    }
+    drop(data);
+    buffer.unmap();
+    out
+}
+
+#[test]
+fn a_bgra_srgb_private_frame_keeps_channel_order_and_encoding() {
+    let Some(gpu) = gpu() else { return };
+    if let Err(reason) = bgra_supported(&gpu) {
+        if std::env::var("DIMORA_REQUIRE_GPU").ok().as_deref() == Some("1") {
+            panic!("Bgra8UnormSrgb private-frame test cannot run: {reason}");
+        }
+        eprintln!("skipping BGRA test: {reason}");
+        return;
+    }
+
+    let width = 16u32;
+    let height = 16u32;
+    let read_usage = wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC;
+    assert!(
+        !read_usage.contains(wgpu::TextureUsages::TEXTURE_BINDING),
+        "the stand-in surface must not be shader-readable"
+    );
+
+    let mut one = SceneRenderer::new(&gpu, wgpu::TextureFormat::Bgra8UnormSrgb);
+    let mut four = SceneRenderer::new(&gpu, wgpu::TextureFormat::Bgra8UnormSrgb);
+    four.set_msaa(&gpu, MsaaSamples::Four).unwrap();
+    let assets = AssetManager::in_memory();
+    let mut mid = World::new();
+    mid.spawn((Camera::orthographic(2.0).with_clear_color(Color::rgb(0.5, 0.25, 0.75)), pose()));
+    propagate_transforms(&mut mid);
+    let scene = extract_scene(&mid, &assets, Vec2::new(width as f32, height as f32)).unwrap();
+    let one_target = bgra_target(&gpu, width, height, read_usage);
+    let one_view = one_target.create_view(&wgpu::TextureViewDescriptor::default());
+    one.render(&gpu, &scene, &assets, &one_view, (width, height));
+    let direct = read_color(&gpu, &one_target, width, height);
+    assert!(one.surface_frame().is_none());
+    assert_eq!(one.stats().frame_present_draws, 0);
+    assert_eq!(one.stats().resolve_draws, 0);
+
+    let four_target = bgra_target(&gpu, width, height, read_usage);
+    let four_view = four_target.create_view(&wgpu::TextureViewDescriptor::default());
+    four.present_to_surface(&gpu, &scene, &assets, &four_view, (width, height)).unwrap();
+    let presented = read_color(&gpu, &four_target, width, height);
+    assert_eq!(four.stats().frame_present_draws, 1);
+    assert_eq!(four.stats().resolve_draws, 1);
+    assert_eq!(four.stats().expand_draws, 0);
+    let frame = four.surface_frame().expect("private frame");
+    assert_eq!((frame.width, frame.height), (width, height));
+
+    let expected = stored_bgra(0.5, 0.25, 0.75);
+    let linear_storage =
+        [(0.75_f32 * 255.0).round() as u8, (0.25_f32 * 255.0).round() as u8, (0.5_f32 * 255.0).round() as u8, 255];
+    let swapped = [expected[2], expected[1], expected[0], expected[3]];
+    for (label, image) in [("one-sample", &direct), ("four-sample copy", &presented)] {
+        let first = px(image, width, 0, 0);
+        let last = px(image, width, width - 1, height - 1);
+        assert_eq!(first, expected, "{label} first pixel {first:?} is not sRGB BGRA {expected:?}");
+        assert_eq!(first, last, "{label} did not copy the last pixel");
+        assert_ne!(first, linear_storage, "{label} stored linear unorm instead of sRGB");
+        assert_ne!(first, swapped, "{label} stored RGBA byte order instead of BGRA");
+        assert_eq!(first[3], 255, "{label} changed opaque alpha");
+    }
+    assert_eq!(
+        px(&presented, width, 0, 0),
+        px(&direct, width, 0, 0),
+        "4× private-frame copy left the 1× BGRA reference"
+    );
+
+    let mut assets = AssetManager::in_memory();
+    let mut world = split_world(&mut assets);
+    propagate_transforms(&mut world);
+    let scene = extract_scene(&world, &assets, Vec2::new(width as f32, height as f32)).unwrap();
+    let direct_target = bgra_target(&gpu, width, height, read_usage);
+    let direct_view = direct_target.create_view(&wgpu::TextureViewDescriptor::default());
+    one.render(&gpu, &scene, &assets, &direct_view, (width, height));
+    let direct = read_color(&gpu, &direct_target, width, height);
+    let copy_target = bgra_target(&gpu, width, height, read_usage);
+    let copy_view = copy_target.create_view(&wgpu::TextureViewDescriptor::default());
+    four.present_to_surface(&gpu, &scene, &assets, &copy_view, (width, height)).unwrap();
+    let presented = read_color(&gpu, &copy_target, width, height);
+    let red = stored_bgra(1.0, 0.0, 0.0);
+    let blue = stored_bgra(0.0, 0.0, 1.0);
+    assert_eq!(px(&presented, width, 0, 0), red, "top-left is not stored red");
+    assert_eq!(px(&presented, width, width - 1, 0), red, "top-right is not stored red");
+    assert_eq!(px(&presented, width, 0, height - 1), blue, "bottom-left is not stored blue");
+    assert_eq!(px(&presented, width, width - 1, height - 1), blue, "bottom-right is not stored blue");
+    assert_eq!(px(&direct, width, 0, 0), red);
+    assert_eq!(px(&direct, width, 0, height - 1), blue);
+    let covered = px(&presented, width, 8, 8);
+    assert_ne!(covered, red, "the blended sprite did not cover the center");
+    assert_eq!(covered[3], 255, "blended coverage cleared destination alpha");
+    assert!(covered[1] > 0, "the green sprite did not land in the physical green byte");
+    assert_eq!(covered, px(&direct, width, 8, 8), "blended center left the 1× reference");
+    assert_eq!(four.stats().frame_present_draws, 1);
+    assert!(four.stats().expand_draws >= 1);
 }
