@@ -144,7 +144,7 @@ is exact only for uniform scale.
   into the swapchain, which is configured as `RENDER_ATTACHMENT` only. A four-sample window resolves
   surface cameras into a private single-sample image that is not a `RenderTargetId`, then one fullscreen
   copy writes the swapchain. Returning to one sample drops the 4× images and that frame image and keeps
-  the pipelines. This does not close D-06.
+  the pipelines. D-06 is closed for the approved policy (2026-10-26). Per-object snapping, alpha-to-coverage, and sample counts other than one and four stay deferred. M6 is not complete.
 * The `Projection` trait (`matrix(aspect)`, default `project()`) is implemented by `Orthographic`,
   `Perspective` and the enum. A caller-supplied matrix is `CameraProjection::Custom`, not a trait
   object.

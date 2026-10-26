@@ -196,7 +196,7 @@ full-surface camera does not add a fill draw. An offscreen target does not recei
 
 ### Integer presentation
 
-`Camera.internal_resolution` (default `None`) is optional. `None` is the direct path above. `Some((width, height))` is the pixel size of the private image for that whole view, not a crop. [ADR-0023](adr/0023-integer-resolution-camera-presentation.md) is settled for D-06B and does not close D-06.
+`Camera.internal_resolution` (default `None`) is optional. `None` is the direct path above. `Some((width, height))` is the pixel size of the private image for that whole view, not a crop. [ADR-0023](adr/0023-integer-resolution-camera-presentation.md) is settled for D-06B. D-06 is closed for the approved policy (2026-10-26). `Load` with an internal resolution stays rejected.
 
 The fit uses the destination viewport in physical pixels. `scale = min(Dw / Iw, Dh / Ih)` with integer division. When `scale >= 1` the displayed size is the internal size times `scale`, centered, with the odd remainder on the right and the bottom. Sampling is nearest. The image is not cropped or stretched. Bars use `letterbox_color` (default black), which is not the scene clear color. 320×180 in 1366×768 is scale 4, a 1280×720 image, and origin (43, 24). When `scale` is 0 the viewport is filled with the letterbox color, the scene is not rendered, and no private image is allocated.
 
