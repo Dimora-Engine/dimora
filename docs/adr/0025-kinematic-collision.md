@@ -51,10 +51,10 @@ A library that owns body positions would fight that model. A hand-written narrow
 C. `engine-world` will depend on `parry3d` 0.31.1 when M7 is implemented, and not before:
 
 ```toml
-parry3d = { version = "0.31.1", default-features = false, features = ["dim3", "f32", "std"] }
+parry3d = { version = "0.31.1", default-features = false, features = ["dim3", "f32", "std", "alloc"] }
 ```
 
-The published `[lib] required-features = ["required-features"]` does not have to be named again. Cargo 1.90.0 and Cargo 1.99.0 both built that library for a downstream crate with only `dim3`, `f32`, and `std`. The resolved feature list was `dim3, ena, f32, slab, std`. `spade`, `parallel`, `simd8`, `serde-serialize`, and `enhanced-determinism` stay off.
+The published `[lib] required-features = ["required-features"]` does not have to be named again. Cargo 1.90.0 and Cargo 1.99.0 both built that library for a downstream crate with `dim3`, `f32`, and `std`. M7-1B-1 adds `alloc` because support-map shape casts are compiled only with that feature, and `std` does not turn it on. `spade`, `parallel`, `simd8`, `serde-serialize`, and `enhanced-determinism` stay off.
 
 The crate's math is `glamx`. `Vector` is `Vec3`, `Pose` is `Pose3`, and `Rotation` is `glam::Quat`. Mapping from Dimora is a component copy. Both use the right-hand rule. A `+90°` yaw about Y sends local +X to world −Z. "Left-handed" in this engine is the camera looking along +Z. Collision does not read a camera.
 
@@ -211,13 +211,21 @@ Reopen only under the rule in `DECISIONS.md`. A dynamics solver, or a switch to 
 
 ### 2026-10-27, owner approved (M7-1A-R)
 
-Two corrections. The numbered sections above are the contract after these amendments. The slide is still not implemented.
+Two corrections. The numbered sections above are the contract after these amendments. The slide was not implemented in M7-1A-R. M7-1B-1 implements it.
 
 Sweep step 6 previously said that a non-negative `dist` at time zero, when `dot(remainder, wall) > 0`, ignores that hit and applies `remainder`. That applied the whole remainder and skipped later candidates. Wall A can be a nonblocking skin contact while wall B still blocks the same remainder. The replacement is the step 6 now in Sweep: exclude that contact for this sweep, keep scanning, take the earliest remaining blocking contact with the same tie break, and apply `remainder` only when nothing else blocks. The surface is eligible again on the next slide segment.
 
 Lifecycle step 7 previously said the system submits `DebugDraw` from the final poses. Submission is opt-in through `CollisionDebug`, default off. Indexing and queries do not read that flag. Wires are generated only when it is enabled, and several enabled iterations append because `Game::step` clears `DebugDraw` once.
 
 Deferred commands queued by a fixed system flush after the rebuild in that iteration. A step with zero fixed iterations does not rebuild and does not flush from the fixed loop. `time` and `loads` still flush before the loop. Those snapshot rules are in `docs/ARCHITECTURE.md`. They are not a change to the sweep.
+
+### 2026-10-27, M7-1B-1 API
+
+`BVec3` is a Dimora type in `engine-math`: public `x`, `y`, and `z` booleans, default all false. `CharacterMotor.locked_axes` uses it. No glam or Parry boolean vector is public.
+
+`MoveResult` is a runtime component, not saved data. `requested` is the intent before locked axes are cleared. `applied` is the change in the entity's world origin, including a recovery push when one was applied. `status` is `Completed`, `Blocked`, or `Rejected`. Blocked and rejected are exclusive. A rejection writes nothing to the transform or the index, reports zero applied displacement, and stores no contacts. `normals` are world-space obstacle normals in slide order, pointing back toward the mover. `recovery_normal` is that same kind of normal when a push was applied. A step that does not process a new intent leaves the previous result alone. A processed zero move replaces it, so an old normal is not a new contact. The result is the last resolution. It does not mean the character is grounded.
+
+`parry3d`'s `alloc` feature is enabled. Ball, cuboid, and capsule sweeps go through the support-map cast, and that code is behind `alloc`. `spade` stays off. The sweep, filter, transform, and fixed-step rules above are unchanged.
 
 ## Evidence and revisit conditions
 
@@ -254,4 +262,4 @@ Headless, one fixed step of `1/60` s, no window. Positions include both signs. T
 | `CollisionDebug` off | No collision wires. Indexing and queries still run |
 | `CollisionDebug` on | Finite segments for each indexed collider. Several fixed iterations append |
 
-M7-1A writes the geometry, filter, ordering, camera, and debug rows. Movement and trigger rows, from the thin-wall displacement through the 1,000-step hash, including skin contact with wall A while traveling toward wall B, are the M7-1B contract and are not implemented.
+M7-1A writes the geometry, filter, ordering, camera, and debug rows. M7-1B-1 writes the movement rows, including the thin wall, the diagonal slide, wall A then wall B, one recovery push, locked axes, and a same-process 1,000-step `to_bits` hash of a sphere stopped against another sphere. Trigger rows stay M7-1B-2 and are not implemented. Grazing repeats along a large box can accumulate a tilted cast normal; that is not what the hash measures.

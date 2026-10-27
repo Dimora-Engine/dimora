@@ -5,8 +5,13 @@
 
 mod convert;
 mod index;
+mod motor;
 mod query;
 mod types;
 
 pub use index::{sync_collision, CollisionWorld};
-pub use types::{pair_interacts, Collider, ColliderShape, CollisionDebug, CollisionQuery, RayHit, SkipReason};
+pub use motor::clear_move_intents;
+pub use types::{
+    pair_interacts, CharacterMotor, Collider, ColliderShape, CollisionDebug, CollisionQuery, MoveIntent, MoveResult,
+    MoveStatus, RayHit, SkipReason,
+};

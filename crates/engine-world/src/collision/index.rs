@@ -14,8 +14,7 @@ use super::types::{point_finite, Collider, ColliderShape, CollisionQuery, RayHit
 pub(super) struct Entry {
     pub entity: Entity,
     pub layers: u32,
-    /// Stored for the mutual filter. Free queries do not read it.
-    #[allow(dead_code)]
+    /// Stored for the mutual filter. Free queries do not read it. Movement does.
     pub mask: u32,
     pub sensor: bool,
     pub prepared: Prepared,
@@ -23,10 +22,11 @@ pub(super) struct Entry {
 
 /// Runtime snapshot of the colliders that passed validation.
 ///
-/// [`sync_collision`] replaces this list. The snapshot stays as it was until the next sync. A later
-/// write to `Transform`, `Parent`, or `Collider`, including a deferred command that flushes after
-/// this rebuild, makes it stale. Queries do not notice that write and do not rebuild. A
-/// `Game::step` with no fixed iteration does not call [`sync_collision`].
+/// [`sync_collision`] replaces this list, then patches any collider a motor moved. The snapshot
+/// stays as it was until the next sync, apart from those patches. A later write to `Transform`,
+/// `Parent`, or `Collider`, including a deferred command that flushes after this rebuild, makes it
+/// stale. Queries do not notice that write and do not rebuild. A `Game::step` with no fixed
+/// iteration does not call [`sync_collision`].
 ///
 /// Each entry keeps `layers` and `mask`. A free query tests `layers` against the query mask only.
 #[derive(Default)]
@@ -127,6 +127,8 @@ pub fn sync_collision(world: &mut World) {
     collision.entries = entries;
     collision.skipped = skipped;
     collision.generation = collision.generation.saturating_add(1);
+    drop(collision);
+    super::motor::resolve_motors(world);
 }
 
 fn classify(world: &World, entity: Entity, collider: &Collider) -> Result<Prepared, SkipReason> {
@@ -157,6 +159,10 @@ fn fresh_skips<'a>(
 
 pub(super) fn entries(world: &CollisionWorld) -> &[Entry] {
     &world.entries
+}
+
+pub(super) fn entries_mut(world: &mut CollisionWorld) -> &mut [Entry] {
+    &mut world.entries
 }
 
 pub(super) fn query_allows(entry: &Entry, query: CollisionQuery) -> bool {

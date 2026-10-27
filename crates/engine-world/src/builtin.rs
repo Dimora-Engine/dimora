@@ -2,7 +2,7 @@
 //!
 //! Field names are declared here on purpose. Changing a struct does not change this list.
 
-use crate::collision::{Collider, ColliderShape};
+use crate::collision::{CharacterMotor, Collider, ColliderShape, MoveIntent, MoveResult, MoveStatus};
 use crate::hierarchy::{Children, GlobalTransform, Parent};
 use crate::interpolate::Interpolate;
 use crate::lookup::Tags;
@@ -22,6 +22,16 @@ const PARENT_FIELDS: &[FieldDesc] = &[FieldDesc::new("entity", "Entity")];
 const CHILDREN_FIELDS: &[FieldDesc] = &[FieldDesc::new("entities", "Vec<Entity>")];
 const GLOBAL_FIELDS: &[FieldDesc] = &[FieldDesc::new("matrix", "Mat4")];
 const INTERPOLATE_FIELDS: &[FieldDesc] = &[FieldDesc::new("previous", "Option<Transform>")];
+const MOTOR_FIELDS: &[FieldDesc] =
+    &[FieldDesc::new("skin", "f32"), FieldDesc::new("max_slides", "u8"), FieldDesc::new("locked_axes", "BVec3")];
+const MOVE_INTENT_FIELDS: &[FieldDesc] = &[FieldDesc::new("translation", "Vec3")];
+const MOVE_RESULT_FIELDS: &[FieldDesc] = &[
+    FieldDesc::new("requested", "Vec3"),
+    FieldDesc::new("applied", "Vec3"),
+    FieldDesc::new("status", "MoveStatus"),
+    FieldDesc::new("normals", "Vec<Vec3>"),
+    FieldDesc::new("recovery_normal", "Option<Vec3>"),
+];
 const COLLIDER_FIELDS: &[FieldDesc] = &[
     FieldDesc::new("shape", "ColliderShape"),
     FieldDesc::new("offset", "Vec3"),
@@ -89,6 +99,24 @@ pub fn register_world_components(registry: &mut ComponentRegistry) -> Result<(),
         Persistence::Persist,
         Some(collider_values),
     ))?;
+    registry.register_idempotent(ComponentDesc::new(
+        "CharacterMotor",
+        MOTOR_FIELDS,
+        Persistence::Persist,
+        Some(motor_values),
+    ))?;
+    registry.register_idempotent(ComponentDesc::new(
+        "MoveIntent",
+        MOVE_INTENT_FIELDS,
+        Persistence::Runtime,
+        Some(intent_values),
+    ))?;
+    registry.register_idempotent(ComponentDesc::new(
+        "MoveResult",
+        MOVE_RESULT_FIELDS,
+        Persistence::Runtime,
+        Some(result_values),
+    ))?;
     Ok(())
 }
 
@@ -143,6 +171,37 @@ fn interpolate_values(mark: &Interpolate) -> Vec<String> {
         ),
         None => "none".to_string(),
     }]
+}
+
+fn motor_values(motor: &CharacterMotor) -> Vec<String> {
+    vec![
+        format!("{:?}", motor.skin),
+        motor.max_slides.to_string(),
+        format!("({}, {}, {})", motor.locked_axes.x, motor.locked_axes.y, motor.locked_axes.z),
+    ]
+}
+
+fn intent_values(intent: &MoveIntent) -> Vec<String> {
+    vec![vec3(intent.translation)]
+}
+
+fn result_values(result: &MoveResult) -> Vec<String> {
+    let recovery = match result.recovery_normal {
+        Some(normal) => vec3(normal),
+        None => "none".to_string(),
+    };
+    vec![
+        vec3(result.requested),
+        vec3(result.applied),
+        match result.status {
+            MoveStatus::Completed => "Completed",
+            MoveStatus::Blocked => "Blocked",
+            MoveStatus::Rejected => "Rejected",
+        }
+        .to_string(),
+        format!("{} normals", result.normals.len()),
+        recovery,
+    ]
 }
 
 fn collider_values(collider: &Collider) -> Vec<String> {

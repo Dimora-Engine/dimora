@@ -233,8 +233,21 @@ is absent until the next iteration. `post_update` still propagates after animati
 rebuild the index. Interpolation snapshots locals at the start of each iteration and does not read
 `CollisionWorld`; a zero-iteration step does not take that snapshot. Collision wires are copied into
 `DebugDraw` only when `CollisionDebug` is enabled. It defaults to off. Indexing and queries do not
-read that flag. The accepted slide drops a nonblocking zero-time skin contact and keeps scanning
-the same remainder; that slide is not implemented. Movement and trigger events are not implemented.
+read that flag. After the rebuild, each `CharacterMotor` that has a `MoveIntent` is swept in
+ascending `Entity` order. The intent is a world-space displacement for that iteration, not a
+velocity and not a camera direction. World axes stay world axes: +X right, +Y up, +Z forward into
+the scene, and XZ is the ground plane. A camera rotation does not rotate them. Locked axes are
+cleared on the request, on each slide, and on the one recovery push. The sweep casts the mover
+against solid colliders in a bounds volume that covers the start and the end of the remaining
+displacement, plus skin. A nonblocking zero-time skin contact is dropped and the other candidates
+are still tested. The traveled part is applied, and only the unconsumed remainder is projected
+along the wall. The motor writes `Transform.position` through the parent inverse when there is a
+parent, and does not write `GlobalTransform`, rotation, or scale. It then patches that collider's
+center, pose, and bounds so the next motor in the same iteration sees the new pose. `MoveResult`
+records that resolution. It is not a claim that the character is standing on a surface. After the
+fixed loop, including a loop of zero iterations, every leftover `MoveIntent` is removed. An intent
+written during `update` waits for the next simulating step. Trigger events, gravity, jumping, and a
+grounded flag are not implemented.
 
 `elapsed` and `frame` advance once per `step`, not once per fixed iteration. Extract and render are
 not stages: `Game::extract()` then `WindowRenderer::render` (or `render_to_rgba` offscreen).
@@ -542,7 +555,7 @@ systems they touch. Each cites evidence from this audit.
 | R-13 | **Diagnostics are counters, not a profile.** Logging is the `log` crate. `Diagnostics` holds one step of CPU stage times, the frame delta, and the latest render stats. There is no history, no per-system timing, and no GPU timestamp | `logging.rs`, `diagnostics.rs`, `missing.rs`; ADR-0012 | Low for the current call sites. A profiler bolted on later would duplicate them | M3a-4 implemented the records and the resource. M20 may add `tracing` or another profiler. The on-screen overlay stays in M10 |
 | R-14 | **Verification is narrower than it looks.** CI now runs on Windows, macOS and Linux (first run green), but only on software or paravirtual adapters, offscreen; GPU tests skip unless `DIMORA_REQUIRE_GPU=1` (CI sets it). A macOS window was checked for DPI (Phase 3). Phase 4's macOS window check is the one recorded in TASKS.md; Windows and Linux windowed paths are unverified. Performance is unmeasured. Pixel tests use tolerances that held on three rasterisers | TASKS.md "CI results" and "M3b Phase 4 results"; KI-3, KI-24, KI-27 | Rises slowly; regressions on real GPUs or untested windowed paths found by users | Keep CI green and required. Real-GPU timing needs a different runner (ADR-0005 option B) |
 | R-15 | **Foundations not yet shaped for the editor.** Registered components now have hand-written field names and a persistence class (M4 Phase 1, ADR-0014). Those lists are not derived from the structs. Unregistered components still have none. There is no undo stack, entities and assets still lack stable file ids (R-4), there is no scene format, and the renderer draws one view (R-2) | `registry.rs`, `components.rs`, `world.rs`, `extract.rs`; CAPABILITIES rows 2, 8, 32, 33, 36 | High for the parts still missing: commands exist, but editor undo, identities, and a viewport do not | M4 still owes scene membership. M6 owes camera-to-texture. M19 owes serialization. Write no component that hides state the editor must edit |
-| R-16 | **Single-view assumptions hide in details.** Evidence: `Upright` sprites are edge-on under a straight-down camera and foreshortened in a steep view (settled, ADR-0021); cutout content that has not opted in still follows draw order or depth-test rounding (`spatial_scene` does not attach `CoplanarPriority`; ADR-0020 is the opt-in); the world is +Y up with an XZ ground (a provisional convention, ADR-0004) while gameplay orientation and movement planes have no design yet; directional animation (D-31) will read the camera; shadow and light code is not yet written and could assume a perspective view. Isometric, top-down and side are ordinary cameras built by `PlacedCamera` | `components.rs` (`SpriteOrientation`), `extract.rs`, `coplanar.rs`, `scene_renderer.rs`; `examples/spatial_scene/tests/configurations.rs`; ADR-0004; ADR-0020 | High if found late: orientation and light direction are baked into M7, M8, M13 and M14 | D-26 is settled (ADR-0021). Gameplay orientation is still open before M7 and M8. Coplanar sprite priority is settled (ADR-0020). M14 tests under three camera configurations |
+| R-16 | **Single-view assumptions hide in details.** Evidence: `Upright` sprites are edge-on under a straight-down camera and foreshortened in a steep view (settled, ADR-0021); cutout content that has not opted in still follows draw order or depth-test rounding (`spatial_scene` does not attach `CoplanarPriority`; ADR-0020 is the opt-in); the world is +Y up with an XZ ground (a provisional convention, ADR-0004). `CharacterMotor.locked_axes` is an explicit world-axis lock, and the gameplay-orientation component is still open; directional animation (D-31) will read the camera; shadow and light code is not yet written and could assume a perspective view. Isometric, top-down and side are ordinary cameras built by `PlacedCamera` | `components.rs` (`SpriteOrientation`), `extract.rs`, `coplanar.rs`, `scene_renderer.rs`; `examples/spatial_scene/tests/configurations.rs`; ADR-0004; ADR-0020 | High if found late: orientation and light direction are baked into M7, M8, M13 and M14 | D-26 is settled (ADR-0021). Gameplay orientation is still open before M7 and M8. Coplanar sprite priority is settled (ADR-0020). M14 tests under three camera configurations |
 
 Expensive redesigns, ranked by likelihood times cost, if nothing changes: **R-4 (asset identity)**, **R-1
 and R-2 (render model shape)**, **R-5 and R-8 (mutation and threading)**, **R-7 and R-6 (API and format
@@ -580,8 +593,8 @@ These are settled; revisit only with a concrete problem.
 
 ## Proposed future architecture (NOT implemented)
 
-Direction only; none of this exists in the code. Where an ADR is cited, the decision is settled and the
-implementation is still a later task. Each item is a roadmap milestone with its own acceptance
+Direction only. A bullet names a checkpoint when that part is already in the code. Where an ADR is
+cited, the decision is settled. Each item is a roadmap milestone with its own acceptance
 criteria. Open decisions stay in [DECISIONS.md](DECISIONS.md).
 
 * **Scenes as units** (M4): the registry and text dumps exist (Phase 1, `cdb5ec3`, ADR-0014). Extraction
@@ -600,11 +613,12 @@ criteria. Open decisions stay in [DECISIONS.md](DECISIONS.md).
   and cylinder meshes as ordinary `MeshData` (ADR-0018). M5 is accepted locally. Localized mip-texel regeneration is not implemented.
 * **A list of camera passes** instead of one `RenderScene` camera, plus render-to-texture (M6).
 * **Kinematic movement** on the collision world (rest of M7). M7-1A rebuilds `CollisionWorld` in the
-  fixed stage and answers overlap and ray queries. The contract is
+  fixed stage and answers overlap and ray queries. M7-1B-1 sweeps `CharacterMotor` in that same
+  system and writes the local position. The contract is
   [ADR-0025](adr/0025-kinematic-collision.md): private `parry3d` 0.31.1 queries, ECS-owned
-  transforms, a linear AABB list, and no rigid-body pipeline. The accepted slide drops a
-  nonblocking zero-time skin contact and keeps scanning that remainder. The slide, triggers, and
-  movement writeback are not written.
+  transforms, a linear AABB list, and no rigid-body pipeline. A nonblocking zero-time skin contact
+  is dropped and the rest of that remainder is still tested. Trigger events, gravity, jumping,
+  grounded support, and the `spatial_scene` pillar block are not written.
 * **Sprite-sheet animation** (M8), **a character gameplay layer with an API surface list** (M9), **a UI
   runtime** (M10), **pose-first skeletal animation** (M11) and **3D skinned characters** (M12), within the
   boundaries below.

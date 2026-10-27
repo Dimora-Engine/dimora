@@ -970,3 +970,26 @@ Debug off matches the rebuild row above. Debug on is the cost of building and st
 
 Harness check, 2026-10-27 at 11:39 AM America/Chicago, same machine and `rustc 1.99.0`, one release invocation of each example. The tables above stay the recorded baselines. `collision_index_bench` printed 1.8 µs, 11.2 µs, 3.0 µs, overlap 0.3 µs, and ray 2.6 µs. `collision_phase_bench` printed debug off 1.4 µs and 8.6 µs (0 wires) and debug on 11.4 µs (480 wires) and 97.7 µs (4800 wires). The spread against the two-run tables is cache noise at this size.
 
+### Kinematic sweep
+
+Recorded 2026-10-27 at 3:07 PM America/Chicago. M7-1B-1. The timed body is `sync_collision` with one motor: propagate, rebuild, and one sweep of 30 units along +X into a box. The other colliders are spheres on that path, past the box, so the swept bounds include them. The mover is returned to the origin between samples, and that reset is outside the timer. Debug wires are not built. This does not replace the index or phase tables above, and it is not a frame-time or GPU measurement.
+
+| | |
+|---|---|
+| Machine | Apple M5, Mac17,2, arm64 |
+| OS | macOS 27.0 |
+| Rust | rustc 1.99.0 (`b940084d7` 2026-09-28) |
+| Profile | `cargo run --release -p engine-world --example movement_bench` |
+| Binary | `crates/engine-world/examples/movement_bench.rs` |
+
+Each row is the median of 31 samples after 10 warmup calls. The mover is a sphere of radius 0.4 with skin 0.01. The box face is at x = 11.5. Both runs stopped at x = 11.09, with 10 and 100 colliders indexed.
+
+Two consecutive invocations:
+
+| Call | First median | Second median |
+|---|---|---|
+| Sweep, 10 colliders | 2.7 µs | 2.9 µs |
+| Sweep, 100 colliders | 10.0 µs | 11.2 µs |
+
+The scan is still linear. These medians are CPU time for this fixture. They are not a production frame budget.
+

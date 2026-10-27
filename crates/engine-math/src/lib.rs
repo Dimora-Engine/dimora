@@ -5,6 +5,7 @@
 //! * Left-handed, +Y up, +Z away from the default camera.
 //! * Projection matrices produce NDC depth in `[0, 1]`, 1 at the near plane and 0 at the far plane.
 
+mod bvec3;
 mod mat3;
 mod mat4;
 mod quat;
@@ -14,6 +15,7 @@ mod vec2;
 mod vec3;
 mod vec4;
 
+pub use bvec3::BVec3;
 pub use mat3::Mat3;
 pub use mat4::Mat4;
 pub use quat::Quat;

@@ -75,7 +75,7 @@ without it.
 | 22 | Character gameplay layer | Absent | The demo's own system drives the animation player | M9 |
 | **Gameplay** | | | | |
 | 23 | Collision and spatial queries | Partial | Sphere, box, and capsule; fixed-step `CollisionWorld`; overlap and ray queries. No movement or triggers | M7 |
-| 24 | Physics and movement | Absent | Kinematic controller planned; no solver | M7 |
+| 24 | Physics and movement | Partial | Kinematic sweep on `CharacterMotor`; no gravity, jump, or grounded state | M7 |
 | 25 | Audio | Absent | | M16 |
 | **UI** | | | | |
 | 26 | UI runtime (screen and world space) | Absent | No fonts, layout, widgets, overlay pass | M10 |
@@ -560,7 +560,7 @@ Missing from the original category list and now tracked: **save games** (34), **
 * **Now.** Partial (M7-1A). Sphere, box, and capsule colliders, with a local offset, layers, mask,
   sensor flag, and enabled flag. `CollisionWorld` is rebuilt at the end of each fixed iteration from
   a sorted list and a linear AABB scan. Overlap and ray queries return world-space results. Sensors
-  are query results and do not emit events. Each indexed entry stores `mask` for a later mutual
+  are query results and do not emit events.   Each indexed entry stores `mask`. Movement uses the mutual
   filter. A free query still tests `layers` against the query mask only. Sphere and capsule scale is
   uniform when `(max - min) / max` of the column lengths is at most `1e-4`. `CollisionDebug` is off
   unless a caller enables it; a normal step with colliders submits no collision wires. When it is
@@ -573,11 +573,17 @@ Missing from the original category list and now tracked: **save games** (34), **
 * **Not initially.** Rigid bodies, joints, continuous collision for dynamic bodies, convex colliders, navmesh.
 
 ### 24. Physics and movement
-* **Now.** Absent. **Planned.** Kinematic move-and-slide with swept tests in M7-1B. The accepted
-  contract drops a nonblocking zero-time skin contact and keeps scanning that remainder, so a mover
-  leaving wall A still stops at wall B. D-09 is settled
-  ([ADR-0025](adr/0025-kinematic-collision.md)): private `parry3d` 0.31.1 queries are in `engine-world`.
-  The ECS still owns `Transform`. M7-1A does not write it from a move.
+* **Now.** Partial (M7-1B-1). `CharacterMotor` stores skin (default `0.01`), `max_slides` (default 4),
+  and `locked_axes` (`BVec3`, default none). `MoveIntent.translation` is the world displacement for
+  one fixed iteration. The sealed collision system sweeps it, writes `Transform.position`, patches
+  that collider, and stores `MoveResult`. `requested` is the intent before axis locks. `applied` is
+  the world origin change, including one recovery push. `Blocked` and `Rejected` are exclusive.
+  Rejection leaves the transform and the index unchanged. A later step that does not process a new
+  intent leaves the previous result in place. That result is the last resolution, not a ground
+  contact. Full XYZ movement is the default. A sprite or mesh child does not change it, and neither
+  does the camera. **Not implemented.** Gravity, jumping, walking acceleration, a grounded flag,
+  floor/wall/ceiling labels, trigger events, stairs, slopes, and moving platforms.
+  **Depends on.** M7-1A and [ADR-0025](adr/0025-kinematic-collision.md). M7 is not complete.
 * **Not initially.** Rigid-body dynamics, joints, ragdolls, vehicles. The broadphase may be quadratic
   until a later milestone replaces the candidate function.
 

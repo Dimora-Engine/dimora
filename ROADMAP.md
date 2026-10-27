@@ -694,7 +694,7 @@ MSAA is `crates/engine-renderer/tests/msaa.rs`, `crates/engine-renderer-wgpu/tes
 
 **Objective.** Spatial collision and a kinematic character controller; no rigid-body physics.
 
-**Prerequisites.** M3 (fixed stage), M4 (events/commands), M6. Debug drawing, the part of M6 this milestone names for collider visualization, is implemented locally. M6 itself is not complete. M7-1A, the geometric query index, is implemented on `feat/m7-collision`. Movement, triggers, and the character controller are not.
+**Prerequisites.** M3 (fixed stage), M4 (events/commands), M6. Debug drawing, the part of M6 this milestone names for collider visualization, is implemented locally. M6 itself is not complete. M7-1A, the geometric query index, and M7-1B-1, the kinematic sweep, are implemented on `feat/m7-collision`. Trigger events (M7-1B-2), the `spatial_scene` pillar (M7-1B-3), and locomotion are not.
 
 **Tasks.**
 - Collider components (sphere, box, capsule; layers/masks) in **3D world space**, so an object at a
@@ -707,7 +707,7 @@ MSAA is `crates/engine-renderer/tests/msaa.rs`, `crates/engine-renderer-wgpu/tes
 - Colliders attach to the gameplay entity, not to a visual child, so a change of character representation
   (M9) cannot change collision.
 
-**Dependencies.** D-09 is settled ([ADR-0025](docs/adr/0025-kinematic-collision.md)). D-10 is settled. M7-1A implements the query index. The rest of M7 is not implemented.
+**Dependencies.** D-09 is settled ([ADR-0025](docs/adr/0025-kinematic-collision.md)). D-10 is settled. M7-1A implements the query index. M7-1B-1 implements the sweep. Triggers, the pillar scene, and locomotion are not implemented. M7 is not complete.
 
 **Acceptance criteria.**
 - Shape-pair overlap tests over a table of cases; raycast tests per shape.
@@ -719,13 +719,12 @@ MSAA is `crates/engine-renderer/tests/msaa.rs`, `crates/engine-renderer-wgpu/tes
   separate controller.
 - `spatial_scene`: the walkable figure is blocked by the pillar.
 - The first checkpoint's geometry cases are written: mirrored offsets, shear rejection, shape-pair
-  overlap, world-space ray normals, filters, camera independence, and stable ordering. Diagonal slides,
-  locked axes, trigger events, and the 1,000-step movement hash are still the M7-1B part of the
-  ADR-0025 matrix and are not written.
-- Accepted for M7-1B and not implemented: a mover in skin contact with wall A, traveling away from A
-  toward wall B, stops at B's near face plus skin and does not tunnel. The nonblocking skin hit is
-  dropped for that sweep, and the other candidates are still tested. Owner approved 2026-10-27
-  ([ADR-0025](docs/adr/0025-kinematic-collision.md)).
+  overlap, world-space ray normals, filters, camera independence, and stable ordering. M7-1B-1 writes
+  the diagonal slide, locked axes, wall A then wall B, and a same-process 1,000-step movement hash.
+  Trigger events are still M7-1B-2 and are not written. The `spatial_scene` pillar block is M7-1B-3.
+- A mover in skin contact with wall A, traveling away from A toward wall B, stops at B's near face
+  plus skin and does not tunnel. Owner approved 2026-10-27
+  ([ADR-0025](docs/adr/0025-kinematic-collision.md)). M7-1B-1 implements that case.
 
 **Tests/examples.** Collision unit/property tests; controller test; example.
 

@@ -1,4 +1,4 @@
-use engine_math::Vec3;
+use engine_math::{BVec3, Vec3};
 use hecs::Entity;
 
 /// Sphere, box, or capsule. A capsule is centered and runs along local +Y.
@@ -163,8 +163,91 @@ impl core::fmt::Display for SkipReason {
     }
 }
 
-/// Mutual filter. A collider does not interact with itself. Sensors still pass; they block nothing
-/// until movement exists.
+/// How the last movement resolution finished.
+///
+/// `Blocked` and `Rejected` cannot both be true. A blocked move may still have changed the
+/// transform. A rejected move did not.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MoveStatus {
+    /// The unlocked part of the request was applied.
+    Completed,
+    /// A contact, an unfinished cast, or a slide limit kept some of the request back.
+    Blocked,
+    /// The transform and the collision index were left as they were.
+    Rejected,
+}
+
+/// Persistent movement settings. This is not a velocity, a gravity setting, or a jump.
+///
+/// `skin` is the gap the sweep keeps from a solid. `max_slides` is how many sweep iterations one
+/// fixed step may spend. `locked_axes` zeroes those world components on the way in, after a slide,
+/// and on a recovery push. Persistence marks this as editor data. It does not write a scene file.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CharacterMotor {
+    pub skin: f32,
+    pub max_slides: u8,
+    pub locked_axes: BVec3,
+}
+
+impl Default for CharacterMotor {
+    fn default() -> Self {
+        Self { skin: 0.01, max_slides: 4, locked_axes: BVec3::FALSE }
+    }
+}
+
+impl CharacterMotor {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+/// World-space displacement for one fixed iteration.
+///
+/// This is not a velocity and it is not a camera direction. The collision pass consumes it.
+/// An intent still present after the fixed loop, including a loop that ran zero iterations, is
+/// removed. An intent written during `update` waits for the next simulating step.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MoveIntent {
+    pub translation: Vec3,
+}
+
+impl MoveIntent {
+    pub fn new(translation: Vec3) -> Self {
+        Self { translation }
+    }
+}
+
+/// The last movement resolution for this entity.
+///
+/// `requested` is the intent before locked axes were cleared. `applied` is how far the entity
+/// origin moved in world space, including a recovery push when one was applied. `normals` are
+/// world-space obstacle normals in slide order, pointing back toward the mover. `recovery_normal`
+/// is that same kind of normal when a penetration push was applied.
+///
+/// This is the last resolution, not a claim that the character is standing on a surface. A later
+/// frame that does not process a new intent leaves this value as it was. A new resolution replaces
+/// it, including a zero move, so old normals are not reported as a fresh contact.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MoveResult {
+    pub requested: Vec3,
+    pub applied: Vec3,
+    pub status: MoveStatus,
+    pub normals: Vec<Vec3>,
+    pub recovery_normal: Option<Vec3>,
+}
+
+impl MoveResult {
+    pub fn blocked(&self) -> bool {
+        self.status == MoveStatus::Blocked
+    }
+
+    pub fn rejected(&self) -> bool {
+        self.status == MoveStatus::Rejected
+    }
+}
+
+/// Mutual filter. A collider does not interact with itself. Sensors pass the filter and do not
+/// block movement.
 pub fn pair_interacts(a_entity: Entity, a: &Collider, b_entity: Entity, b: &Collider) -> bool {
     a_entity != b_entity && a.enabled && b.enabled && a.layers & b.mask != 0 && b.layers & a.mask != 0
 }

@@ -66,7 +66,7 @@ the risk register). **Prototype where the answer depends on a measurement; do no
 | **2. Before M4/M5** | D-18 (registry shape, decided in part), D-16 (asset identity), D-05 (alpha classes and materials), D-27 (units) | Persisted data, render model and sprite sizing hang on them; R-1, R-4 | D-18's scene model and registry shape are ADR-0014. D-16 stays open. D-05 is ADR-0015 (settled). M5-5C is `ab1b6f7`. M5-5D is `a7efd6c`. M5-6 is `92286ce`. M5 is accepted locally. D-27 is ADR-0016 (per-sprite `pixels_per_unit`) |
 | **3. Before M6** | D-25 projection and D-08 multi-camera and targets first, D-48 camera configurations, D-07 depth, then D-06 pixel policy (opt-in, lowest of these) | Shape of `RenderScene` and the pass list; R-2 | Prototype two cameras into one target |
 | **4. Before M9** | D-28, D-29 (vocabulary), D-30, D-31, D-11 (record) | Define the character and scene API that M10 to M18 depend on | Built against M8's sprite-sheet implementation and the second consumer |
-| **5. Only at their milestone, after a spike** | D-40 scripting runtime, D-24 UI model, D-12, D-14, D-15, D-33, D-35, D-36 | They need measurements or a working neighbour; deciding early would be invention | Each milestone's first task is the spike. D-09 was settled on 2026-10-27 ([ADR-0025](adr/0025-kinematic-collision.md)). M7-1A implements the query index. Movement is not implemented |
+| **5. Only at their milestone, after a spike** | D-40 scripting runtime, D-24 UI model, D-12, D-14, D-15, D-33, D-35, D-36 | They need measurements or a working neighbour; deciding early would be invention | Each milestone's first task is the spike. D-09 was settled on 2026-10-27 ([ADR-0025](adr/0025-kinematic-collision.md)). M7-1A implements the query index. M7-1B-1 implements the kinematic slide. Triggers and locomotion are not implemented |
 | **6. Defer, low impact** | D-19 bundle format, D-20 editor technology, D-23 platform/crates.io part | Nothing depends on them until late | Revisit when their milestone is next |
 
 ## Summary
@@ -90,7 +90,7 @@ the risk register). **Prototype where the answer depends on a measurement; do no
 | D-25 | Custom projections inside `Camera` | M6 (**first in M6**, [ADR-0004](adr/0004-one-spatial-world-many-camera-configurations.md)) | M6, M13 (oblique tiles) | Implemented in M6-1B (`a38cb30`, not pushed): `CameraProjection::Custom(Mat4)`. The example `custom` camera is M6-1C (committed locally, not pushed). Public oblique builders (`16ed495`) store that same variant and do not change this matrix contract. Coplanar ordering is [ADR-0020](adr/0020-coplanar-priority.md). D-26 is [ADR-0021](adr/0021-sprite-orientation.md) |
 | D-48 | Camera configurations: gameplay orientation, coplanar ordering, orientation modes per view | M6 (decide before M7 and M8) | M6, M7, M8, M13, M14 | Coplanar ordering decided, [ADR-0020](adr/0020-coplanar-priority.md) (2026-10-23): opt-in `CoplanarPriority`, depth-only, fallback thickness `1/256`. Verified on Apple M5, Metal. Gameplay-orientation components still deferred to M7 and M8. D-26 is [ADR-0021](adr/0021-sprite-orientation.md). `+Y` up / `XZ` ground stays a provisional convention (ADR-0004) |
 | D-26 | Sprite orientation modes beyond `Billboard`, `Upright`, `Fixed`; `Upright` semantics for steep and oblique views | M6 | none hard | Decided, [ADR-0021](adr/0021-sprite-orientation.md) (2026-10-23). Keep `Billboard`, `Upright`, and `Fixed`. Top-down `Upright` stays edge-on. No fourth mode. Extraction is unchanged |
-| D-09 | Physics: custom or library | M7 | M7, M9 | Settled, [ADR-0025](adr/0025-kinematic-collision.md) (2026-10-27). Private `parry3d` 0.31.1 queries. The ECS owns transforms. No rigid-body pipeline. M7-1A implements the query index. Movement is not implemented |
+| D-09 | Physics: custom or library | M7 | M7, M9 | Settled, [ADR-0025](adr/0025-kinematic-collision.md) (2026-10-27). Private `parry3d` 0.31.1 queries. The ECS owns transforms. No rigid-body pipeline. M7-1A implements the query index. M7-1B-1 implements the kinematic slide, `BVec3`, and `MoveResult`. Triggers and locomotion are not implemented |
 | D-28 | Character gameplay versus visuals | M8 (provisional), M9 | M9, M10, M11, M12, M18 | Open |
 | D-29 | Shared animation control vocabulary and state machine | M8 (vocabulary), M11 | M8, M9, M11, M12 | Open |
 | D-30 | Sprite-sheet data model and frame selection | M8 | M8, M14, M17 | Open |
@@ -368,17 +368,18 @@ Decided in [ADR-0015](adr/0015-material-alpha-classes.md). Opaque, Mask, and Ble
 ### D-09 Physics: custom or library
 
 * **Settled (2026-10-27, [ADR-0025](adr/0025-kinematic-collision.md)).** Geometric queries come from
-  private `parry3d` 0.31.1 (`dim3`, `f32`, `std` only). `Collider` on the gameplay entity is the
-  data, including the local offset. `CollisionWorld` is a Dimora resource. A fixed-step system
-  propagates transforms once, rebuilds a sorted AABB list, and applies a kinematic slide that
-  consumes only the untravelled remainder. Sensors use the existing event queues. No Rapier
+  private `parry3d` 0.31.1 (`dim3`, `f32`, `std`, and `alloc` for support-map sweeps). `Collider` on
+  the gameplay entity is the data, including the local offset. `CollisionWorld` is a Dimora resource.
+  A fixed-step system propagates transforms once, rebuilds a sorted AABB list, and applies a kinematic
+  slide that consumes only the untravelled remainder. Sensors use the existing event queues. No Rapier
   dynamics pipeline, rigid body, joint, or gravity solver. Same-process determinism only.
 * **Implemented in part.** M7-1A adds the crate to `engine-world` and the geometric query index.
-  The kinematic slide, trigger events, and movement writeback from ADR-0025 are not implemented.
   M7-1A-R stores `mask` on each index entry. Owner approved on 2026-10-27: a nonblocking zero-time
   skin hit is dropped for that sweep and the other candidates are still tested, and `CollisionDebug`
-  is opt-in and off by default. Those amendments are in ADR-0025. The slide is not implemented.
-  M7 is not complete.
+  is opt-in and off by default. M7-1B-1 adds `BVec3` in `engine-math`, persistent `CharacterMotor`,
+  runtime `MoveIntent` and `MoveResult`, and the sweep inside `sync_collision`. `MoveResult` reports
+  the last resolution. It does not report a grounded state. Trigger events and locomotion are not
+  implemented. M7 is not complete.
 * **Needed by.** M7. **Blocks.** M7 and M9 until that implementation lands. The decision itself no
   longer blocks starting M7.
 

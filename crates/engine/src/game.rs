@@ -10,8 +10,8 @@ use engine_renderer::{
 };
 use engine_renderer_wgpu::{CacheStats, FrameStats, GpuContext, RenderError, SceneRenderer};
 use engine_world::{
-    propagate_transforms, snapshot_interpolation, sync_collision, CollisionDebug, CollisionWorld, Schedule,
-    ScheduleError, World,
+    clear_move_intents, propagate_transforms, snapshot_interpolation, sync_collision, CollisionDebug, CollisionWorld,
+    Schedule, ScheduleError, World,
 };
 
 use crate::diagnostics::{Diagnostics, StageDurations};
@@ -452,6 +452,10 @@ impl Game {
                 self.world.resource_mut::<Actions>().conceal_fixed_edges();
             }
         }
+        // An intent that no motor consumed, including every intent on a frame with zero fixed
+        // iterations, does not survive into `update`. An intent written later, during `update`,
+        // waits for the next step.
+        clear_move_intents(&mut self.world);
         self.world.promote_events();
         let fixed_update = started.elapsed();
         self.world.resource_mut::<Time>().set_delta(frame_delta);
