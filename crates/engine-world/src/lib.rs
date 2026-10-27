@@ -31,7 +31,9 @@ mod world;
 pub use hecs::{Entity, EntityRef, Query, QueryBorrow};
 
 pub use builtin::register_world_components;
-pub use collision::{pair_interacts, Collider, ColliderShape, CollisionQuery, RayHit, SkipReason};
+pub use collision::{
+    pair_interacts, sync_collision, Collider, ColliderShape, CollisionQuery, CollisionWorld, RayHit, SkipReason,
+};
 pub use commands::{CommandError, CommandFailure, CommandWriter};
 pub use dump::DumpError;
 pub use engine_math::Transform;

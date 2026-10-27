@@ -151,7 +151,6 @@ pub fn pair_interacts(a_entity: Entity, a: &Collider, b_entity: Entity, b: &Coll
     a_entity != b_entity && a.enabled && b.enabled && a.layers & b.mask != 0 && b.layers & a.mask != 0
 }
 
-#[allow(dead_code)] // Used when the world-space conversion is built on these types.
 pub(crate) fn shape_ok(shape: ColliderShape) -> bool {
     match shape {
         ColliderShape::Sphere { radius } => finite_positive(radius),
@@ -164,12 +163,10 @@ pub(crate) fn shape_ok(shape: ColliderShape) -> bool {
     }
 }
 
-#[allow(dead_code)]
 fn finite_positive(value: f32) -> bool {
     value.is_finite() && value > 0.0
 }
 
-#[allow(dead_code)]
 pub(crate) fn point_finite(value: Vec3) -> bool {
     value.x.is_finite() && value.y.is_finite() && value.z.is_finite()
 }

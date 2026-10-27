@@ -9,7 +9,9 @@ use engine_renderer::{
     RenderTargetStore,
 };
 use engine_renderer_wgpu::{CacheStats, FrameStats, GpuContext, RenderError, SceneRenderer};
-use engine_world::{propagate_transforms, snapshot_interpolation, Schedule, ScheduleError, World};
+use engine_world::{
+    propagate_transforms, snapshot_interpolation, sync_collision, CollisionWorld, Schedule, ScheduleError, World,
+};
 
 use crate::diagnostics::{Diagnostics, StageDurations};
 use crate::viewport::Viewport;
@@ -136,6 +138,8 @@ impl Stage {
     pub const ANIMATE: &'static str = "animate";
     pub const PROPAGATE_TRANSFORMS: &'static str = "propagate_transforms";
     pub const END_INPUT_FRAME: &'static str = "end_input_frame";
+    /// Last system in `fixed_update`. Propagates transforms and rebuilds [`CollisionWorld`].
+    pub const SYNC_COLLISION: &'static str = "sync_collision";
 
     pub const ALL: [Stage; 7] = [
         Stage::Time,
@@ -159,7 +163,8 @@ impl Stage {
         }
     }
 
-    /// Where this stage's built-in sits. `fixed_update` and `update` have none.
+    /// Where this stage's built-in sits. `update` has none. `fixed_update` ends with
+    /// [`Stage::SYNC_COLLISION`].
     ///
     /// `SealedFirst` and `SealedLast` are lifecycle ends: every system in the stage stays on the
     /// built-in's open side, including one with an explicit `before` / `after`. `FlexibleFirst`
@@ -168,7 +173,8 @@ impl Stage {
         match self {
             Stage::Time => Some(Anchor::SealedFirst(Self::ADVANCE_TIME)),
             Stage::Loads => Some(Anchor::SealedFirst(Self::PROCESS_LOADS)),
-            Stage::FixedUpdate | Stage::Update => None,
+            Stage::FixedUpdate => Some(Anchor::SealedLast(Self::SYNC_COLLISION)),
+            Stage::Update => None,
             Stage::Animate => Some(Anchor::FlexibleFirst(Self::ANIMATE)),
             Stage::PostUpdate => Some(Anchor::SealedLast(Self::PROPAGATE_TRANSFORMS)),
             Stage::InputClear => Some(Anchor::SealedLast(Self::END_INPUT_FRAME)),
@@ -248,6 +254,7 @@ impl Game {
         world.insert_resource(FixedTimestep::new(config.fixed_hz));
         world.insert_resource(StepClock::default());
         world.insert_resource(DebugDraw::default());
+        world.insert_resource(CollisionWorld::default());
 
         let mut time = Schedule::new();
         time.add_system(Stage::ADVANCE_TIME, advance_time).expect("advance_time");
@@ -255,6 +262,8 @@ impl Game {
         loads.add_system(Stage::PROCESS_LOADS, process_loads).expect("process_loads");
         let mut animate = Schedule::new();
         animate.add_system(Stage::ANIMATE, animate_system).expect("animate");
+        let mut fixed_update = Schedule::new();
+        fixed_update.add_system(Stage::SYNC_COLLISION, sync_collision_system).expect("sync_collision");
         let mut post_update = Schedule::new();
         post_update.add_system(Stage::PROPAGATE_TRANSFORMS, propagate_transforms).expect("propagate_transforms");
         let mut input_clear = Schedule::new();
@@ -263,7 +272,7 @@ impl Game {
         Self {
             world,
             update: Schedule::new(),
-            fixed_update: Schedule::new(),
+            fixed_update,
             time,
             loads,
             animate,
@@ -298,13 +307,13 @@ impl Game {
 
     /// Adds a system to `stage` with no explicit constraint.
     ///
-    /// In `time`, `loads` and `animate`, that puts it after the built-in system. In `post_update`
-    /// and `input_clear`, that puts it before the built-in. `fixed_update` and `update` have no
-    /// built-in, so this is registration order. The target of a constraint has to be registered
+    /// In `time`, `loads` and `animate`, that puts it after the built-in system. In `fixed_update`,
+    /// `post_update` and `input_clear`, that puts it before the built-in. `update` has no built-in,
+    /// so this is registration order. The target of a constraint has to be registered
     /// already; [`Game::add_to_stage_before`] and [`Game::add_to_stage_after`] are the explicit forms.
     ///
-    /// `advance_time` and `process_loads` stay first in their stages. `propagate_transforms` and
-    /// `end_input_frame` stay last. A constraint on the closed side returns
+    /// `advance_time` and `process_loads` stay first in their stages. `sync_collision`,
+    /// `propagate_transforms`, and `end_input_frame` stay last. A constraint on the closed side returns
     /// [`ScheduleError::MustRunAfter`] or [`ScheduleError::MustRunBefore`] and leaves the schedule
     /// unchanged. `animate` is the exception: an explicit constraint may place a system before or
     /// after it. Restoring the frame delta after `fixed_update` is done by [`Game::step`], so
@@ -366,8 +375,11 @@ impl Game {
     /// advance once per call. Frame input edges stay visible until `input_clear`. Fixed-step edges
     /// are published at the start of this call and concealed after the first fixed iteration's
     /// systems and command flush. Later iterations do not see them. A step with no fixed iteration
-    /// leaves them published. An edge stored after conceal waits for the next call. Extract and
-    /// render are not part of this call.
+    /// leaves them published. An edge stored after conceal waits for the next call.
+    /// `sync_collision` is the last system of each fixed iteration, so a step with no fixed
+    /// iteration does not rebuild [`CollisionWorld`]. A `Transform` written after that system,
+    /// including one written in `update`, is absent from the snapshot until the next iteration.
+    /// Extract and render are not part of this call.
     ///
     /// Deferred commands flush after every stage run, and after each fixed iteration. Events sent
     /// in a stage become visible to later stages once that stage's run has finished. `fixed_update`
@@ -611,6 +623,10 @@ fn sealed_violation(name: &'static str, anchor: Option<Anchor>, order: ExplicitO
         }
         _ => None,
     }
+}
+
+fn sync_collision_system(world: &mut World) {
+    sync_collision(world);
 }
 
 fn advance_time(world: &mut World) {
