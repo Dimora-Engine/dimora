@@ -107,6 +107,58 @@ fn a_nonuniform_orthogonal_box_scales_each_axis() {
 }
 
 #[test]
+fn tiny_and_large_scales_use_a_relative_uniform_test() {
+    let mut world = synced();
+    let tiny = place(&mut world, Transform::from_scale(Vec3::splat(1e-5)), Collider::sphere(1.0));
+    let tiny_skew = place(
+        &mut world,
+        Transform::from_xyz(1.0, 0.0, 0.0).with_scale(Vec3::new(1e-5, 2e-5, 1e-5)),
+        Collider::sphere(1.0),
+    );
+    let large =
+        place(&mut world, Transform::from_xyz(2.0, 0.0, 0.0).with_uniform_scale(10_000.0), Collider::sphere(1.0));
+    let large_close = place(
+        &mut world,
+        Transform::from_xyz(3.0, 0.0, 0.0).with_scale(Vec3::new(10_000.0, 10_000.25, 10_000.0)),
+        Collider::sphere(1.0),
+    );
+    let large_skew = place(
+        &mut world,
+        Transform::from_xyz(4.0, 0.0, 0.0).with_scale(Vec3::new(10_000.0, 20_000.0, 10_000.0)),
+        Collider::sphere(1.0),
+    );
+    sync_collision(&mut world);
+    match index(&world).indexed_shape(tiny).expect("tiny uniform") {
+        ColliderShape::Sphere { radius } => assert!((radius - 1e-5).abs() < 1e-9, "{radius}"),
+        other => panic!("{other:?}"),
+    }
+    assert!(index(&world).skipped().contains(&(tiny_skew, SkipReason::NonUniformScale)));
+    match index(&world).indexed_shape(large).expect("large uniform") {
+        ColliderShape::Sphere { radius } => assert!((radius - 10_000.0).abs() < 1e-2, "{radius}"),
+        other => panic!("{other:?}"),
+    }
+    assert!(index(&world).center(large_close).is_some(), "a 0.25 difference on a 10000 axis is uniform");
+    assert!(index(&world).skipped().contains(&(large_skew, SkipReason::NonUniformScale)));
+}
+
+#[test]
+fn a_free_query_ignores_the_stored_mask() {
+    let mut world = synced();
+    let hidden = place(&mut world, Transform::IDENTITY, Collider::sphere(1.0).with_layers(1).with_mask(0));
+    let peer = place(&mut world, Transform::from_xyz(8.0, 0.0, 0.0), Collider::sphere(1.0).with_layers(1));
+    sync_collision(&mut world);
+    let hits = index(&world).overlap(
+        ColliderShape::Sphere { radius: 1.0 },
+        &Transform::IDENTITY,
+        CollisionQuery::all().mask(1),
+    );
+    assert!(hits.contains(&hidden));
+    let hidden_collider = world.component::<Collider>(hidden).unwrap().clone();
+    let peer_collider = world.component::<Collider>(peer).unwrap().clone();
+    assert!(!pair_interacts(hidden, &hidden_collider, peer, &peer_collider));
+}
+
+#[test]
 fn nonuniform_sphere_and_capsule_are_rejected() {
     let mut world = synced();
     let sphere = place(&mut world, Transform::from_scale(Vec3::new(2.0, 1.0, 1.0)), Collider::sphere(1.0));

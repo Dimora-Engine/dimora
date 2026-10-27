@@ -1,5 +1,7 @@
 //! Collision scheduling, debug lines, and camera independence. No GPU.
 
+use std::cell::Cell;
+use std::rc::Rc;
 use std::time::Duration;
 
 use engine::core::FixedTimestep;
@@ -53,20 +55,96 @@ fn sync_collision_runs_after_fixed_systems_and_a_zero_step_does_not_rebuild() {
     assert!(stale.approx_eq(Vec3::new(4.0, 0.0, 0.0), 1e-4));
 }
 
-#[test]
-fn indexed_shapes_draw_finite_debug_segments() {
-    let mut game = Game::new(GameConfig::default());
-    game.world.spawn((Transform::from_xyz(1.0, 2.0, -3.0), Collider::sphere(0.75)));
-    game.world.spawn((Transform::IDENTITY, Collider::aabb_box(Vec3::splat(0.4))));
-    game.world.spawn((Transform::from_xyz(0.0, 1.0, 0.0), Collider::capsule(0.3, 0.6)));
-    game.step(fixed_step());
-    let draw = game.world.resource::<DebugDraw>();
+fn finite(draw: &DebugDraw) {
     assert!(draw.len() > 12);
     for segment in draw.segments() {
         assert!(segment.start.x.is_finite() && segment.end.x.is_finite());
         assert!(segment.start.y.is_finite() && segment.end.y.is_finite());
         assert!(segment.start.z.is_finite() && segment.end.z.is_finite());
     }
+}
+
+fn shapes(game: &mut Game) {
+    game.world.spawn((Transform::from_xyz(1.0, 2.0, -3.0), Collider::sphere(0.75)));
+    game.world.spawn((Transform::IDENTITY, Collider::aabb_box(Vec3::splat(0.4))));
+    game.world.spawn((Transform::from_xyz(0.0, 1.0, 0.0), Collider::capsule(0.3, 0.6)));
+}
+
+#[test]
+fn a_default_step_creates_no_collision_wires() {
+    let mut game = Game::new(GameConfig::default());
+    assert!(!game.world.resource::<CollisionDebug>().enabled);
+    shapes(&mut game);
+    game.world.spawn((Transform::from_xyz(0.0, 0.0, -6.0), Camera::orthographic(10.0)));
+    game.step(fixed_step());
+    assert!(game.world.resource::<CollisionWorld>().len() >= 3);
+    assert!(game.world.resource::<DebugDraw>().is_empty());
+    let scene = game.extract().expect("camera");
+    assert!(scene.debug_lines.is_empty());
+    assert_eq!(scene.stats.debug_segments, 0);
+}
+
+#[test]
+fn enabled_collision_debug_draws_finite_segments_and_appends_across_iterations() {
+    let mut once = Game::new(GameConfig::default());
+    shapes(&mut once);
+    once.world.resource_mut::<CollisionDebug>().enabled = true;
+    once.step(fixed_step());
+    assert_eq!(once.world.resource::<Diagnostics>().fixed_steps, 1);
+    let one = once.world.resource::<DebugDraw>().len();
+    finite(&once.world.resource::<DebugDraw>());
+
+    let mut twice = Game::new(GameConfig::default());
+    shapes(&mut twice);
+    twice.world.resource_mut::<CollisionDebug>().enabled = true;
+    twice.step(fixed_step() * 2);
+    assert_eq!(twice.world.resource::<Diagnostics>().fixed_steps, 2);
+    assert_eq!(twice.world.resource::<DebugDraw>().len(), one * 2);
+}
+
+#[test]
+fn a_fixed_command_lands_after_the_rebuild_and_a_zero_step_leaves_the_snapshot() {
+    let mut game = Game::new(GameConfig::default());
+    let queued = Rc::new(Cell::new(None));
+    let slot = Rc::clone(&queued);
+    game.add_fixed_system("queue_spawn", move |world| {
+        if slot.get().is_some() {
+            return;
+        }
+        let entity = world.commands().spawn((Transform::from_xyz(2.0, 0.0, 0.0), Collider::sphere(0.5)));
+        slot.set(Some(entity));
+    });
+    let direct = game.world.spawn((Transform::IDENTITY, Collider::sphere(0.25)));
+    game.step(fixed_step());
+    let spawned = queued.get().expect("queued");
+    assert!(game.world.component::<Collider>(spawned).is_ok());
+    assert!(game.world.resource::<CollisionWorld>().center(spawned).is_none());
+    assert!(game.world.resource::<CollisionWorld>().center(direct).is_some());
+    let generation = game.world.resource::<CollisionWorld>().generation();
+
+    game.step(Duration::ZERO);
+    assert_eq!(game.world.resource::<Diagnostics>().fixed_steps, 0);
+    assert_eq!(game.world.resource::<CollisionWorld>().generation(), generation);
+    assert!(game.world.resource::<CollisionWorld>().center(spawned).is_none());
+
+    game.step(fixed_step());
+    let center = game.world.resource::<CollisionWorld>().center(spawned).expect("next rebuild");
+    assert!(center.approx_eq(Vec3::new(2.0, 0.0, 0.0), 1e-4));
+}
+
+#[test]
+fn a_command_queued_before_step_flushes_before_the_fixed_loop() {
+    let mut game = Game::new(GameConfig::default());
+    let entity = game.world.commands().spawn((Transform::from_xyz(1.0, 0.0, 0.0), Collider::sphere(0.5)));
+    game.step(fixed_step());
+    assert!(game.world.resource::<CollisionWorld>().center(entity).is_some());
+
+    let mut idle = Game::new(GameConfig::default());
+    let waiting = idle.world.commands().spawn((Transform::IDENTITY, Collider::sphere(0.5)));
+    idle.step(Duration::ZERO);
+    assert!(idle.world.component::<Collider>(waiting).is_ok());
+    assert_eq!(idle.world.resource::<CollisionWorld>().generation(), 0);
+    assert!(idle.world.resource::<CollisionWorld>().center(waiting).is_none());
 }
 
 #[test]

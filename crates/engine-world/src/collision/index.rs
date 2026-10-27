@@ -14,6 +14,9 @@ use super::types::{point_finite, Collider, ColliderShape, CollisionQuery, RayHit
 pub(super) struct Entry {
     pub entity: Entity,
     pub layers: u32,
+    /// Stored for the mutual filter. Free queries do not read it.
+    #[allow(dead_code)]
+    pub mask: u32,
     pub sensor: bool,
     pub prepared: Prepared,
 }
@@ -21,8 +24,11 @@ pub(super) struct Entry {
 /// Runtime snapshot of the colliders that passed validation.
 ///
 /// [`sync_collision`] replaces this list. The snapshot stays as it was until the next sync. A later
-/// write to `Transform`, `Parent`, or `Collider` makes it stale. Queries do not notice that write
-/// and do not rebuild. A `Game::step` with no fixed iteration does not call [`sync_collision`].
+/// write to `Transform`, `Parent`, or `Collider`, including a deferred command that flushes after
+/// this rebuild, makes it stale. Queries do not notice that write and do not rebuild. A
+/// `Game::step` with no fixed iteration does not call [`sync_collision`].
+///
+/// Each entry keeps `layers` and `mask`. A free query tests `layers` against the query mask only.
 #[derive(Default)]
 pub struct CollisionWorld {
     entries: Vec<Entry>,
@@ -105,7 +111,13 @@ pub fn sync_collision(world: &mut World) {
             continue;
         }
         match classify(world, entity, &collider) {
-            Ok(prepared) => entries.push(Entry { entity, layers: collider.layers, sensor: collider.sensor, prepared }),
+            Ok(prepared) => entries.push(Entry {
+                entity,
+                layers: collider.layers,
+                mask: collider.mask,
+                sensor: collider.sensor,
+                prepared,
+            }),
             Err(reason) => skipped.push((entity, reason)),
         }
     }
@@ -154,6 +166,7 @@ pub(super) fn query_allows(entry: &Entry, query: CollisionQuery) -> bool {
     if entry.sensor && !query.include_sensors {
         return false;
     }
+    // `entry.mask` is reserved for the mutual pair test. A free query is one-way.
     entry.layers & query.mask != 0 && point_finite(entry.prepared.center)
 }
 
@@ -171,5 +184,27 @@ mod tests {
         assert!(fresh_skips(&previous, &previous).is_empty());
         let changed = vec![(entity, SkipReason::Degenerate)];
         assert_eq!(fresh_skips(&previous, &changed), vec![&(entity, SkipReason::Degenerate)]);
+    }
+
+    #[test]
+    fn the_index_stores_mask_and_a_free_query_does_not_read_it() {
+        use super::{entries, sync_collision, CollisionWorld};
+        use crate::{Collider, ColliderShape, CollisionQuery, Transform};
+
+        let mut world = World::new();
+        let entity = world.spawn((Transform::IDENTITY, Collider::sphere(1.0).with_layers(1).with_mask(0)));
+        sync_collision(&mut world);
+        {
+            let collision = world.resource::<CollisionWorld>();
+            let stored = entries(&collision).iter().find(|entry| entry.entity == entity).unwrap();
+            assert_eq!(stored.mask, 0);
+            assert_eq!(stored.layers, 1);
+        }
+        let hits = world.resource::<CollisionWorld>().overlap(
+            ColliderShape::Sphere { radius: 1.0 },
+            &Transform::IDENTITY,
+            CollisionQuery::all().mask(1),
+        );
+        assert_eq!(hits, vec![entity]);
     }
 }

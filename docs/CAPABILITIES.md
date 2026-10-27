@@ -560,7 +560,11 @@ Missing from the original category list and now tracked: **save games** (34), **
 * **Now.** Partial (M7-1A). Sphere, box, and capsule colliders, with a local offset, layers, mask,
   sensor flag, and enabled flag. `CollisionWorld` is rebuilt at the end of each fixed iteration from
   a sorted list and a linear AABB scan. Overlap and ray queries return world-space results. Sensors
-  are query results and do not emit events. Indexed shapes become finite `DebugDraw` segments.
+  are query results and do not emit events. Each indexed entry stores `mask` for a later mutual
+  filter. A free query still tests `layers` against the query mask only. Sphere and capsule scale is
+  uniform when `(max - min) / max` of the column lengths is at most `1e-4`. `CollisionDebug` is off
+  unless a caller enables it; a normal step with colliders submits no collision wires. When it is
+  on, indexed shapes become finite `DebugDraw` segments, and several fixed iterations append them.
   **Planned.** Trigger events, still under [ADR-0025](adr/0025-kinematic-collision.md).
   **Depends on.** M3, M4, M6, D-10. D-09 is settled. M7 is not complete.
 * **Integration.** World-space 3D, attached to the **gameplay** entity; tilemap collision layer (M13)

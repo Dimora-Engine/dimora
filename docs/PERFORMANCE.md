@@ -943,3 +943,28 @@ Two consecutive invocations:
 
 The rebuild spread between the two runs is cache noise at this size. The candidate scan visits every indexed entry. A later pairwise or trigger pass over the same list would be quadratic in the collider count. That pass is not implemented and was not timed. These figures do not claim a broadphase that stays cheap for a tile layer.
 
+### Fixed collision phase
+
+Recorded 2026-10-27 at 10:59 AM America/Chicago. M7-1A-R. The timed body is one call of the sealed collision system: `sync_collision`, then wire submission only when `CollisionDebug` is enabled. `DebugDraw` is cleared before the timer, matching the once-per-step clear ahead of a single iteration. Overlap and ray queries are not included. The index is still the linear scan above.
+
+| | |
+|---|---|
+| Machine | Apple M5, Mac17,2, arm64 |
+| OS | macOS 27.0 |
+| Rust | rustc 1.99.0 (`b940084d7` 2026-09-28) |
+| Profile | `cargo run --release -p engine --example collision_phase_bench` |
+| Binary | `crates/engine/examples/collision_phase_bench.rs` |
+
+Each row is the median of 31 samples after 10 warmup calls. Colliders are spheres of radius 0.5 on a line, 3 units apart. Debug on builds three 16-segment circles per sphere (480 wires for 10, 4800 for 100). Debug off submits none.
+
+Two consecutive invocations:
+
+| Call | First median | Second median |
+|---|---|---|
+| Phase, 10 indexed, debug off | 1.2 µs | 1.2 µs |
+| Phase, 10 indexed, debug on | 10.5 µs | 9.1 µs |
+| Phase, 100 indexed, debug off | 8.0 µs | 7.0 µs |
+| Phase, 100 indexed, debug on | 97.0 µs | 80.8 µs |
+
+Debug off matches the rebuild row above. Debug on is the cost of building and storing the wires, not a second index. A pairwise pass is still not timed.
+

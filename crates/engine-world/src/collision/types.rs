@@ -119,6 +119,24 @@ pub struct RayHit {
     pub normal: Vec3,
 }
 
+/// Whether the fixed collision system copies indexed shapes into `DebugDraw`.
+///
+/// Off unless a caller turns it on. [`crate::sync_collision`] does not read this and does not draw.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CollisionDebug {
+    pub enabled: bool,
+}
+
+impl CollisionDebug {
+    pub fn off() -> Self {
+        Self { enabled: false }
+    }
+
+    pub fn on() -> Self {
+        Self { enabled: true }
+    }
+}
+
 /// Why a collider was left out of the index. Disabled colliders are omitted and are not a skip.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SkipReason {

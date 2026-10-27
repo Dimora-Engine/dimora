@@ -81,10 +81,10 @@ pub mod prelude {
         DEBUG_SPHERE_SEGMENTS, MAX_COPLANAR_PRIORITY,
     };
     pub use engine_world::{
-        pair_interacts, Children, Collider, ColliderShape, CollisionQuery, CollisionWorld, CommandError,
-        CommandFailure, CommandWriter, ComponentDesc, ComponentInfo, ComponentRegistry, DumpError, Entity, FieldDesc,
-        GlobalTransform, Interpolate, Name, Parent, Persistence, RayHit, RegistryError, SceneBuilder, SceneError,
-        SceneInstanceId, SceneMember, SceneOpId, SceneOpStatus, Schedule, ScheduleError, SkipReason, Tags, Visibility,
-        World,
+        pair_interacts, Children, Collider, ColliderShape, CollisionDebug, CollisionQuery, CollisionWorld,
+        CommandError, CommandFailure, CommandWriter, ComponentDesc, ComponentInfo, ComponentRegistry, DumpError,
+        Entity, FieldDesc, GlobalTransform, Interpolate, Name, Parent, Persistence, RayHit, RegistryError,
+        SceneBuilder, SceneError, SceneInstanceId, SceneMember, SceneOpId, SceneOpStatus, Schedule, ScheduleError,
+        SkipReason, Tags, Visibility, World,
     };
 }

@@ -9,4 +9,4 @@ mod query;
 mod types;
 
 pub use index::{sync_collision, CollisionWorld};
-pub use types::{pair_interacts, Collider, ColliderShape, CollisionQuery, RayHit, SkipReason};
+pub use types::{pair_interacts, Collider, ColliderShape, CollisionDebug, CollisionQuery, RayHit, SkipReason};

@@ -189,6 +189,18 @@ A locked axis is cleared on the intent, on the post-projection remainder, and on
 
 Two movers do not solve together. The lower `Entity` is already patched.
 
+## Proposed correction, not settled (2026-10-27)
+
+The numbered sweep steps above stay the settled decision. This section does not replace them.
+
+Step 6 says that a non-negative `dist` at time zero, when `dot(remainder, wall) > 0`, ignores that hit and applies `remainder`. Applying the entire remainder then skips every later candidate.
+
+Wall A is already within skin. The remainder points away from A, so A does not block. Wall B stands in that remainder and would be hit at a positive time of impact. The settled sentence moves through B without casting it.
+
+Proposed replacement, pending owner review: drop that nonblocking zero-time skin hit and keep scanning the other candidates. Apply `remainder` only when no remaining candidate blocks. A blocking hit, including one at a later time, still splits `traveled` and `unconsumed` as in step 4. This checkpoint does not implement the slide.
+
+Planned acceptance case, not yet a test and not a row in the settled matrix: the mover starts in skin contact with wall A, the requested move leaves A and meets wall B, and the final position is B's near face plus skin. The full remainder past B fails the case.
+
 ## Broadphase
 
 One sorted `Vec`, rebuilt once per iteration, plus the one-entry patch after a successful move. Linear AABB tests. A full pair pass and each sweep are quadratic in the collider count. That is accepted for a few dozen colliders. It is not a tilemap budget, and this record does not promise M13's frame cost. M13 replaces the private candidate function. `Bvh` is not built in the first checkpoint.
@@ -202,6 +214,8 @@ Rigid bodies, joints, forces, gravity, autostep, slope limits, jumps, angular sw
 M7 implements this contract and adds the dependency then, with the M24 notice. The first checkpoint is the matrix below. `spatial_scene`'s blocked walker stays a later M7 check, after the headless matrix passes.
 
 Reopen only under the rule in `DECISIONS.md`. A dynamics solver, or a switch to Rapier's character controller, is a new ADR.
+
+Follow-up, 2026-10-27 (M7-1A-R). `CollisionDebug` defaults to off, so step 7 submits wires only when that resource is enabled. Several enabled iterations still append, because `Game::step` clears `DebugDraw` once. The settled wording of step 7 is unchanged; amending it to say "when enabled" is open for the owner. The proposed correction to step 6 is recorded above and is not part of this decision until the owner accepts it. Deferred commands queued by a fixed system flush after the rebuild in that iteration. A step with zero fixed iterations does not rebuild and does not flush from the fixed loop. `time` and `loads` still flush before the loop. The snapshot rules are in `docs/ARCHITECTURE.md`.
 
 ## Evidence and revisit conditions
 

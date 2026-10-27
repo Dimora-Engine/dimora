@@ -10,7 +10,8 @@ use engine_renderer::{
 };
 use engine_renderer_wgpu::{CacheStats, FrameStats, GpuContext, RenderError, SceneRenderer};
 use engine_world::{
-    propagate_transforms, snapshot_interpolation, sync_collision, CollisionWorld, Schedule, ScheduleError, World,
+    propagate_transforms, snapshot_interpolation, sync_collision, CollisionDebug, CollisionWorld, Schedule,
+    ScheduleError, World,
 };
 
 use crate::diagnostics::{Diagnostics, StageDurations};
@@ -255,6 +256,7 @@ impl Game {
         world.insert_resource(StepClock::default());
         world.insert_resource(DebugDraw::default());
         world.insert_resource(CollisionWorld::default());
+        world.insert_resource(CollisionDebug::default());
 
         let mut time = Schedule::new();
         time.add_system(Stage::ADVANCE_TIME, advance_time).expect("advance_time");
@@ -377,9 +379,19 @@ impl Game {
     /// systems and command flush. Later iterations do not see them. A step with no fixed iteration
     /// leaves them published. An edge stored after conceal waits for the next call.
     /// `sync_collision` is the last system of each fixed iteration, so a step with no fixed
-    /// iteration does not rebuild [`CollisionWorld`]. A `Transform` written after that system,
-    /// including one written in `update`, is absent from the snapshot until the next iteration.
-    /// Extract and render are not part of this call.
+    /// iteration does not rebuild [`CollisionWorld`] and does not flush the fixed-update command
+    /// queue from that loop. `time` and `loads` still flush before the loop, and `update` still
+    /// flushes after it. A deferred command queued by a fixed system is applied after
+    /// `sync_collision` in that iteration, so the rebuild does not see the spawn, despawn, or
+    /// component change. The entity is visible to `update`. The next iteration that runs
+    /// `sync_collision` includes it. A following step with zero fixed iterations leaves the
+    /// snapshot where the previous rebuild left it. A direct `World` write in a fixed system,
+    /// before `sync_collision`, is part of that iteration's snapshot. A `Transform` written after
+    /// the system, including one written in `update`, is absent until the next iteration.
+    /// `post_update` still propagates transforms and does not rebuild the index. Extract and
+    /// render are not part of this call. Collision wires are copied into [`DebugDraw`] only when
+    /// [`CollisionDebug`] is enabled. It defaults to off, and several enabled iterations append
+    /// because this call clears [`DebugDraw`] once.
     ///
     /// Deferred commands flush after every stage run, and after each fixed iteration. Events sent
     /// in a stage become visible to later stages once that stage's run has finished. `fixed_update`
@@ -627,6 +639,10 @@ fn sealed_violation(name: &'static str, anchor: Option<Anchor>, order: ExplicitO
 
 fn sync_collision_system(world: &mut World) {
     sync_collision(world);
+    let draw = world.try_resource::<CollisionDebug>().is_some_and(|debug| debug.enabled);
+    if !draw {
+        return;
+    }
     let segments = world.resource::<CollisionWorld>().wire_segments();
     let mut draw = world.resource_mut::<DebugDraw>();
     let color = Color::rgb(0.15, 0.85, 0.4);

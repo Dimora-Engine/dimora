@@ -222,10 +222,18 @@ time (advance Time, accumulate the fixed step)
 `sync_collision` is the last system of each fixed iteration
 ([ADR-0025](adr/0025-kinematic-collision.md)). It is the only fixed-step caller of
 `propagate_transforms`, once per iteration, and then rebuilds `CollisionWorld`. A step with no fixed
-iteration does not call it. Queries read that snapshot. A `Transform`, `Parent`, or `Collider` write
-after the system, including one in `update`, is absent until the next iteration. `post_update` still
-propagates after animation. Interpolation is unchanged. Movement and trigger events are not
-implemented.
+iteration does not call it and does not flush the fixed-update command queue from that loop. `time`
+and `loads` still flush before the loop, so a command queued before `step` is already applied when
+the first iteration rebuilds. A command queued by a fixed system flushes after `sync_collision` in
+that iteration: the entity is visible to `update`, and the snapshot omits it until the next
+iteration that rebuilds. A following step with zero fixed iterations leaves that snapshot in place.
+A direct `World` write in a fixed system, before `sync_collision`, is part of that iteration's
+snapshot. A `Transform`, `Parent`, or `Collider` write after the system, including one in `update`,
+is absent until the next iteration. `post_update` still propagates after animation and does not
+rebuild the index. Interpolation snapshots locals at the start of each iteration and does not read
+`CollisionWorld`; a zero-iteration step does not take that snapshot. Collision wires are copied into
+`DebugDraw` only when `CollisionDebug` is enabled. It defaults to off. Movement and trigger events
+are not implemented.
 
 `elapsed` and `frame` advance once per `step`, not once per fixed iteration. Extract and render are
 not stages: `Game::extract()` then `WindowRenderer::render` (or `render_to_rgba` offscreen).

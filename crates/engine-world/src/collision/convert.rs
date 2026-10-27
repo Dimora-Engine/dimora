@@ -12,8 +12,11 @@ use super::types::{point_finite, shape_ok, ColliderShape, SkipReason};
 
 /// Normalized column dots above this are shear.
 const SHEAR_DOT: f32 = 1e-3;
-/// Sphere and capsule axes must agree within this.
-const UNIFORM_EPS: f32 = 1e-4;
+/// Column lengths agree when `(max - min) <= UNIFORM_REL * max`.
+///
+/// An absolute `1e-4` would call scales `1e-5` and `2e-5` uniform, and would reject a `0.25`
+/// difference on a `10_000` axis. The comparison is relative to the longest axis.
+const UNIFORM_REL: f32 = 1e-4;
 /// A shorter column is degenerate.
 const MIN_EXTENT: f32 = 1e-6;
 
@@ -80,7 +83,7 @@ pub(crate) fn prepare(shape: ColliderShape, offset: Vec3, matrix: &Mat4) -> Resu
         return Err(SkipReason::Shear);
     }
 
-    let uniform = (lengths[0] - lengths[1]).abs() <= UNIFORM_EPS && (lengths[1] - lengths[2]).abs() <= UNIFORM_EPS;
+    let uniform = columns_uniform(lengths);
     let scaled = match shape {
         ColliderShape::Sphere { radius } => {
             if !uniform {
@@ -115,6 +118,12 @@ pub(crate) fn prepare(shape: ColliderShape, offset: Vec3, matrix: &Mat4) -> Resu
     let parry = stored(scaled);
     let aabb = parry.as_shape().compute_aabb(&pose);
     Ok(Prepared { center, rotation, shape: scaled, pose, parry, aabb })
+}
+
+fn columns_uniform(lengths: [f32; 3]) -> bool {
+    let max = lengths[0].max(lengths[1]).max(lengths[2]);
+    let min = lengths[0].min(lengths[1]).min(lengths[2]);
+    max.is_finite() && min.is_finite() && (max - min) <= UNIFORM_REL * max
 }
 
 fn stored(shape: ColliderShape) -> StoredShape {
