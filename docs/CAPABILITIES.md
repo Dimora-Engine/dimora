@@ -573,7 +573,9 @@ Missing from the original category list and now tracked: **save games** (34), **
 * **Not initially.** Rigid bodies, joints, continuous collision for dynamic bodies, convex colliders, navmesh.
 
 ### 24. Physics and movement
-* **Now.** Absent. **Planned.** Kinematic move-and-slide with swept tests in M7-1B. D-09 is settled
+* **Now.** Absent. **Planned.** Kinematic move-and-slide with swept tests in M7-1B. The accepted
+  contract drops a nonblocking zero-time skin contact and keeps scanning that remainder, so a mover
+  leaving wall A still stops at wall B. D-09 is settled
   ([ADR-0025](adr/0025-kinematic-collision.md)): private `parry3d` 0.31.1 queries are in `engine-world`.
   The ECS still owns `Transform`. M7-1A does not write it from a move.
 * **Not initially.** Rigid-body dynamics, joints, ragdolls, vehicles. The broadphase may be quadratic

@@ -375,9 +375,10 @@ Decided in [ADR-0015](adr/0015-material-alpha-classes.md). Opaque, Mask, and Ble
   dynamics pipeline, rigid body, joint, or gravity solver. Same-process determinism only.
 * **Implemented in part.** M7-1A adds the crate to `engine-world` and the geometric query index.
   The kinematic slide, trigger events, and movement writeback from ADR-0025 are not implemented.
-  M7-1A-R keeps debug wires opt-in and stores `mask` on each index entry. A proposed correction to
-  sweep step 6 (a nonblocking zero-time skin hit must not apply the whole remainder while another
-  candidate remains) is recorded in the ADR and is not settled. M7 is not complete.
+  M7-1A-R stores `mask` on each index entry. Owner approved on 2026-10-27: a nonblocking zero-time
+  skin hit is dropped for that sweep and the other candidates are still tested, and `CollisionDebug`
+  is opt-in and off by default. Those amendments are in ADR-0025. The slide is not implemented.
+  M7 is not complete.
 * **Needed by.** M7. **Blocks.** M7 and M9 until that implementation lands. The decision itself no
   longer blocks starting M7.
 

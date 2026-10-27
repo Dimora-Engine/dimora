@@ -703,7 +703,7 @@ MSAA is `crates/engine-renderer/tests/msaa.rs`, `crates/engine-renderer-wgpu/tes
   [ADR-0025](docs/adr/0025-kinematic-collision.md)), raycast and overlap queries.
 - Kinematic move-and-slide controller with swept tests.
 - Trigger enter/exit events through an event channel.
-- Debug visualisation through M6 debug draw.
+- Debug visualisation through M6 debug draw, opt-in and off unless `CollisionDebug` is enabled.
 - Colliders attach to the gameplay entity, not to a visual child, so a change of character representation
   (M9) cannot change collision.
 
@@ -722,10 +722,10 @@ MSAA is `crates/engine-renderer/tests/msaa.rs`, `crates/engine-renderer-wgpu/tes
   overlap, world-space ray normals, filters, camera independence, and stable ordering. Diagonal slides,
   locked axes, trigger events, and the 1,000-step movement hash are still the M7-1B part of the
   ADR-0025 matrix and are not written.
-- Proposed, not settled and not implemented: a move that starts in skin contact with wall A, leaves
-  A, and meets wall B stops at B's near face plus skin. Ignoring the nonblocking zero-time hit on A
-  must not apply the entire remainder. See the proposed correction in
-  [ADR-0025](docs/adr/0025-kinematic-collision.md).
+- Accepted for M7-1B and not implemented: a mover in skin contact with wall A, traveling away from A
+  toward wall B, stops at B's near face plus skin and does not tunnel. The nonblocking skin hit is
+  dropped for that sweep, and the other candidates are still tested. Owner approved 2026-10-27
+  ([ADR-0025](docs/adr/0025-kinematic-collision.md)).
 
 **Tests/examples.** Collision unit/property tests; controller test; example.
 

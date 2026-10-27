@@ -8,6 +8,8 @@
 
 M7 code does not exist yet. This record is the contract for that implementation. It does not add the crate.
 
+*Amendment, 2026-10-27.* M7-1A later added the private `parry3d` dependency and the query index. The sentence above is this record at settlement. The slide, triggers, and `CharacterMotor` are still not implemented.
+
 ## Context and problem
 
 M7 needs overlap, ray casts, triggers, and a kinematic slide in the same 3D world as rendering. It does not need a rigid-body solver. `VISION.md` keeps that solver, ragdolls, cloth, and vehicles as non-goals.
@@ -140,7 +142,7 @@ Each of the `0..=8` iterations:
 4. It takes motors in ascending `Entity` order. For each one it locks the intent, sweeps, writes `Transform.position` or rejects the move, patches that one entry, and removes `MoveIntent`.
 5. A later mover sees those patches. A rejected ancestor does not change descendant entries.
 6. It diffs sensor pairs along the path actually applied, and sends events.
-7. It submits `DebugDraw` from the final poses. `Game::step` clears debug lines once per step, so several iterations append wires. The checkpoint uses one iteration.
+7. When `CollisionDebug` is enabled, it submits `DebugDraw` from the final poses. The resource defaults to off. Indexing and queries run either way, and debug geometry is generated only when the flag is on. `Game::step` clears debug lines once per step, so several enabled iterations append wires. The first checkpoint uses one iteration.
 
 Then the existing promote runs. `update`, `animate`, and `post_update` can read the events. `clear_events` drops them at the end of the step. A fixed system cannot see them.
 
@@ -178,7 +180,7 @@ For each slide while `remainder` is longer than `1e-6` and the count is below `m
 3. No hit: apply `remainder`, then stop.
 4. Otherwise `traveled = remainder * toi` and `unconsumed = remainder * (1 - toi)`. Apply `traveled` only. The full request is never reused.
 5. `PenetratingOrWithinTargetDist` is not penetration. Call `contact`. A negative `dist` is penetration. Push once by the unlocked part of `-normal1 * (-dist + skin)`. If the unlocked part is shorter than `1e-4` while the locked part was required, apply nothing and log. Do not push a second time.
-6. A non-negative `dist` at time zero is skin contact, not a push. If `remainder` points out of the wall (`dot(remainder, wall) > 0`), ignore the hit and apply `remainder`. If it points into the wall, `traveled` is zero and `unconsumed` is `remainder`.
+6. A non-negative `dist` at time zero is skin contact, not a push. If `remainder` points into the wall (`dot(remainder, wall) <= 0`), `traveled` is zero and `unconsumed` is `remainder`. If `remainder` points out of the wall (`dot(remainder, wall) > 0`), that contact does not block this sweep: drop it and keep casting the other solid candidates over the same `remainder`. Step 2 still selects the earliest remaining hit and breaks ties by the lowest `Entity`. Apply the whole `remainder` only when no blocking candidate remains. The dropped surface stays in the world. The next slide segment evaluates it again under the new `remainder`. Penetration recovery, `max_slides`, locked world axes, and `wall = normalize(-(rotation * normal1))` are unchanged.
 7. Project only `unconsumed` onto the plane: if `dot(unconsumed, wall) < 0`, subtract that component. Then clear locked axes again. That vector is the next `remainder`.
 
 After `max_slides`, drop whatever remains. `Err(Unsupported)` or a non-finite position drops the rest and keeps the last finite origin. The applied world delta is written through the parent inverse. Then that entry is patched.
@@ -189,17 +191,7 @@ A locked axis is cleared on the intent, on the post-projection remainder, and on
 
 Two movers do not solve together. The lower `Entity` is already patched.
 
-## Proposed correction, not settled (2026-10-27)
-
-The numbered sweep steps above stay the settled decision. This section does not replace them.
-
-Step 6 says that a non-negative `dist` at time zero, when `dot(remainder, wall) > 0`, ignores that hit and applies `remainder`. Applying the entire remainder then skips every later candidate.
-
-Wall A is already within skin. The remainder points away from A, so A does not block. Wall B stands in that remainder and would be hit at a positive time of impact. The settled sentence moves through B without casting it.
-
-Proposed replacement, pending owner review: drop that nonblocking zero-time skin hit and keep scanning the other candidates. Apply `remainder` only when no remaining candidate blocks. A blocking hit, including one at a later time, still splits `traveled` and `unconsumed` as in step 4. This checkpoint does not implement the slide.
-
-Planned acceptance case, not yet a test and not a row in the settled matrix: the mover starts in skin contact with wall A, the requested move leaves A and meets wall B, and the final position is B's near face plus skin. The full remainder past B fails the case.
+Wall A is already within skin and the remainder points away from it, so A does not block. Wall B stands in that same remainder. The sweep drops A for this segment, keeps casting, and stops at B's near face plus skin. The full remainder past B fails. A is eligible again on the next segment. This case is in the matrix below. M7-1A-R does not implement the slide.
 
 ## Broadphase
 
@@ -215,7 +207,17 @@ M7 implements this contract and adds the dependency then, with the M24 notice. T
 
 Reopen only under the rule in `DECISIONS.md`. A dynamics solver, or a switch to Rapier's character controller, is a new ADR.
 
-Follow-up, 2026-10-27 (M7-1A-R). `CollisionDebug` defaults to off, so step 7 submits wires only when that resource is enabled. Several enabled iterations still append, because `Game::step` clears `DebugDraw` once. The settled wording of step 7 is unchanged; amending it to say "when enabled" is open for the owner. The proposed correction to step 6 is recorded above and is not part of this decision until the owner accepts it. Deferred commands queued by a fixed system flush after the rebuild in that iteration. A step with zero fixed iterations does not rebuild and does not flush from the fixed loop. `time` and `loads` still flush before the loop. The snapshot rules are in `docs/ARCHITECTURE.md`.
+## Amendments
+
+### 2026-10-27, owner approved (M7-1A-R)
+
+Two corrections. The numbered sections above are the contract after these amendments. The slide is still not implemented.
+
+Sweep step 6 previously said that a non-negative `dist` at time zero, when `dot(remainder, wall) > 0`, ignores that hit and applies `remainder`. That applied the whole remainder and skipped later candidates. Wall A can be a nonblocking skin contact while wall B still blocks the same remainder. The replacement is the step 6 now in Sweep: exclude that contact for this sweep, keep scanning, take the earliest remaining blocking contact with the same tie break, and apply `remainder` only when nothing else blocks. The surface is eligible again on the next slide segment.
+
+Lifecycle step 7 previously said the system submits `DebugDraw` from the final poses. Submission is opt-in through `CollisionDebug`, default off. Indexing and queries do not read that flag. Wires are generated only when it is enabled, and several enabled iterations append because `Game::step` clears `DebugDraw` once.
+
+Deferred commands queued by a fixed system flush after the rebuild in that iteration. A step with zero fixed iterations does not rebuild and does not flush from the fixed loop. `time` and `loads` still flush before the loop. Those snapshot rules are in `docs/ARCHITECTURE.md`. They are not a change to the sweep.
 
 ## Evidence and revisit conditions
 
@@ -237,6 +239,7 @@ Headless, one fixed step of `1/60` s, no window. Positions include both signs. T
 | Displacement longer than a thin wall | Stops at the near face plus skin |
 | Diagonal `(4, 0, 4)` into an X wall | Path length ≤ request; no extra Z |
 | Two walls | Crease or stop, within `1e-4` |
+| Skin contact with wall A, remainder toward wall B | Stops at B's near face plus skin; does not tunnel. A is eligible on the next segment |
 | Spawned overlapping a solid | At most one recovery push |
 | `locked_axes.y` | World Y unchanged within `1e-4` |
 | Sensor still overlapped | One enter, no duplicate on an idle step |
@@ -248,4 +251,7 @@ Headless, one fixed step of `1/60` s, no window. Positions include both signs. T
 | Two movers | Lower `Entity` is patched first |
 | Two cameras, unread | Same hash |
 | 1,000 steps | Same hash |
-| `DebugDraw` | Finite segments for each indexed collider |
+| `CollisionDebug` off | No collision wires. Indexing and queries still run |
+| `CollisionDebug` on | Finite segments for each indexed collider. Several fixed iterations append |
+
+M7-1A writes the geometry, filter, ordering, camera, and debug rows. Movement and trigger rows, from the thin-wall displacement through the 1,000-step hash, including skin contact with wall A while traveling toward wall B, are the M7-1B contract and are not implemented.

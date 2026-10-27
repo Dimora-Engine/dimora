@@ -966,5 +966,7 @@ Two consecutive invocations:
 | Phase, 100 indexed, debug off | 8.0 µs | 7.0 µs |
 | Phase, 100 indexed, debug on | 97.0 µs | 80.8 µs |
 
-Debug off matches the rebuild row above. Debug on is the cost of building and storing the wires, not a second index. A pairwise pass is still not timed.
+Debug off matches the rebuild row above. Debug on is the cost of building and storing the wires, not a second index. A pairwise pass is still not timed. None of these medians is a frame-time guarantee.
+
+Harness check, 2026-10-27 at 11:39 AM America/Chicago, same machine and `rustc 1.99.0`, one release invocation of each example. The tables above stay the recorded baselines. `collision_index_bench` printed 1.8 µs, 11.2 µs, 3.0 µs, overlap 0.3 µs, and ray 2.6 µs. `collision_phase_bench` printed debug off 1.4 µs and 8.6 µs (0 wires) and debug on 11.4 µs (480 wires) and 97.7 µs (4800 wires). The spread against the two-run tables is cache noise at this size.
 

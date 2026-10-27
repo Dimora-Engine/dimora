@@ -232,8 +232,9 @@ snapshot. A `Transform`, `Parent`, or `Collider` write after the system, includi
 is absent until the next iteration. `post_update` still propagates after animation and does not
 rebuild the index. Interpolation snapshots locals at the start of each iteration and does not read
 `CollisionWorld`; a zero-iteration step does not take that snapshot. Collision wires are copied into
-`DebugDraw` only when `CollisionDebug` is enabled. It defaults to off. Movement and trigger events
-are not implemented.
+`DebugDraw` only when `CollisionDebug` is enabled. It defaults to off. Indexing and queries do not
+read that flag. The accepted slide drops a nonblocking zero-time skin contact and keeps scanning
+the same remainder; that slide is not implemented. Movement and trigger events are not implemented.
 
 `elapsed` and `frame` advance once per `step`, not once per fixed iteration. Extract and render are
 not stages: `Game::extract()` then `WindowRenderer::render` (or `render_to_rgba` offscreen).
@@ -601,8 +602,9 @@ criteria. Open decisions stay in [DECISIONS.md](DECISIONS.md).
 * **Kinematic movement** on the collision world (rest of M7). M7-1A rebuilds `CollisionWorld` in the
   fixed stage and answers overlap and ray queries. The contract is
   [ADR-0025](adr/0025-kinematic-collision.md): private `parry3d` 0.31.1 queries, ECS-owned
-  transforms, a linear AABB list, and no rigid-body pipeline. The slide, triggers, and movement
-  writeback are not written.
+  transforms, a linear AABB list, and no rigid-body pipeline. The accepted slide drops a
+  nonblocking zero-time skin contact and keeps scanning that remainder. The slide, triggers, and
+  movement writeback are not written.
 * **Sprite-sheet animation** (M8), **a character gameplay layer with an API surface list** (M9), **a UI
   runtime** (M10), **pose-first skeletal animation** (M11) and **3D skinned characters** (M12), within the
   boundaries below.
