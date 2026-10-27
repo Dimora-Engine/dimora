@@ -699,15 +699,15 @@ MSAA is `crates/engine-renderer/tests/msaa.rs`, `crates/engine-renderer-wgpu/tes
 **Tasks.**
 - Collider components (sphere, box, capsule; layers/masks) in **3D world space**, so an object at a
   different Z does not collide.
-- A `CollisionWorld` resource rebuilt in the fixed stage (uniform grid or sweep-and-prune
-  broadphase), raycast and overlap queries.
+- A `CollisionWorld` resource rebuilt in the fixed stage (a sorted list and linear AABB tests,
+  [ADR-0025](docs/adr/0025-kinematic-collision.md)), raycast and overlap queries.
 - Kinematic move-and-slide controller with swept tests.
 - Trigger enter/exit events through an event channel.
 - Debug visualisation through M6 debug draw.
 - Colliders attach to the gameplay entity, not to a visual child, so a change of character representation
   (M9) cannot change collision.
 
-**Dependencies.** D-09, D-10.
+**Dependencies.** D-09 is settled ([ADR-0025](docs/adr/0025-kinematic-collision.md)). D-10 is settled. M7 has not started.
 
 **Acceptance criteria.**
 - Shape-pair overlap tests over a table of cases; raycast tests per shape.
@@ -718,6 +718,8 @@ MSAA is `crates/engine-renderer/tests/msaa.rs`, `crates/engine-renderer-wgpu/tes
   configurations, and a constrained 2D-style movement plane (D-48) is expressed as a movement option, not a
   separate controller.
 - `spatial_scene`: the walkable figure is blocked by the pillar.
+- The first checkpoint's cases, including mirrored offsets, diagonal slides, locked axes, and the
+  linear broadphase limit, are the matrix in ADR-0025. Those tests are not written.
 
 **Tests/examples.** Collision unit/property tests; controller test; example.
 

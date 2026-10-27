@@ -557,19 +557,22 @@ Missing from the original category list and now tracked: **save games** (34), **
 ## Gameplay
 
 ### 23. Collision and spatial queries
-* **Now.** Absent. **Planned.** M7: 3D colliders (sphere/box/capsule, layers), a `CollisionWorld`
-  resource rebuilt in the fixed stage, raycast and overlap, triggers via events. Bounds can use
-  `DebugDraw::wire_box` and raycasts can use `DebugDraw::ray`. That call is not written.
-  **Depends on.** M3, M4, M6, D-09, D-10. Debug drawing exists. M7 has not started.
+* **Now.** Absent. **Planned.** M7, under [ADR-0025](adr/0025-kinematic-collision.md): sphere, box, and
+  capsule colliders, a `CollisionWorld` rebuilt in the fixed stage from a linear AABB list, raycast
+  and overlap, triggers via the existing events. Bounds can use `DebugDraw::wire_box` and raycasts
+  can use `DebugDraw::ray`. That call is not written. **Depends on.** M3, M4, M6, D-10. D-09 is
+  settled. Debug drawing exists. M7 has not started.
 * **Integration.** World-space 3D, attached to the **gameplay** entity; tilemap collision layer (M13)
   and foot placement (M12) feed it; scripts and UI hit-testing may use queries.
-* **Performance.** Broadphase must scale with entity count; deterministic across runs.
+* **Performance.** The first broadphase is a sorted list and can be quadratic. Replacement stays behind the candidate function. Determinism is same-process, not cross-platform bitwise identity.
 * **Not initially.** Rigid bodies, joints, continuous collision for dynamic bodies, convex colliders, navmesh.
 
 ### 24. Physics and movement
-* **Now.** Absent. **Planned.** Kinematic move-and-slide with swept tests in M7. A physics library is an
-  open question (D-09); the leaning is a small custom layer.
-* **Not initially.** Rigid-body dynamics, joints, ragdolls, vehicles.
+* **Now.** Absent. **Planned.** Kinematic move-and-slide with swept tests in M7. D-09 is settled
+  ([ADR-0025](adr/0025-kinematic-collision.md)): private `parry3d` 0.31.1 queries, and the ECS writes
+  `Transform`. The crate is not a dependency until M7 implements it.
+* **Not initially.** Rigid-body dynamics, joints, ragdolls, vehicles. The broadphase may be quadratic
+  until a later milestone replaces the candidate function.
 
 ### 25. Audio
 * **Now.** Absent. **Planned.** M16 behind a backend interface with a null backend; spatial audio from the

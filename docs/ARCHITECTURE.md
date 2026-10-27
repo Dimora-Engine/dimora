@@ -219,6 +219,11 @@ time (advance Time, accumulate the fixed step)
   -> input_clear (Input::end_frame and Actions::end_frame; frame edges only)
 ```
 
+M7 collision is not implemented. When it is, its fixed-update system is the only fixed-step caller of
+`propagate_transforms`, once per iteration, before it rebuilds `CollisionWorld`
+([ADR-0025](adr/0025-kinematic-collision.md)). `post_update` still propagates after animation.
+Interpolation is unchanged.
+
 `elapsed` and `frame` advance once per `step`, not once per fixed iteration. Extract and render are
 not stages: `Game::extract()` then `WindowRenderer::render` (or `render_to_rgba` offscreen).
 
@@ -582,7 +587,9 @@ criteria. Open decisions stay in [DECISIONS.md](DECISIONS.md).
   sprites into one instanced draw. M5-6 (`92286ce`) adds plane, cube, cuboid, sphere,
   and cylinder meshes as ordinary `MeshData` (ADR-0018). M5 is accepted locally. Localized mip-texel regeneration is not implemented.
 * **A list of camera passes** instead of one `RenderScene` camera, plus render-to-texture (M6).
-* **A collision world** as a resource rebuilt in the fixed stage, with spatial 3D queries (M7).
+* **A collision world** as a resource rebuilt in the fixed stage, with spatial 3D queries (M7). The
+  contract is [ADR-0025](adr/0025-kinematic-collision.md): private `parry3d` 0.31.1 queries, ECS-owned
+  transforms, a linear AABB list, and no rigid-body pipeline. The code is not written.
 * **Sprite-sheet animation** (M8), **a character gameplay layer with an API surface list** (M9), **a UI
   runtime** (M10), **pose-first skeletal animation** (M11) and **3D skinned characters** (M12), within the
   boundaries below.
