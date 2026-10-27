@@ -8,7 +8,8 @@ use crate::Transform;
 use crate::World;
 
 use super::convert::{prepare, Prepared};
-use super::types::{point_finite, Collider, ColliderShape, CollisionQuery, SkipReason};
+use super::query::wire_segments;
+use super::types::{point_finite, Collider, ColliderShape, CollisionQuery, RayHit, SkipReason};
 
 pub(super) struct Entry {
     pub entity: Entity,
@@ -66,6 +67,19 @@ impl CollisionWorld {
     /// Colliders left out of the index, in `Entity` order. Unchanged skips are not logged again.
     pub fn skipped(&self) -> &[(Entity, SkipReason)] {
         &self.skipped
+    }
+
+    pub fn overlap(&self, shape: ColliderShape, pose: &Transform, query: CollisionQuery) -> Vec<Entity> {
+        super::query::overlap(self, shape, pose, query)
+    }
+
+    pub fn ray(&self, origin: Vec3, direction: Vec3, max_distance: f32, query: CollisionQuery) -> Option<RayHit> {
+        super::query::ray(self, origin, direction, max_distance, query)
+    }
+
+    /// World-space segments for the indexed shapes. Every endpoint is finite.
+    pub fn wire_segments(&self) -> Vec<(Vec3, Vec3)> {
+        wire_segments(self)
     }
 }
 
@@ -129,12 +143,10 @@ fn fresh_skips<'a>(
     next.iter().filter(|pair| !previous.contains(pair)).collect()
 }
 
-#[allow(dead_code)]
 pub(super) fn entries(world: &CollisionWorld) -> &[Entry] {
     &world.entries
 }
 
-#[allow(dead_code)]
 pub(super) fn query_allows(entry: &Entry, query: CollisionQuery) -> bool {
     if query.exclude == Some(entry.entity) {
         return false;

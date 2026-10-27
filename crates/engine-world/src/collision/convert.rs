@@ -21,12 +21,8 @@ pub(crate) struct Prepared {
     pub center: Vec3,
     pub rotation: Quat,
     pub shape: ColliderShape,
-    // Read by overlap and ray queries.
-    #[allow(dead_code)]
     pub pose: Pose,
-    #[allow(dead_code)]
     pub parry: StoredShape,
-    #[allow(dead_code)]
     pub aabb: Aabb,
 }
 
@@ -37,7 +33,6 @@ pub(crate) enum StoredShape {
 }
 
 impl StoredShape {
-    #[allow(dead_code)]
     pub fn as_shape(&self) -> &dyn Shape {
         match self {
             StoredShape::Ball(shape) => shape,

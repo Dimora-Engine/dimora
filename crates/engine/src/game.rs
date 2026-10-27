@@ -2,7 +2,7 @@ use std::time::{Duration, Instant};
 
 use engine_animation::animate_system;
 use engine_assets::AssetManager;
-use engine_core::{Actions, FixedTimestep, Input, InputEvent, Time};
+use engine_core::{Actions, Color, FixedTimestep, Input, InputEvent, Time};
 use engine_platform::WindowConfig;
 use engine_renderer::{
     extract_scene, AmbientLight, DebugDraw, ExtractStats, MissingAssetWarnings, MsaaError, MsaaSamples, RenderScene,
@@ -627,6 +627,12 @@ fn sealed_violation(name: &'static str, anchor: Option<Anchor>, order: ExplicitO
 
 fn sync_collision_system(world: &mut World) {
     sync_collision(world);
+    let segments = world.resource::<CollisionWorld>().wire_segments();
+    let mut draw = world.resource_mut::<DebugDraw>();
+    let color = Color::rgb(0.15, 0.85, 0.4);
+    for (start, end) in segments {
+        draw.line(start, end, color);
+    }
 }
 
 fn advance_time(world: &mut World) {

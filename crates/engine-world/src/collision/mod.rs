@@ -5,6 +5,7 @@
 
 mod convert;
 mod index;
+mod query;
 mod types;
 
 pub use index::{sync_collision, CollisionWorld};
