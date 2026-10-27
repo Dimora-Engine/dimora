@@ -50,7 +50,7 @@ About 8,000 lines of Rust in nine library crates and two examples.
 |---|---|---|---|
 | `engine-math` | `Vec2/3/4`, `Quat`, `Mat3/4`, `Transform`, `Rect`. `f32`, column-major, left-handed | none | none |
 | `engine-core` | `Color`, `Time`, `FixedTimestep`, `Key`/`Input`, `Actions` | math | none |
-| `engine-world` | `World` (wraps `hecs` + typed resources), sequential `Schedule`, `Parent`/`Children`, `GlobalTransform`, `propagate_transforms`, `Interpolate`, `Name`, `Visibility` | math | `hecs` |
+| `engine-world` | `World` (wraps `hecs` + typed resources), sequential `Schedule`, `Parent`/`Children`, `GlobalTransform`, `propagate_transforms`, `Interpolate`, `Name`, `Visibility`, `Collider`, `CollisionWorld` | math | `hecs`, private `parry3d` 0.31.1 (`dim3`, `f32`, `std`) |
 | `engine-assets` | `AssetId`, `AssetKind`, `AssetHandle<T>`, `AssetManager`, `AssetSource` (filesystem, memory), `Texture`, `SpriteAsset`, `MeshData` | math | `image` (PNG), `bytemuck` |
 | `engine-renderer` | Backend-agnostic render model: `Camera`, projections, frustum, render components (`Sprite`, `Mesh`, `Material`, `TileMap`, `Light`, ...), single-frame `DebugDraw` segments, `extract_scene` -> `RenderScene` | math, core, world, assets | none |
 | `engine-renderer-wgpu` | The wgpu backend: pipelines, GPU caches, instance buffers, window/offscreen presentation, WGSL shaders. Consumes `RenderScene` only | math, assets, renderer | `wgpu`, `pollster`, `bytemuck` |
@@ -177,8 +177,8 @@ is exact only for uniform scale.
 Each stage is a `Schedule`. Inside a stage, `before` / `after` order named systems; systems with no
 constraint keep registration order, and a ready-set tie goes to the earlier registration. A cycle,
 a duplicate name, a missing target or a self-dependency is rejected and the schedule is left unchanged
-(ADR-0007). `advance_time` and `process_loads` stay first in their stages. `propagate_transforms` and
-`end_input_frame` stay last. A constraint on the closed side is rejected. `animate` may have systems
+(ADR-0007). `advance_time` and `process_loads` stay first in their stages. `sync_collision`,
+`propagate_transforms`, and `end_input_frame` stay last. A constraint on the closed side is rejected. `animate` may have systems
 on either side when the constraint is explicit. `Game::step` restores the frame delta after the fixed
 loop; that restore is not a system.
 
@@ -210,19 +210,22 @@ logs once and the runner exits. Discarded events are counted and not logged.
 ```text
 time (advance Time, accumulate the fixed step)
   -> loads (AssetManager::process_loads)
-  -> fixed_update (0 to 8 times; each iteration copies marked locals, then runs systems;
-     Time::delta is the fixed step, then restored; the first iteration then conceals
-     the fixed-step input latch)
+  -> fixed_update (0 to 8 times; each iteration copies marked locals, then runs systems,
+     then sync_collision; Time::delta is the fixed step, then restored; the first iteration
+     then conceals the fixed-step input latch)
   -> update (user systems; both examples stay here; they see the frame delta)
   -> animate (animate_system, frame delta)
   -> post_update (propagate_transforms; full pass, no dirty tracking)
   -> input_clear (Input::end_frame and Actions::end_frame; frame edges only)
 ```
 
-M7 collision is not implemented. When it is, its fixed-update system is the only fixed-step caller of
-`propagate_transforms`, once per iteration, before it rebuilds `CollisionWorld`
-([ADR-0025](adr/0025-kinematic-collision.md)). `post_update` still propagates after animation.
-Interpolation is unchanged.
+`sync_collision` is the last system of each fixed iteration
+([ADR-0025](adr/0025-kinematic-collision.md)). It is the only fixed-step caller of
+`propagate_transforms`, once per iteration, and then rebuilds `CollisionWorld`. A step with no fixed
+iteration does not call it. Queries read that snapshot. A `Transform`, `Parent`, or `Collider` write
+after the system, including one in `update`, is absent until the next iteration. `post_update` still
+propagates after animation. Interpolation is unchanged. Movement and trigger events are not
+implemented.
 
 `elapsed` and `frame` advance once per `step`, not once per fixed iteration. Extract and render are
 not stages: `Game::extract()` then `WindowRenderer::render` (or `render_to_rgba` offscreen).
@@ -587,9 +590,11 @@ criteria. Open decisions stay in [DECISIONS.md](DECISIONS.md).
   sprites into one instanced draw. M5-6 (`92286ce`) adds plane, cube, cuboid, sphere,
   and cylinder meshes as ordinary `MeshData` (ADR-0018). M5 is accepted locally. Localized mip-texel regeneration is not implemented.
 * **A list of camera passes** instead of one `RenderScene` camera, plus render-to-texture (M6).
-* **A collision world** as a resource rebuilt in the fixed stage, with spatial 3D queries (M7). The
-  contract is [ADR-0025](adr/0025-kinematic-collision.md): private `parry3d` 0.31.1 queries, ECS-owned
-  transforms, a linear AABB list, and no rigid-body pipeline. The code is not written.
+* **Kinematic movement** on the collision world (rest of M7). M7-1A rebuilds `CollisionWorld` in the
+  fixed stage and answers overlap and ray queries. The contract is
+  [ADR-0025](adr/0025-kinematic-collision.md): private `parry3d` 0.31.1 queries, ECS-owned
+  transforms, a linear AABB list, and no rigid-body pipeline. The slide, triggers, and movement
+  writeback are not written.
 * **Sprite-sheet animation** (M8), **a character gameplay layer with an API surface list** (M9), **a UI
   runtime** (M10), **pose-first skeletal animation** (M11) and **3D skinned characters** (M12), within the
   boundaries below.

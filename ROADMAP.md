@@ -690,11 +690,11 @@ MSAA is `crates/engine-renderer/tests/msaa.rs`, `crates/engine-renderer-wgpu/tes
 
 ---
 
-## M7. Collision and gameplay primitives: Not started
+## M7. Collision and gameplay primitives: In progress
 
 **Objective.** Spatial collision and a kinematic character controller; no rigid-body physics.
 
-**Prerequisites.** M3 (fixed stage), M4 (events/commands), M6. Debug drawing, the part of M6 this milestone names for collider visualization, is implemented locally. M6 itself is not complete, and M7 has not started.
+**Prerequisites.** M3 (fixed stage), M4 (events/commands), M6. Debug drawing, the part of M6 this milestone names for collider visualization, is implemented locally. M6 itself is not complete. M7-1A, the geometric query index, is implemented on `feat/m7-collision`. Movement, triggers, and the character controller are not.
 
 **Tasks.**
 - Collider components (sphere, box, capsule; layers/masks) in **3D world space**, so an object at a
@@ -707,7 +707,7 @@ MSAA is `crates/engine-renderer/tests/msaa.rs`, `crates/engine-renderer-wgpu/tes
 - Colliders attach to the gameplay entity, not to a visual child, so a change of character representation
   (M9) cannot change collision.
 
-**Dependencies.** D-09 is settled ([ADR-0025](docs/adr/0025-kinematic-collision.md)). D-10 is settled. M7 has not started.
+**Dependencies.** D-09 is settled ([ADR-0025](docs/adr/0025-kinematic-collision.md)). D-10 is settled. M7-1A implements the query index. The rest of M7 is not implemented.
 
 **Acceptance criteria.**
 - Shape-pair overlap tests over a table of cases; raycast tests per shape.
@@ -718,8 +718,10 @@ MSAA is `crates/engine-renderer/tests/msaa.rs`, `crates/engine-renderer-wgpu/tes
   configurations, and a constrained 2D-style movement plane (D-48) is expressed as a movement option, not a
   separate controller.
 - `spatial_scene`: the walkable figure is blocked by the pillar.
-- The first checkpoint's cases, including mirrored offsets, diagonal slides, locked axes, and the
-  linear broadphase limit, are the matrix in ADR-0025. Those tests are not written.
+- The first checkpoint's geometry cases are written: mirrored offsets, shear rejection, shape-pair
+  overlap, world-space ray normals, filters, camera independence, and stable ordering. Diagonal slides,
+  locked axes, trigger events, and the 1,000-step movement hash are still the M7-1B part of the
+  ADR-0025 matrix and are not written.
 
 **Tests/examples.** Collision unit/property tests; controller test; example.
 

@@ -917,3 +917,29 @@ The presented rows call `present_to_surface` on the 64-sprite, 4-cuboid scene. T
 
 One sample allocates no private frame and records no frame-present draw. Four samples add one present draw. Timed frames do not create another frame image. After the timed 4× samples, presenting at 640×360 reallocates the private image once (`reallocs` 1) and returning to one sample drops that image and the 4× images (`dropped_frame_and_msaa` true, `frame_drops` 1). Run 2's 4× encode median is about 64 µs above its one-sample presented median. That is CPU time recording the resolve and the copy. It is not a GPU cost. The one-sample presented encode is the same scene call path as a direct render plus a drop of an image that was never created. Its median sits inside the spread of the direct one-sample encodes from this run. No separate 1× tax is claimed.
 
+## Collision index baseline
+
+Recorded 2026-10-27 at 10:18 AM America/Chicago. M7-1A. The index is one sorted vector and a linear AABB scan. This is not a production broadphase, and it is not the tilemap budget above.
+
+| | |
+|---|---|
+| Machine | Apple M5, Mac17,2, arm64 |
+| OS | macOS 27.0 |
+| Rust | rustc 1.99.0 (`b940084d7` 2026-09-28) |
+| Profile | `cargo run --release -p engine-world --example collision_index_bench` |
+| Binary | `crates/engine-world/examples/collision_index_bench.rs` |
+
+Each row is the median of 31 samples after 10 warmup calls, in one process. `sync_collision` includes `propagate_transforms` and the rebuild. Colliders are spheres of radius 0.5 on a line, 3 units apart. The overlap probe is a sphere of radius 0.5 at the origin. The ray starts at x = -2 and travels along +X with a maximum distance of 400. Disabled colliders are omitted before conversion.
+
+Two consecutive invocations:
+
+| Call | First median | Second median |
+|---|---|---|
+| `sync_collision`, 10 indexed | 1.4 µs | 1.0 µs |
+| `sync_collision`, 100 indexed | 8.5 µs | 5.9 µs |
+| `sync_collision`, 100 disabled | 2.3 µs | 1.7 µs |
+| Overlap against 100 indexed | 0.2 µs | 0.2 µs |
+| Ray against 100 indexed | 1.4 µs | 1.4 µs |
+
+The rebuild spread between the two runs is cache noise at this size. The candidate scan visits every indexed entry. A later pairwise or trigger pass over the same list would be quadratic in the collider count. That pass is not implemented and was not timed. These figures do not claim a broadphase that stays cheap for a tile layer.
+

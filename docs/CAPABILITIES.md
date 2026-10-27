@@ -74,7 +74,7 @@ without it.
 | 21 | 3D skinned characters | Absent | `Vertex` has no joints/weights; no importer | M12 |
 | 22 | Character gameplay layer | Absent | The demo's own system drives the animation player | M9 |
 | **Gameplay** | | | | |
-| 23 | Collision and spatial queries | Absent | | M7 |
+| 23 | Collision and spatial queries | Partial | Sphere, box, and capsule; fixed-step `CollisionWorld`; overlap and ray queries. No movement or triggers | M7 |
 | 24 | Physics and movement | Absent | Kinematic controller planned; no solver | M7 |
 | 25 | Audio | Absent | | M16 |
 | **UI** | | | | |
@@ -557,20 +557,21 @@ Missing from the original category list and now tracked: **save games** (34), **
 ## Gameplay
 
 ### 23. Collision and spatial queries
-* **Now.** Absent. **Planned.** M7, under [ADR-0025](adr/0025-kinematic-collision.md): sphere, box, and
-  capsule colliders, a `CollisionWorld` rebuilt in the fixed stage from a linear AABB list, raycast
-  and overlap, triggers via the existing events. Bounds can use `DebugDraw::wire_box` and raycasts
-  can use `DebugDraw::ray`. That call is not written. **Depends on.** M3, M4, M6, D-10. D-09 is
-  settled. Debug drawing exists. M7 has not started.
+* **Now.** Partial (M7-1A). Sphere, box, and capsule colliders, with a local offset, layers, mask,
+  sensor flag, and enabled flag. `CollisionWorld` is rebuilt at the end of each fixed iteration from
+  a sorted list and a linear AABB scan. Overlap and ray queries return world-space results. Sensors
+  are query results and do not emit events. Indexed shapes become finite `DebugDraw` segments.
+  **Planned.** Trigger events, still under [ADR-0025](adr/0025-kinematic-collision.md).
+  **Depends on.** M3, M4, M6, D-10. D-09 is settled. M7 is not complete.
 * **Integration.** World-space 3D, attached to the **gameplay** entity; tilemap collision layer (M13)
   and foot placement (M12) feed it; scripts and UI hit-testing may use queries.
 * **Performance.** The first broadphase is a sorted list and can be quadratic. Replacement stays behind the candidate function. Determinism is same-process, not cross-platform bitwise identity.
 * **Not initially.** Rigid bodies, joints, continuous collision for dynamic bodies, convex colliders, navmesh.
 
 ### 24. Physics and movement
-* **Now.** Absent. **Planned.** Kinematic move-and-slide with swept tests in M7. D-09 is settled
-  ([ADR-0025](adr/0025-kinematic-collision.md)): private `parry3d` 0.31.1 queries, and the ECS writes
-  `Transform`. The crate is not a dependency until M7 implements it.
+* **Now.** Absent. **Planned.** Kinematic move-and-slide with swept tests in M7-1B. D-09 is settled
+  ([ADR-0025](adr/0025-kinematic-collision.md)): private `parry3d` 0.31.1 queries are in `engine-world`.
+  The ECS still owns `Transform`. M7-1A does not write it from a move.
 * **Not initially.** Rigid-body dynamics, joints, ragdolls, vehicles. The broadphase may be quadratic
   until a later milestone replaces the candidate function.
 

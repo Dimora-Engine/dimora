@@ -152,6 +152,7 @@ use the position in that matrix.
 * M3a-5 implements `alpha`, the `Interpolate` marker, the previous local, and the extract-time blend. It is committed locally and is not pushed. Skeletal interpolation, physics, and a general animation history are not part of it.
 * M3b keeps these frame edges for raw `Input` and variable-step systems. A separate fixed-step latch, specified in ADR-0013, delivers a one-shot once to the first fixed iteration and is not part of this stage list. Collision and animation events attach to these stages. They do not add a scheduler.
 * This decision does not add pause, time scale, or a fixed-step elapsed clock.
+* Follow-up, 2026-10-27. M7-1A adds `sync_collision` as the sealed last system of `fixed_update` (ADR-0025). Other fixed systems run before it. `update` still has no built-in. The decision section's sentence that `fixed_update` has no built-in described the schedule before that system existed.
 
 ## Evidence and revisit conditions
 
