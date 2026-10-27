@@ -2,6 +2,7 @@
 //!
 //! Field names are declared here on purpose. Changing a struct does not change this list.
 
+use crate::collision::{Collider, ColliderShape};
 use crate::hierarchy::{Children, GlobalTransform, Parent};
 use crate::interpolate::Interpolate;
 use crate::lookup::Tags;
@@ -21,6 +22,14 @@ const PARENT_FIELDS: &[FieldDesc] = &[FieldDesc::new("entity", "Entity")];
 const CHILDREN_FIELDS: &[FieldDesc] = &[FieldDesc::new("entities", "Vec<Entity>")];
 const GLOBAL_FIELDS: &[FieldDesc] = &[FieldDesc::new("matrix", "Mat4")];
 const INTERPOLATE_FIELDS: &[FieldDesc] = &[FieldDesc::new("previous", "Option<Transform>")];
+const COLLIDER_FIELDS: &[FieldDesc] = &[
+    FieldDesc::new("shape", "ColliderShape"),
+    FieldDesc::new("offset", "Vec3"),
+    FieldDesc::new("layers", "u32"),
+    FieldDesc::new("mask", "u32"),
+    FieldDesc::new("sensor", "bool"),
+    FieldDesc::new("enabled", "bool"),
+];
 
 /// Registers `Name`, `Tags`, `Transform`, `Visibility`, `SceneMember`, and the hierarchy and interpolation components.
 ///
@@ -73,6 +82,12 @@ pub fn register_world_components(registry: &mut ComponentRegistry) -> Result<(),
         INTERPOLATE_FIELDS,
         Persistence::Runtime,
         Some(interpolate_values),
+    ))?;
+    registry.register_idempotent(ComponentDesc::new(
+        "Collider",
+        COLLIDER_FIELDS,
+        Persistence::Persist,
+        Some(collider_values),
     ))?;
     Ok(())
 }
@@ -128,6 +143,27 @@ fn interpolate_values(mark: &Interpolate) -> Vec<String> {
         ),
         None => "none".to_string(),
     }]
+}
+
+fn collider_values(collider: &Collider) -> Vec<String> {
+    vec![
+        shape_text(collider.shape),
+        vec3(collider.offset),
+        collider.layers.to_string(),
+        collider.mask.to_string(),
+        collider.sensor.to_string(),
+        collider.enabled.to_string(),
+    ]
+}
+
+fn shape_text(shape: ColliderShape) -> String {
+    match shape {
+        ColliderShape::Sphere { radius } => format!("Sphere(radius={radius:?})"),
+        ColliderShape::Box { half_extents } => format!("Box(half_extents={})", vec3(half_extents)),
+        ColliderShape::Capsule { radius, half_height } => {
+            format!("Capsule(radius={radius:?}, half_height={half_height:?})")
+        }
+    }
 }
 
 fn vec3(value: engine_math::Vec3) -> String {
