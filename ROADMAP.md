@@ -33,8 +33,7 @@ exists: [docs/CAPABILITIES.md](docs/CAPABILITIES.md) is the record of what does.
 
 ## 1. Where the project stands
 
-**Complete locally, not pushed.** M0 and M1. M2's numbered tasks T1 to T3, with licence files (KI-17) and
-the owner's confirmation of GitHub as host still carried. M3a and M3b. M4, through the lamp prefab and the
+**Complete locally, not pushed.** M0 and M1. M2's numbered tasks T1 to T3. Dimora's proprietary notice is accepted (OD-3, 2026-10-28). A future licence and third-party notices (KI-17, M24) are not. The owner's confirmation of GitHub as host is still carried. M3a and M3b. M4, through the lamp prefab and the
 crate-private scene helpers, at commit `2b79806`. M5, materials and textures, formally accepted on
 2026-10-22. The implementation checkpoint is `92286ce0546a4d94bb0365581ae7469fe2ad3260`. The acceptance
 record is a later documentation commit. Localized mip-texel regeneration is not part of that acceptance.
@@ -80,9 +79,8 @@ first" tiers in [docs/DECISIONS.md](docs/DECISIONS.md#what-to-resolve-first).
 
 ### Current milestone and immediate scope
 
-* **M2 is closed for planning.** T1 to T3 are done. Two items remain, both blocked on the owner rather
-  than on code: licence files (KI-17) and confirmation of GitHub as host. CI itself exists (ADR-0005).
-  Neither item blocks later milestones.
+* **M2 is closed for planning.** T1 to T3 are done. Dimora's proprietary notice is accepted (OD-3). What remains on the owner, rather than on code, is a future licensing model, third-party notices (KI-17, M24), and confirmation of GitHub as host. CI itself exists (ADR-0005).
+  None of those items blocks later milestones.
 * **M3a and M3b are complete locally and are not pushed.** Named stages, commands and events, logging,
   opt-in interpolation, and the public-API review are done. M3b's four phases are checkpointed locally
   (`57dbc4a`, `83286a9`, `9c99edf`, `cfdf358`).
@@ -258,7 +256,7 @@ tests for viewport and orientation, `docs/SPATIAL_RENDERING.md`.
 
 ---
 
-## M2. Foundation hardening and CI: Substantially done (T1 to T3 done; licence files and CI remain, see TASKS.md)
+## M2. Foundation hardening and CI: Substantially done (T1 to T3 done; Dimora's notice is accepted; third-party notices and host confirmation remain, see TASKS.md)
 
 **Objective.** Make the build reproducible and fix the defects found in the audit before building
 more on top.
@@ -278,7 +276,7 @@ more on top.
   leaves dangling children (policy from D-03). Done (T3).
 - Asset-name collision check on insert (two names hashing to one id is an error, not an overwrite).
   Done (T3), per asset type.
-- Add licence files matching `Cargo.toml`.
+- Dimora's own notice is the root `LICENSE` (OD-3, accepted 2026-10-28). It is proprietary. The earlier `MIT OR Apache-2.0` proposal was not accepted. Third-party notices stay in M24.
 - Pick the code host/CI provider (D-22), then add its config calling `scripts/check.sh`.
 
 **Dependencies.** D-03, D-04, D-22 (CI provider only; everything else proceeds without it).
@@ -1410,7 +1408,7 @@ testing on Windows, macOS and Linux GPUs.
 **Prerequisites.** M21, M23.
 
 **Tasks.** Desktop release builds (Windows, macOS, Linux) with a bundle; config and save-game
-directories; log files; versioning policy and changelog; licence files; a project template; docs
+directories; log files; versioning policy and changelog; third-party licence notices (Dimora's own proprietary notice already exists); a project template; docs
 (rustdoc and a short book); release automation; crates.io decision (D-23).
 
 **Acceptance criteria.**

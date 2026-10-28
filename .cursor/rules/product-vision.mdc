@@ -45,5 +45,5 @@ Full text lives in the docs; do not restate it here or in code:
    need.
 9. Status must be honest. Keep four things distinct in docs: confirmed owner decisions, recommended but
    unapproved decisions, implemented capabilities, and future requirements (`docs/DECISIONS.md`, "Owner
-   decisions"). Never describe a proposal, such as the licence, as confirmed. Never mark something done because a type or placeholder exists; "done" needs a
+   decisions"). Never describe an unapproved proposal as confirmed. The current licence is the proprietary notice in `LICENSE` (OD-3); a future model is a separate owner decision. Never mark something done because a type or placeholder exists; "done" needs a
    passing test or a recorded run. Update the status rows in the same commit that changes behaviour.

@@ -23,7 +23,8 @@ edition = "2021"
 # 1.90.0 (see TASKS.md). The floor comes from the locked dependency graph: `ordered-float 5.5.0` (via wgpu-hal on
 # Linux and Windows) requires 1.90, and cargo 1.89 refuses that graph.
 rust-version = "1.90"
-license = "MIT OR Apache-2.0"
+# Proprietary notice. Not an SPDX open-source expression. Members inherit `license-file`.
+license-file = "LICENSE"
 publish = false
 
 [workspace.dependencies]

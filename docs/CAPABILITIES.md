@@ -92,7 +92,7 @@ without it.
 | 34 | Save games and persistent state | Absent, unscheduled | Distinct from scene files | add (M19+) |
 | 35 | Debugging and developer tooling | Partial | `Diagnostics` and `log` (M3a-4). Single-frame world-space debug lines, rays, wire boxes, wire spheres, and camera frusta (M6). A per-camera linearized view of that camera's stored depth (`4bd591d`). No inspector, gizmo, shadow view, or overlay | M4, M6, M10, M20 |
 | 36 | Editor and inspection (core goal) | Absent | Foundations (registry, commands, ids) not yet shaped for it, R-15 | M22 |
-| 37 | Build, CI, packaging | Partial | Pinned toolchain, `check.sh`; no CI, no licence files, no release | M2, M24 |
+| 37 | Build, CI, packaging | Partial | Pinned toolchain, `check.sh`; Dimora's proprietary notice is accepted (OD-3); third-party notices and a release are not | M2, M24 |
 | 38 | Docs, examples, tests, onboarding | Partial | Accurate README and docs, 2 examples, 138 tests; no rustdoc guide, no tutorial | M24 |
 
 Missing from the original category list and now tracked: **save games** (34), **diagnostics and logging**
@@ -748,7 +748,7 @@ Missing from the original category list and now tracked: **save games** (34), **
 
 ### 37. Build, CI, packaging, platform compatibility
 * **Now.** Pinned toolchain (1.99.0), MSRV 1.90, `scripts/check.sh`, `DIMORA_REQUIRE_GPU`. **CI** on
-  GitHub Actions for Windows, macOS and Linux (first run green, ADR-0005; software adapters only, active on `main` once merged), **no licence files** (KI-17, the licence is unconfirmed). No packaging, crash handling or release process.
+  GitHub Actions for Windows, macOS and Linux (first run green, ADR-0005; software adapters only, active on `main` once merged). Dimora's own notice is the proprietary [LICENSE](../LICENSE) (OD-3, accepted 2026-10-28). Third-party notices are not written. No packaging, crash handling or release process.
 * **Planned.** CI then multi-OS matrix (M23), release builds and docs (M24). Needs decisions on dependency
   and licence policy and on crash diagnostics.
 
@@ -781,5 +781,5 @@ before the related foundation freezes".
 | AI and pathfinding | 2.5D worlds need navigation on tilemaps and meshes | After M7/M13, unscheduled |
 | Localisation, accessibility | Text and input architecture decisions (D-37, D-39) can foreclose them | Note in D-37/D-39 |
 | Crash diagnostics | Shipped games need logs and panic reports | M24 |
-| Dependency and licence policy | Several decisions add crates (glTF, audio, fonts); licence files absent | D-17, KI-17 |
+| Dependency and licence policy | Dimora's own notice is proprietary (OD-3). A future licence is undecided. Third-party notices are not written | D-17, KI-17, M24 |
 | Build size and startup time | Shipping budgets | M23 |
