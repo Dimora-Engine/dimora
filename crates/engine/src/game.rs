@@ -10,8 +10,8 @@ use engine_renderer::{
 };
 use engine_renderer_wgpu::{CacheStats, FrameStats, GpuContext, RenderError, SceneRenderer};
 use engine_world::{
-    clear_move_intents, propagate_transforms, snapshot_interpolation, sync_collision, CollisionDebug, CollisionWorld,
-    Schedule, ScheduleError, World,
+    clear_locomotion_intents, clear_move_intents, propagate_transforms, snapshot_interpolation,
+    sync_collision_with_step, CollisionDebug, CollisionWorld, Schedule, ScheduleError, World,
 };
 
 use crate::diagnostics::{Diagnostics, StageDurations};
@@ -454,8 +454,9 @@ impl Game {
         }
         // An intent that no motor consumed, including every intent on a frame with zero fixed
         // iterations, does not survive into `update`. An intent written later, during `update`,
-        // waits for the next step.
+        // waits for the next step. `LocomotionIntent` follows the same rule.
         clear_move_intents(&mut self.world);
+        clear_locomotion_intents(&mut self.world);
         self.world.promote_events();
         let fixed_update = started.elapsed();
         self.world.resource_mut::<Time>().set_delta(frame_delta);
@@ -642,7 +643,9 @@ fn sealed_violation(name: &'static str, anchor: Option<Anchor>, order: ExplicitO
 }
 
 fn sync_collision_system(world: &mut World) {
-    sync_collision(world);
+    let step = world.resource::<Time>().delta_secs();
+    let step = (step.is_finite() && step > 0.0).then_some(step);
+    sync_collision_with_step(world, step);
     let draw = world.try_resource::<CollisionDebug>().is_some_and(|debug| debug.enabled);
     if !draw {
         return;

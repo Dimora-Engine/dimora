@@ -265,9 +265,14 @@ pass-through sends `Entered` then `Exited` for that pair before the next pair. A
 more than once in the iteration still produces that one outcome. A direct `Transform` write has
 no segments, so it only changes the endpoint sets. The events stay pending until the promote
 after the fixed loop. Trigger code does not read the camera or a sprite or mesh child. After the
-fixed loop, including a loop of zero iterations, every leftover `MoveIntent` is removed. An intent
-written during `update` waits for the next simulating step. Gravity, jumping, and a grounded flag
-are not implemented.
+fixed loop, including a loop of zero iterations, every leftover `MoveIntent` and `LocomotionIntent`
+is removed. An intent written during `update` waits for the next simulating step. An enabled
+`CharacterLocomotion` ([ADR-0026](adr/0026-character-locomotion.md)) owns that body's displacement
+for the iteration and writes one `MoveIntent`. The sealed system passes `Time::delta_secs()` into
+`sync_collision_with_step`. A positive finite value probes support before and after the motors.
+`sync_collision` without a step does not. `CharacterMotion.support` is that post-move probe.
+`Walk` is a committed horizontal move, not the wish. Gravity, jumping, slope projection, and
+stairs are not implemented. A body that leaves a floor stays at that height.
 
 `elapsed` and `frame` advance once per `step`, not once per fixed iteration. Extract and render are
 not stages: `Game::extract()` then `WindowRenderer::render` (or `render_to_rgba` offscreen).

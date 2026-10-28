@@ -692,7 +692,7 @@ MSAA is `crates/engine-renderer/tests/msaa.rs`, `crates/engine-renderer-wgpu/tes
 
 **Objective.** Spatial collision and a kinematic character controller; no rigid-body physics.
 
-**Prerequisites.** M3 (fixed stage), M4 (events/commands), M6. Debug drawing, the part of M6 this milestone names for collider visualization, is implemented locally. M6 itself is not complete. M7-1A, the geometric query index, M7-1B-1, the kinematic sweep, M7-1B-2, trigger events, M7-1B-2R, the symmetric sensor rule, and M7-1B-3, the opt-in `spatial_scene --collision` integration, are implemented on `feat/m7-collision`. Locomotion is not.
+**Prerequisites.** M3 (fixed stage), M4 (events/commands), M6. Debug drawing, the part of M6 this milestone names for collider visualization, is implemented locally. M6 itself is not complete. M7-1A, the geometric query index, M7-1B-1, the kinematic sweep, M7-1B-2, trigger events, M7-1B-2R, the symmetric sensor rule, and M7-1B-3, the opt-in `spatial_scene --collision` integration, are on `main`. Locomotion-1A, flat-ground support, is implemented on `feat/character-locomotion` ([ADR-0026](docs/adr/0026-character-locomotion.md)). Gravity, jumping, slopes, and stairs are not.
 
 **Tasks.**
 - Collider components (sphere, box, capsule; layers/masks) in **3D world space**, so an object at a
@@ -706,7 +706,7 @@ MSAA is `crates/engine-renderer/tests/msaa.rs`, `crates/engine-renderer-wgpu/tes
 - Colliders attach to the gameplay entity, not to a visual child, so a change of character representation
   (M9) cannot change collision.
 
-**Dependencies.** D-09 is settled ([ADR-0025](docs/adr/0025-kinematic-collision.md)). D-10 is settled. M7-1A implements the query index. M7-1B-1 implements the sweep. M7-1B-1G corrects near-tangent classification. M7-1B-2 implements trigger events on one `TriggerEvent` queue. M7-1B-2R makes a sensor pair nonblocking from either side. M7-1B-3 demonstrates the pillar, a slide, a sensor, and a second motor in `spatial_scene --collision`. Locomotion is not implemented. M7 is not complete.
+**Dependencies.** D-09 is settled ([ADR-0025](docs/adr/0025-kinematic-collision.md)). D-10 is settled. D-50 is provisional ([ADR-0026](docs/adr/0026-character-locomotion.md)). M7-1A implements the query index. M7-1B-1 implements the sweep. M7-1B-1G corrects near-tangent classification. M7-1B-2 implements trigger events on one `TriggerEvent` queue. M7-1B-2R makes a sensor pair nonblocking from either side. M7-1B-3 demonstrates the pillar, a slide, a sensor, and a second motor in `spatial_scene --collision`. Locomotion-1A implements flat-ground support. Gravity, jumping, slopes, and stairs are not implemented. M7 is not complete.
 
 **Acceptance criteria.**
 - Shape-pair overlap tests over a table of cases; raycast tests per shape.

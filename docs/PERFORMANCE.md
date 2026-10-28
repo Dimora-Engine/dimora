@@ -1072,3 +1072,20 @@ The first process is again the cold outlier, except `dense`, which stayed near 1
 
 The second process spread was small 12.3 (12.2–14.5), mixed 55.2 (54.6–58.6), crowd 114.5 (113.6–120.0), and dense 144.3 (143.2–162.8). The stage time matches the steady `sync_collision` time on these worlds. It is a different measurement, not a second copy of the table above.
 
+## Locomotion-1A ground probe
+
+Recorded 2026-10-28 at about 5:33 PM America/Chicago, on the same Apple M5 and macOS 27.0 (build 26A428), `rustc 1.99.0`. The binary is `cargo run --release -p engine-world --example locomotion_bench`. Warmup is 10 calls. Each row is 31 samples. The median is sample 16 after sorting. Q1 and Q3 are samples 8 and 24. The rewind that restores positions and writes the next intent is not timed. The GPU is not involved.
+
+The fixture is one or eight spheres of radius 0.5, skin 0.01, plus 16 solid boxes at x = 30 that are not contacts. The floor rows add one box whose top is y = 0. A bare motor receives `MoveIntent` `(1.5, 0, 0)` and is timed with `sync_collision`. A locomotion row receives `LocomotionIntent` wish `+X` and is timed with `sync_collision_with_step(1/60)`. That wish becomes the same 1.5 horizontal displacement, and a supported body also submits a 0.08 downward stick. The floor locomotion median is therefore the probe plus that stick, not the probe alone. Each body ends the sample at x = 1.500, y = 0.500. Indexed counts are 18 with the floor, 17 without it, and 25 for eight bodies on the floor.
+
+Three processes, back to back. Times are microseconds. The same row moved by a few microseconds between processes, so these are not a stable overhead and not a frame budget.
+
+| Row | Process 1 median (min–max) | Process 2 | Process 3 |
+|---|---|---|---|
+| Bare motor, floor | 2.2 (2.2–6.2) | 5.0 (4.8–11.2) | 3.1 (2.9–5.7) |
+| Locomotion, floor | 8.3 (3.8–11.2) | 8.5 (8.2–11.1) | 5.3 (5.1–7.0) |
+| Locomotion, no floor | 8.0 (7.8–10.8) | 8.0 (7.8–10.2) | 4.9 (4.8–6.3) |
+| Locomotion, 8 on a floor | 13.1 (12.9–30.0) | 29.1 (25.2–29.8) | 18.0 (17.8–19.6) |
+
+Process 1's floor row was split: Q1 was 4.0 and the median was 8.3. The other rows in that process, and every row in processes 2 and 3, had Q1 within 0.4 of the median except the eight-body row in process 2 (Q1 25.5, median 29.1). In the quietest process the one-body floor probe sat about 2 microseconds above the bare sweep. Eight bodies cost several times one body. Nothing here was optimized. The M7 crowd tables above are unchanged.
+
