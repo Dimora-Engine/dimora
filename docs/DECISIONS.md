@@ -50,10 +50,25 @@ is not approved; nothing marked Recommended may be described elsewhere as decide
 |---|---|---|---|
 | OD-1 | Editor timing: the full editor stays late, behind a stability gate; developer tooling arrives incrementally; the runtime stays free of editor-specific state | **Confirmed** (2026-10-13) | [ADR-0003](adr/0003-incremental-tooling-editor-later.md), ROADMAP "Incremental developer tooling" |
 | OD-2 | Dimora is not defined by HD-2D or any single view; one spatial world supports orthographic, perspective, isometric, top-down, side-scrolling and custom cameras as intended capabilities; projection is separate from gameplay orientation and style; the showcase is a reusable multi-camera test scene | **Confirmed** as direction (2026-10-13). The six open questions were answered the same day; the answers are classified (accepted principle, provisional convention, deferred API decision, needs prototype evidence) in ADR-0004 "Resolution of the open questions". Mechanisms, owner response 2026-10-13: camera presets as constructors **Accepted**; style as policy **Accepted with clarification** (per level, no universal style abstraction); gameplay orientation as data **Accepted**; coplanar ordering **Amended** (spatial depth, transparency sorting, render layers or queues and explicit render order stay distinct; no generalised occlusion framework yet). The test scene now exists in `spatial_scene` (verified 2026-10-14). Public camera constructors exist (`16ed495`). Coplanar sprite priority is [ADR-0020](adr/0020-coplanar-priority.md). Style-policy APIs and gameplay-orientation components are still not implemented | [ADR-0004](adr/0004-one-spatial-world-many-camera-configurations.md), D-48 |
-| OD-3 | Licence: `MIT OR Apache-2.0` | **Proposed, not confirmed.** No licence files are added until the owner approves. Copyright holder also unconfirmed | TASKS.md "Licence audit" (KI-17) |
+| OD-3 | Temporary proprietary licence | **Accepted** (2026-10-28). See the record below. The earlier `MIT OR Apache-2.0` proposal was not accepted | [LICENSE](../LICENSE), TASKS.md "Licence audit" (KI-17) |
 | OD-4 | Use GitHub Actions if the repository is hosted on GitHub; validate on Windows, macOS and Linux; Windows early | **Confirmed** as direction (2026-10-13). That GitHub is the long-term host is **assumed** (the repository and its pull requests are on GitHub); the owner has not stated it | [ADR-0005](adr/0005-ci-on-github-actions.md) (Provisional), D-22 |
 | OD-5 | Does a licence also need a contributor policy (a CLA or DCO), given contributions from several authors and AI agents? | **Open** | TASKS.md "Licence audit" |
 | OD-6 | Is the product audience "programmers who also want visual tools" or "creators who may not write Rust"? How much of a game must be buildable without Rust? | **Open** (direction: both, editor is a goal) | VISION.md open questions |
+
+#### OD-3 — Accepted, temporary proprietary licensing
+
+Accepted by the owner on October 28, 2026. This replaces the unapproved `MIT OR Apache-2.0` proposal. That proposal was never confirmed, and it is not the current licence.
+
+- Copyright holder: Caleb Young.
+- Current distribution policy: All Rights Reserved.
+- Public repository visibility does not grant an open-source license.
+- No general permission is granted to use, modify, compile, or redistribute Dimora's original source.
+- GitHub Terms of Service and applicable law remain controlling where relevant.
+- Third-party components keep their own licenses.
+- Future relicensing remains possible through a separate owner decision.
+- The public-visibility decision is operational and does not change code ownership.
+
+The notice is [LICENSE](../LICENSE). A future licensing model is undecided. Third-party attribution is still a separate obligation (KI-17, M24). Making the repository public is not done by this record.
 
 ### What to resolve first
 
