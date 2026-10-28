@@ -246,10 +246,24 @@ feature wall at the impact pose. Deeper overlap stays the one recovery push. The
 applied, and only the unconsumed remainder is projected along the wall. The motor writes `Transform.position` through the parent inverse when there is a
 parent, and does not write `GlobalTransform`, rotation, or scale. It then patches that collider's
 center, pose, and bounds so the next motor in the same iteration sees the new pose. `MoveResult`
-records that resolution. It is not a claim that the character is standing on a surface. After the
+records that resolution. It is not a claim that the character is standing on a surface. `applied`
+is the net origin change. Trigger detection does not cast that vector. It keeps the displacements
+the sweep wrote: the recovery push when one is written, each applied slide piece, and a clear of
+the remaining remainder. A rejected move, a failed parent writeback, and an unapplied tail are
+not segments. Those segments are cast from their own start poses with `target_distance` 0, so
+motor skin does not grow the trigger volume. The cast sees earlier motors already patched and
+later motors still at their start poses. It is not a simultaneous sweep of two moving bodies.
+After the motors, the sync compares the stored sensor-pair list, the overlaps in the patched
+index, and those path hits. The list is runtime state and is left unchanged when a step runs no
+fixed iteration. An index with no sensors and an empty list skips the pair pass. `TriggerEvent`
+is one queue. `Entered { a, b }` and `Exited { a, b }` use ascending `Entity` order. A
+pass-through sends `Entered` then `Exited` for that pair before the next pair. A pair crossed
+more than once in the iteration still produces that one outcome. A direct `Transform` write has
+no segments, so it only changes the endpoint sets. The events stay pending until the promote
+after the fixed loop. Trigger code does not read the camera or a sprite or mesh child. After the
 fixed loop, including a loop of zero iterations, every leftover `MoveIntent` is removed. An intent
-written during `update` waits for the next simulating step. Trigger events, gravity, jumping, and a
-grounded flag are not implemented.
+written during `update` waits for the next simulating step. Gravity, jumping, and a grounded flag
+are not implemented.
 
 `elapsed` and `frame` advance once per `step`, not once per fixed iteration. Extract and render are
 not stages: `Game::extract()` then `WindowRenderer::render` (or `render_to_rgba` offscreen).
@@ -619,8 +633,10 @@ criteria. Open decisions stay in [DECISIONS.md](DECISIONS.md).
   system and writes the local position. The contract is
   [ADR-0025](adr/0025-kinematic-collision.md): private `parry3d` 0.31.1 queries, ECS-owned
   transforms, a linear AABB list, and no rigid-body pipeline. A nonblocking zero-time skin contact
-  is dropped and the rest of that remainder is still tested. Trigger events, gravity, jumping,
-  grounded support, and the `spatial_scene` pillar block are not written.
+  is dropped and the rest of that remainder is still tested. M7-1B-1G classifies a gap inside the
+  skin band with the closest-feature wall. M7-1B-2 sends `TriggerEvent` on the existing queue from
+  committed movement segments. Gravity, jumping, grounded support, and the `spatial_scene` pillar
+  block are not written.
 * **Sprite-sheet animation** (M8), **a character gameplay layer with an API surface list** (M9), **a UI
   runtime** (M10), **pose-first skeletal animation** (M11) and **3D skinned characters** (M12), within the
   boundaries below.

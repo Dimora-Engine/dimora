@@ -1000,3 +1000,17 @@ M7-1B-1G, recorded 2026-10-27 at 10:25 PM America/Chicago, same machine, OS, Rus
 | Sweep, 10 colliders | 4.8 µs | 4.2 µs |
 | Sweep, 100 colliders | 25.1 µs | 19.6 µs |
 
+M7-1B-2, recorded 2026-10-28 at 11:18 AM America/Chicago, same machine (Apple M5, Mac17,2), macOS 27.0, and rustc 1.99.0. Command: `cargo run --release -p engine-world --example movement_bench`. Release profile, warmup 10, median of 31, two consecutive invocations. This table does not replace the 3:07 PM or 10:25 PM rows, and these medians are not a production frame budget.
+
+`sweep 10` and `sweep 100` are the same solid fixture as M7-1B-1G: one sphere moves 30 units along +X into a box, and the other colliders are solids past that box. There are zero sensors. The mover still stops at x = 11.09. Today's medians are lower than the 10:25 PM closest-feature table. The sweep itself is unchanged. This run measures that fixture again, including the linear scan that sees there is nothing to trigger. It is not a claim that the closest-feature query got cheaper.
+
+`sensors 10` and `sensors 100` keep that wall and replace the extra solids with thin sensors standing on the committed path, before the box. `cross 8` is one motor and eight thin sensors, no wall, and the motor runs the full 30 units.
+
+| Call | First median | Second median | Indexed | Stopped x |
+|---|---|---|---|---|
+| Sweep, 10 colliders, zero sensors | 2.2 µs | 2.2 µs | 10 | 11.09 |
+| Sweep, 100 colliders, zero sensors | 10.8 µs | 10.9 µs | 100 | 11.09 |
+| Sensors on the path, 10 colliders | 4.5 µs | 4.4 µs | 10 | 11.09 |
+| Sensors on the path, 100 colliders | 50.1 µs | 49.2 µs | 100 | 11.09 |
+| One motor crossing 8 sensors | 3.9 µs | 3.8 µs | 9 | 30.00 |
+

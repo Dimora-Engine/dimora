@@ -29,10 +29,14 @@ pub(super) struct Entry {
 /// iteration does not call [`sync_collision`].
 ///
 /// Each entry keeps `layers` and `mask`. A free query tests `layers` against the query mask only.
+/// `pairs` is the sensor overlaps stored at the end of the last sync. It is not saved, and a step
+/// with no fixed iteration leaves it unchanged.
 #[derive(Default)]
 pub struct CollisionWorld {
     entries: Vec<Entry>,
     skipped: Vec<(Entity, SkipReason)>,
+    /// Qualifying sensor overlaps at the end of the last [`sync_collision`], lower [`Entity`] first.
+    pairs: Vec<(Entity, Entity)>,
     /// How many times [`sync_collision`] has rebuilt this resource.
     generation: u64,
 }
@@ -87,6 +91,18 @@ impl CollisionWorld {
     pub fn wire_segments(&self) -> Vec<(Vec3, Vec3)> {
         wire_segments(self)
     }
+
+    pub(super) fn stored_pairs(&self) -> &[(Entity, Entity)] {
+        &self.pairs
+    }
+
+    pub(super) fn take_pairs(&mut self) -> Vec<(Entity, Entity)> {
+        std::mem::take(&mut self.pairs)
+    }
+
+    pub(super) fn store_pairs(&mut self, pairs: Vec<(Entity, Entity)>) {
+        self.pairs = pairs;
+    }
 }
 
 /// Propagates transforms, then rebuilds [`CollisionWorld`] from enabled, valid colliders.
@@ -128,7 +144,8 @@ pub fn sync_collision(world: &mut World) {
     collision.skipped = skipped;
     collision.generation = collision.generation.saturating_add(1);
     drop(collision);
-    super::motor::resolve_motors(world);
+    let hits = super::motor::resolve_motors(world);
+    super::trigger::commit(world, hits);
 }
 
 fn classify(world: &World, entity: Entity, collider: &Collider) -> Result<Prepared, SkipReason> {

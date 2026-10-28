@@ -85,6 +85,6 @@ pub mod prelude {
         CollisionWorld, CommandError, CommandFailure, CommandWriter, ComponentDesc, ComponentInfo, ComponentRegistry,
         DumpError, Entity, FieldDesc, GlobalTransform, Interpolate, MoveIntent, MoveResult, MoveStatus, Name, Parent,
         Persistence, RayHit, RegistryError, SceneBuilder, SceneError, SceneInstanceId, SceneMember, SceneOpId,
-        SceneOpStatus, Schedule, ScheduleError, SkipReason, Tags, Visibility, World,
+        SceneOpStatus, Schedule, ScheduleError, SkipReason, Tags, TriggerEvent, Visibility, World,
     };
 }

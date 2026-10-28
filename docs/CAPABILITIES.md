@@ -74,7 +74,7 @@ without it.
 | 21 | 3D skinned characters | Absent | `Vertex` has no joints/weights; no importer | M12 |
 | 22 | Character gameplay layer | Absent | The demo's own system drives the animation player | M9 |
 | **Gameplay** | | | | |
-| 23 | Collision and spatial queries | Partial | Sphere, box, and capsule; fixed-step `CollisionWorld`; overlap and ray queries. No movement or triggers | M7 |
+| 23 | Collision and spatial queries | Partial | Sphere, box, and capsule; fixed-step `CollisionWorld`; overlap, ray, and `TriggerEvent` enter/exit. Movement is row 24 | M7 |
 | 24 | Physics and movement | Partial | Kinematic sweep on `CharacterMotor`; no gravity, jump, or grounded state | M7 |
 | 25 | Audio | Absent | | M16 |
 | **UI** | | | | |
@@ -557,15 +557,20 @@ Missing from the original category list and now tracked: **save games** (34), **
 ## Gameplay
 
 ### 23. Collision and spatial queries
-* **Now.** Partial (M7-1A). Sphere, box, and capsule colliders, with a local offset, layers, mask,
+* **Now.** Partial (M7-1A and M7-1B-2). Sphere, box, and capsule colliders, with a local offset, layers, mask,
   sensor flag, and enabled flag. `CollisionWorld` is rebuilt at the end of each fixed iteration from
   a sorted list and a linear AABB scan. Overlap and ray queries return world-space results. Sensors
-  are query results and do not emit events.   Each indexed entry stores `mask`. Movement uses the mutual
+  emit `TriggerEvent` on one queue: `Entered` when a qualifying pair starts overlapping, `Exited`
+  when it stops, and both, adjacent, when a committed movement segment crosses a pair that is
+  outside at both endpoints. A repeated crossing in one fixed iteration collapses to that one
+  outcome. Solid/solid pairs emit nothing. The pair list is runtime state and is unchanged on a
+  zero-iteration step. An index with no sensors and an empty list skips the pair pass. Each indexed entry stores `mask`. Movement uses the mutual
   filter. A free query still tests `layers` against the query mask only. Sphere and capsule scale is
   uniform when `(max - min) / max` of the column lengths is at most `1e-4`. `CollisionDebug` is off
   unless a caller enables it; a normal step with colliders submits no collision wires. When it is
   on, indexed shapes become finite `DebugDraw` segments, and several fixed iterations append them.
-  **Planned.** Trigger events, still under [ADR-0025](adr/0025-kinematic-collision.md).
+  **Not implemented.** The `spatial_scene` pillar block and locomotion. The contract is
+  [ADR-0025](adr/0025-kinematic-collision.md).
   **Depends on.** M3, M4, M6, D-10. D-09 is settled. M7 is not complete.
 * **Integration.** World-space 3D, attached to the **gameplay** entity; tilemap collision layer (M13)
   and foot placement (M12) feed it; scripts and UI hit-testing may use queries.
@@ -588,7 +593,7 @@ Missing from the original category list and now tracked: **save games** (34), **
   previous result in place. That result is the last resolution, not a ground contact. Full XYZ
   movement is the default. A sprite or mesh child does not change it, and neither does the camera.
   **Not implemented.** Gravity, jumping, walking acceleration, a grounded flag, floor/wall/ceiling
-  labels, trigger events, stairs, slopes, and moving platforms. Triangle meshes and convex hulls are
+  labels, stairs, slopes, and moving platforms. Trigger enter/exit is row 23. Triangle meshes and convex hulls are
   not supported. The `1e-4` band is an absolute tolerance, not a guarantee at every world scale.
   **Depends on.** M7-1A and [ADR-0025](adr/0025-kinematic-collision.md). M7 is not complete.
 * **Not initially.** Rigid-body dynamics, joints, ragdolls, vehicles. The broadphase may be quadratic

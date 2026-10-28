@@ -158,16 +158,20 @@ Results and pairs are sorted by `Entity`.
 
 ## Triggers
 
-The resource keeps a sorted `Vec<(Entity, Entity)>`, lower id first, of overlaps where at least one side is a sensor. Enter is in the new set only. Exit is in the old set only. Both means no event.
+The resource keeps a sorted `Vec<(Entity, Entity)>`, lower id first, of overlaps where at least one side is a sensor. The list is runtime state. A step with no fixed iteration leaves it unchanged. When the rebuilt index has no sensors and the list is empty, that sync does not run the pair pass.
 
-Pass-through uses only segments that were applied (`traveled`), including each slide segment, and not a remainder a solid already blocked. A sensor hit on that path:
+`TriggerEvent` is one typed queue. `Entered { a, b }` and `Exited { a, b }` store the two entities in ascending `Entity` order. A sensor/sensor overlap is one pair. Solid/solid pairs emit nothing. Enter is in the new set only. Exit is in the old set only. Both means no event.
 
-* overlaps the final pose and was outside: one `TriggerEntered`
+Pass-through follows committed segments. `MoveResult.applied` is the net origin change and is not one of those segments. A committed segment is a displacement the sweep wrote: the piece before an impact, each later slide, a clear of the remaining remainder, and a recovery push when that push is written. A rejected move, a failed parent writeback, a blocking stop, and the tail dropped after `max_slides` are not segments. Each segment is cast from its own start pose with `target_distance` 0. Motor skin does not enlarge the trigger volume. A sensor hit on that path:
+
+* overlaps the final pose and was outside: one `Entered`
 * overlaps the final pose and was inside: no event
-* outside the final pose and was inside: one `TriggerExited`
-* outside both poses and was hit on an applied segment: `TriggerEntered` then `TriggerExited`, adjacent
+* outside the final pose and was inside: one `Exited`
+* outside both poses and was hit on a committed segment: `Entered` then `Exited`, adjacent
 
-A path with more than `max_slides` segments does not cast the discarded tail. That is the limit.
+A pair crossed more than once in the same iteration still produces only that outcome. One iteration emits in pair order, and each pair's events finish before the next pair. Later fixed iterations append to the same queue. The queue is promoted once, after the fixed loop.
+
+Motors run in ascending `Entity` order. A segment cast sees earlier movers already patched and later movers at their start pose. Two bodies that both move in one iteration are not one simultaneous sweep. A direct `Transform` write has no segments, so it changes only the endpoint sets. A path with more than `max_slides` segments does not cast the discarded tail. That is the limit.
 
 ## Sweep
 
@@ -239,6 +243,12 @@ If the cores meet and no face, edge, or corner direction is usable, or the gap i
 
 The overlap fixture in the movement tests is one case. The sphere center starts at `x = 0.3` against the face `x = 0`, radius `0.5`, skin `0.01`. The overlap is `0.8`. The push is `0.81` along `-X`, so the applied displacement is `-0.81` and the final center is `-0.51`.
 
+### 2026-10-28, owner approved (M7-1B-2)
+
+Trigger delivery uses one `TriggerEvent` queue, as written in Triggers above. `Entered` and `Exited` are variants, not two event types, so a pass-through stays adjacent across fixed iterations. A repeated crossing of the same pair in one iteration collapses to that section's single outcome. The recovery push is a committed segment when it is written. An uncommitted remainder is not tested. `MoveResult.applied` stays the net origin change.
+
+This amendment does not change the sweep. Sensor obstacles are still skipped. The sweep does not read the mover's own sensor flag, so a motor whose collider is a sensor is still stopped by solids. That is the obstacle rule in Filters ("sensors never block"), not a ghost mover. Changing it would be a motor change and is outside M7-1B-2.
+
 ## Evidence and revisit conditions
 
 Probe, not in the repo: `/tmp/dimora-parry-probe`, `parry3d` 0.31.1, 2026-10-27, America/Chicago. `cargo +1.99.0 run` and `cargo +1.90.0 run` (SDKROOT `MacOSX26.5.sdk`) both exited 0. Asserted overlap, a penetrating `contact` with world `normal1 = +X`, a ray time of impact `4` and a world outward normal, an identity sweep time of impact `3` with local `normal1 = +X`, and the yawed sweep whose world wall normal is `+Z`.
@@ -280,4 +290,4 @@ Headless, one fixed step of `1/60` s, no window. Positions include both signs. T
 | `CollisionDebug` off | No collision wires. Indexing and queries still run |
 | `CollisionDebug` on | Finite segments for each indexed collider. Several fixed iterations append |
 
-M7-1A writes the geometry, filter, ordering, camera, and debug rows. M7-1B-1 writes the movement rows, including the thin wall, the diagonal slide, wall A then wall B, one recovery push, locked axes, and a same-process 1,000-step `to_bits` hash of a sphere stopped against another sphere. M7-1B-1G writes the tangent, repeated-step, tiny-into, and corner rows. Trigger rows stay M7-1B-2 and are not implemented. M7-1B-1 measured a tilted cast normal on repeated grazes along a large box. The skin-band amendment corrects that classification. The 1,000-step hash is still the sphere-sphere stop, not that graze.
+M7-1A writes the geometry, filter, ordering, camera, and debug rows. M7-1B-1 writes the movement rows, including the thin wall, the diagonal slide, wall A then wall B, one recovery push, locked axes, and a same-process 1,000-step `to_bits` hash of a sphere stopped against another sphere. M7-1B-1G writes the tangent, repeated-step, tiny-into, and corner rows. M7-1B-2 writes the sensor rows: one enter, no duplicate while the overlap continues, enter then exit for a committed crossing, and no event for a sensor past a solid that stopped the move. M7-1B-1 measured a tilted cast normal on repeated grazes along a large box. The skin-band amendment corrects that classification. The 1,000-step hash is still the sphere-sphere stop, not that graze.

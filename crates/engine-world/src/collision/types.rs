@@ -246,6 +246,21 @@ impl MoveResult {
     }
 }
 
+/// One overlap lifecycle event. `a` and `b` are in ascending [`Entity`] order, and at least one was
+/// a sensor in the index when the pair was detected.
+///
+/// [`World::send`](crate::World::send) appends to this type's queue. A pass through a sensor sends
+/// [`TriggerEvent::Entered`] and then [`TriggerEvent::Exited`] for that pair before the next pair.
+/// A pair that is crossed more than once in the same fixed iteration still produces that one
+/// outcome. `update` and the stages after it read the queue with
+/// [`World::events`](crate::World::events). A fixed system does not see events sent in the fixed
+/// loop, including events from an earlier iteration of the same step.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TriggerEvent {
+    Entered { a: Entity, b: Entity },
+    Exited { a: Entity, b: Entity },
+}
+
 /// Mutual filter. A collider does not interact with itself. Sensors pass the filter and do not
 /// block movement.
 pub fn pair_interacts(a_entity: Entity, a: &Collider, b_entity: Entity, b: &Collider) -> bool {

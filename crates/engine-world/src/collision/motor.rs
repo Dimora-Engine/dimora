@@ -19,6 +19,7 @@ use crate::World;
 use super::convert::{to_vector, Prepared};
 use super::feature::feature_hit;
 use super::index::{entries, entries_mut, CollisionWorld};
+use super::trigger::{collect_hits, Segment};
 use super::types::{point_finite, CharacterMotor, MoveIntent, MoveResult, MoveStatus};
 
 const STOP: f32 = 1e-6;
@@ -33,6 +34,8 @@ struct Motion {
     blocked: bool,
     normals: Vec<Vec3>,
     recovery_normal: Option<Vec3>,
+    /// Displacements `advance` wrote. Empty when the caller is not watching sensors.
+    segments: Vec<Segment>,
 }
 
 enum Scan {
@@ -46,17 +49,21 @@ enum Scan {
 ///
 /// The caller has already propagated transforms and rebuilt the index. Each successful move writes
 /// `Transform::position` and patches that collider's center, pose, and bounds before the next motor
-/// runs. `GlobalTransform` is left for a later propagation.
-pub(super) fn resolve_motors(world: &mut World) {
+/// runs. `GlobalTransform` is left for a later propagation. The returned pairs were touched by
+/// committed segments. When the index contains no sensors, segments are not recorded.
+pub(super) fn resolve_motors(world: &mut World) -> Vec<(Entity, Entity)> {
+    let record = entries(&world.resource::<CollisionWorld>()).iter().any(|entry| entry.sensor);
     let mut jobs: Vec<(Entity, CharacterMotor, Vec3)> = world
         .query::<(&CharacterMotor, &MoveIntent)>()
         .iter()
         .map(|(entity, (motor, intent))| (entity, *motor, intent.translation))
         .collect();
     jobs.sort_by_key(|(entity, _, _)| *entity);
+    let mut hits = Vec::new();
     for (entity, motor, translation) in jobs {
-        resolve_one(world, entity, motor, translation);
+        resolve_one(world, entity, motor, translation, record, &mut hits);
     }
+    hits
 }
 
 /// Drops every [`MoveIntent`]. A fixed loop calls this after its iterations, including when that
@@ -68,7 +75,14 @@ pub fn clear_move_intents(world: &mut World) {
     }
 }
 
-fn resolve_one(world: &mut World, entity: Entity, motor: CharacterMotor, requested: Vec3) {
+fn resolve_one(
+    world: &mut World,
+    entity: Entity,
+    motor: CharacterMotor,
+    requested: Vec3,
+    record: bool,
+    hits: &mut Vec<(Entity, Entity)>,
+) {
     if !motor_ok(&motor) || !point_finite(requested) {
         log::warn!("character motor on {entity:?} rejected a move: skin or displacement is not usable");
         publish(world, entity, rejected(requested));
@@ -82,7 +96,7 @@ fn resolve_one(world: &mut World, entity: Entity, motor: CharacterMotor, request
 
     let motion = {
         let collision = world.resource::<CollisionWorld>();
-        sweep(&collision, entity, &motor, requested)
+        sweep(&collision, entity, &motor, requested, record)
     };
     let Some(motion) = motion else {
         publish(world, entity, rejected(requested));
@@ -98,6 +112,10 @@ fn resolve_one(world: &mut World, entity: Entity, motor: CharacterMotor, request
         if let Some(prepared) = entries_mut(&mut collision).iter_mut().find(|entry| entry.entity == entity) {
             translate_prepared(&mut prepared.prepared, motion.delta);
         }
+    }
+    if record && !motion.segments.is_empty() {
+        let collision = world.resource::<CollisionWorld>();
+        collect_hits(&collision, entity, &motion.segments, hits);
     }
     publish(
         world,
@@ -133,7 +151,13 @@ fn publish(world: &mut World, entity: Entity, result: MoveResult) {
     let _ = world.remove::<MoveIntent>(entity);
 }
 
-fn sweep(collision: &CollisionWorld, entity: Entity, motor: &CharacterMotor, requested: Vec3) -> Option<Motion> {
+fn sweep(
+    collision: &CollisionWorld,
+    entity: Entity,
+    motor: &CharacterMotor,
+    requested: Vec3,
+    record: bool,
+) -> Option<Motion> {
     let list = entries(collision);
     let mover = list.iter().position(|entry| entry.entity == entity)?;
     let rotation = list[mover].prepared.rotation;
@@ -146,9 +170,16 @@ fn sweep(collision: &CollisionWorld, entity: Entity, motor: &CharacterMotor, req
     let mut normals = Vec::new();
     let mut recovery_normal = None;
     let mut pushed = false;
+    let mut segments = Vec::new();
 
     if motor.max_slides == 0 {
-        return Some(Motion { delta: Vec3::ZERO, blocked: remainder.length() > STOP, normals, recovery_normal });
+        return Some(Motion {
+            delta: Vec3::ZERO,
+            blocked: remainder.length() > STOP,
+            normals,
+            recovery_normal,
+            segments,
+        });
     }
 
     let mut slides = 0u8;
@@ -163,8 +194,11 @@ fn sweep(collision: &CollisionWorld, entity: Entity, motor: &CharacterMotor, req
                 break;
             }
             Scan::Clear => {
+                let started = center;
                 if !advance(&mut center, remainder) {
                     blocked = true;
+                } else if record {
+                    note(&mut segments, started, remainder);
                 }
                 remainder = Vec3::ZERO;
                 break;
@@ -175,10 +209,15 @@ fn sweep(collision: &CollisionWorld, entity: Entity, motor: &CharacterMotor, req
                 let locked = (full - push).length() > STOP;
                 if push.length() < RECOVERY_MIN && locked {
                     log::warn!("character motor on {entity:?} skipped a penetration recovery locked by an axis");
-                } else if push.length() >= RECOVERY_MIN && !advance(&mut center, push) {
-                    blocked = true;
-                    break;
                 } else if push.length() >= RECOVERY_MIN {
+                    let started = center;
+                    if !advance(&mut center, push) {
+                        blocked = true;
+                        break;
+                    }
+                    if record {
+                        note(&mut segments, started, push);
+                    }
                     recovery_normal = Some(outward);
                     blocked = true;
                 }
@@ -187,9 +226,13 @@ fn sweep(collision: &CollisionWorld, entity: Entity, motor: &CharacterMotor, req
             Scan::Hit { toi, wall } => {
                 let traveled = remainder * toi;
                 let unconsumed = remainder - traveled;
+                let started = center;
                 if !advance(&mut center, traveled) {
                     blocked = true;
                     break;
+                }
+                if record {
+                    note(&mut segments, started, traveled);
                 }
                 normals.push(wall);
                 blocked = true;
@@ -210,7 +253,13 @@ fn sweep(collision: &CollisionWorld, entity: Entity, motor: &CharacterMotor, req
     if !point_finite(delta) {
         return None;
     }
-    Some(Motion { delta, blocked, normals, recovery_normal })
+    Some(Motion { delta, blocked, normals, recovery_normal, segments })
+}
+
+fn note(segments: &mut Vec<Segment>, start: Vec3, delta: Vec3) {
+    if delta.length_squared() > STOP * STOP {
+        segments.push(Segment { start, delta });
+    }
 }
 
 fn advance(center: &mut Vec3, delta: Vec3) -> bool {
@@ -254,6 +303,7 @@ fn scan(cast: &SweepCast<'_>) -> Scan {
     let mut push: Option<(f32, Entity, Vec3)> = None;
 
     for (index, entry) in list.iter().enumerate() {
+        // Sensor obstacles never block. The mover's own sensor flag is not consulted.
         if index == mover || entry.sensor || !masks(layers, mask, entry.layers, entry.mask) {
             continue;
         }
