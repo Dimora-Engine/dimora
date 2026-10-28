@@ -11,7 +11,7 @@ Architecture and risks: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Open decis
 ## Current milestone
 
 **M2. Foundation hardening and CI: closed for planning.** T1, T2 and T3 are done. Two items are carried
-because they wait on the owner, not on code: licence files (KI-17) and CI (D-22, B-1). Neither blocks M3a.
+because they wait on the owner, not on code: third-party licence notices (KI-17, after OD-3) and CI (D-22, B-1). Dimora's own proprietary notice is accepted. Neither item blocks M3a.
 
 **M6 is in progress.** The camera-configuration test scene is verified (below). M6-1B, custom projection matrices (D-25), is commit `a38cb30` and is not pushed. M6-1C, the example's seventh camera, is committed locally and is not pushed. D-07 reverse-Z is settled (ADR-0019). Coplanar sprite priority is settled (ADR-0020) and is not pushed. D-26 is settled (ADR-0021). Tilemap extraction culls 32×32 chunks (`4cc0b08` baseline, `c752395` chunks). The baseline, the comparison, and the allocation-traffic reading are in [docs/PERFORMANCE.md](docs/PERFORMANCE.md). A direct write to `tiles` does not hide a visible tile; `invalidate` refreshes the rejected-chunk cull count (`a_direct_write_stays_visible_when_the_camera_moves_and_only_the_cull_count_goes_stale`). Debug drawing is implemented on `feat/m6-debug-draw` (`b7ec684`): single-frame world-space lines, rays, wire boxes, wire spheres, and camera frusta. Sprite, mesh, mixed-scene, lighting, and multi-camera CPU benchmarks, plus CPU encode and submit, are recorded on `feat/m6-render-scale` (`82972c2`). GPU pass timestamps are not measured. The depth-visualisation view is implemented on `feat/m6-depth-view` (`4bd591d`). Public camera constructors and the oblique projection builder are implemented on `feat/m6-camera-presets` (`16ed495`). Local `main` and `origin/main` were `8d0cee4` before D-06A acceptance. D-06A is settled for orthographic view-translation snap only ([ADR-0022](docs/adr/0022-orthographic-pixel-snap.md), `4a87bb0`). D-06B integer-resolution presentation is settled for that contract (`d491bda`, [ADR-0023](docs/adr/0023-integer-resolution-camera-presentation.md)). Optional 4× MSAA is settled for the verified 1×/4× contract ([ADR-0024](docs/adr/0024-optional-4x-msaa.md), 2026-10-26). One sample draws into the window. Four samples resolve surface cameras into a private single-sample image and copy that image onto a swapchain configured as `RENDER_ATTACHMENT` only. A surface is not assumed to be shader-readable. Direct, offscreen, and internal-resolution cameras, including `Load` and depth presentation, stay on the existing paths. Per-object snapping is not started. Other GPU backends are not verified. Gameplay orientation has not started. D-06 and M6 are not complete. Milestone order is unchanged.
 
@@ -202,7 +202,7 @@ yet reproduced.
 | KI-14 | Blended sprites sort by quad centre. Blended meshes sort by the camera-space Z of the world-space bounding-sphere centre (ADR-0015). Large or intersecting blended objects can still mis-order. M5 accepted that object-level approximation. It is not solved | Read | M14 for intersections. D-48 coplanar conflicts stay M6 |
 | KI-15 | ~~Input has 47 keys and no F-keys~~ Phase 1 maps F1–F12, punctuation, navigation, and the keypad, and mouse release is a one-frame edge. Phase 2 adds `Actions` and the fixed-step latch. Phase 4 adds cursor visibility, grab (locked, then confined), and focus-loss release of held input. Still open: gamepad, touch, and text. Device motion is winit's units, not unaccelerated HID. Relative motion and OS focus-loss were not observed on a window; the unit tests cover them | Done for M3b (gamepad, touch, and text stay deferred) | M3b (text and UI scale policy: M10, D-39) |
 | KI-16 | ~~Two rustdoc warnings: unresolved `World` and `Schedule` links in `crates/engine/src/lib.rs`~~ **Fixed by T1** (commit `e08033e`); `cargo doc` with `-D warnings` is clean | Verified | M2 |
-| KI-17 | `Cargo.toml` declares `MIT OR Apache-2.0` but no licence files exist. The licence is **proposed, not owner-confirmed** (OD-3); copyright holder unknown. Audit and the list of files that would change: "Licence audit" below | Verified (repository listing, `cargo metadata --locked`) | Owner decision, then M24 notices |
+| KI-17 | Dimora's own notice is accepted (OD-3, 2026-10-28): proprietary, Caleb Young, All Rights Reserved, root `LICENSE`. Cargo no longer declares `MIT OR Apache-2.0`. A future licensing model is undecided. Third-party notices are not written, and that does not close M24. The 2026-10-13 audit below is the record of the earlier proposal | Owner decision recorded. Third-party notices and a public-visibility review remain | M24 notices |
 | KI-18 | ~~`Visibility::Hidden` applies to the entity only; it does not hide children~~ Extraction omits a sprite, mesh, tilemap, or light when it or any ancestor is `Hidden`. Local components are unchanged. Cameras still use `Camera.active` | Done (M4 Phase 2 checkpoint) | M4 |
 | KI-19 | Tilemap CPU extraction is measured on Apple M5, release, 2026-10-23 ([docs/PERFORMANCE.md](docs/PERFORMANCE.md)). A partial view visits accepted 32×32 chunks. A fully visible map still visits every cell and builds one `SpriteInstance` per occupied tile per camera. `alloc_bytes` is cumulative allocator traffic, not peak resident memory. Debug-line CPU submission and extraction are measured on the same machine, release, 2026-10-24. Sprite, mesh, mixed-lane, lighting, and multi-camera CPU extraction, plus CPU encode and submit, are measured on the same machine, release, 2026-10-24 (`82972c2`, "Render scale"). GPU pass timestamps are still open. A driver completion wait is recorded and is not that pass time. Instance buffers are still rewritten every frame: steady renders upload and do not grow | Partial. Harnesses `tilemap_extract_bench`, `debug_draw_bench`, `render_scale_bench`, and `render_scale_gpu`. GPU pass time not measured | M6 |
 | KI-31 | A dense 1000×1000 tilemap that is fully visible builds a new cutout instance vector per camera every extract. One orthographic camera records 394,769,896 bytes of allocator traffic and keeps 152 MiB of vector capacity (1,048,576 × 152). Seven such cameras record 2,763,382,296 bytes of traffic and keep 1,064 MiB until the scene drops (PERFORMANCE.md, 2026-10-23, Apple M5). Chunk culling does not reduce this, because every tile is visible. Debug drawing does not change this path. The 2026-10-24 sprite scale uses the same per-camera instance-vector shape at a smaller size: 10,000 opaque sprites keep 2.49 MB and extract in about 1.7 ms, and seven cameras keep exactly 7× that capacity. That does not pull this forward. **Deferred.** Do not add a second renderer or a retained tile world unless a later measurement says the full-view tile reuse pays for itself. Acceptance: same harness, same machine class, release profile; the seven-camera orthographic full view's `alloc_bytes` and retained instance capacity are re-measured; partial-view chunk rejection, row-major order, and one cutout batch per camera per texture stay as they are | Deferred. Reproducible with `DIMORA_BENCH_SIZES=1000 cargo run --release -p engine-renderer --bin tilemap_extract_bench` | M6. Sprite scale does not start it |
@@ -247,21 +247,27 @@ decals a unit apart resolve by depth; the three conflicts named in `docs/SPATIAL
 Not claimed: blended sprites interleaving with meshes under every configuration (the older single-camera GPU
 test still covers one camera); two viewports; camera-to-texture; a custom projection; an engine preset.
 
-## Licence audit (2026-10-13)
+## Licence audit
 
-**Status: the licence is proposed, not confirmed.** `MIT OR Apache-2.0` is what `Cargo.toml` declares; the
-owner has not approved it (OD-3 in [docs/DECISIONS.md](docs/DECISIONS.md#owner-decisions)). Nothing below
-adds or changes a licence file. Findings come from reading the repository and from `cargo metadata --locked`
+**Current status (2026-10-28).** OD-3 is accepted. Dimora is proprietary software. Copyright © 2026 Caleb Young. All rights reserved. The notice is the root [LICENSE](LICENSE). Public visibility is not an open-source grant and does not permit use, compilation, modification, or redistribution of Dimora's original source. A future licensing model is undecided and needs a separate owner decision. Third-party dependencies keep their own licences. No `THIRD_PARTY_NOTICES` file exists, so this notice does not complete attribution for a binary distribution. A public-repository security review of this tree and of reachable Git history is recorded with the licensing commit. That review is not an external certification, and it is not a decision to change repository visibility.
+
+The 2026-10-13 findings below described the unapproved `MIT OR Apache-2.0` proposal. That proposal was not accepted.
+
+### Recorded 2026-10-13, before OD-3
+
+**Status then: the licence was proposed, not confirmed.** `MIT OR Apache-2.0` was what `Cargo.toml` declared; the
+owner had not approved it (OD-3 in [docs/DECISIONS.md](docs/DECISIONS.md#owner-decisions)). The paragraphs
+below are that audit. They are not the current policy. Findings came from reading the repository and from `cargo metadata --locked`
 on the committed `Cargo.lock` (all targets, so it includes Windows, macOS and Linux-only crates).
 
-**Declarations that exist.** One: `license = "MIT OR Apache-2.0"` in `[workspace.package]` of the root
-`Cargo.toml`, inherited by all 11 members with `license.workspace = true`. `publish = false` is set. There
-is no `authors`, `repository` or `homepage` field. No SPDX or copyright header appears in any source file,
-shader or document, and no README, ROADMAP, TASKS or docs file states a licence. The only prose mention is
-KI-17 itself.
+**Declarations that existed then.** One: `license = "MIT OR Apache-2.0"` in `[workspace.package]` of the root
+`Cargo.toml`, inherited by the members with `license.workspace = true`. `publish = false` was set. There
+was no `authors`, `repository` or `homepage` field. No SPDX or copyright header appeared in any source file,
+shader or document, and no README, ROADMAP, TASKS or docs file stated a licence. The only prose mention was
+KI-17 itself. That SPDX declaration is removed.
 
-**Files missing.** `LICENSE-MIT`, `LICENSE-APACHE` (or a single `LICENSE`), any `NOTICE`, and any
-third-party-licence file. No licence file exists anywhere in the tree.
+**Files missing then.** `LICENSE-MIT`, `LICENSE-APACHE` (or a single `LICENSE`), any `NOTICE`, and any
+third-party-licence file. No licence file existed anywhere in the tree. The root `LICENSE` now exists and is proprietary. `THIRD_PARTY_NOTICES` still does not.
 
 **Copyright holder.** Unknown. The history has three author names from the same person plus the Cursor
 agent (`Cursor Agent`, 23 commits). Who holds copyright, and whether agent-written code needs a statement or
@@ -299,19 +305,14 @@ combined binary is effectively under Apache-2.0 terms for that code; (4) runtime
 lavapipe, system Vulkan) are not bundled and are out of scope; (5) the dependency list is only as complete
 as the lockfile and the SPDX fields declared by the crates, which were not independently verified.
 
-**Files that would change to make the repository consistent, once the owner approves a licence:**
+**What that audit would have changed, had the dual licence been approved.** It was not. The accepted notice is `LICENSE`, not `LICENSE-MIT` or `LICENSE-APACHE`.
 
-| File | Change |
+| File | What remains |
 |---|---|
-| `LICENSE-MIT` (new) | MIT text with the confirmed copyright holder and year |
-| `LICENSE-APACHE` (new) | Apache-2.0 text |
-| `README.md` | A "Licence" section: the dual licence and the contribution clause |
-| `Cargo.toml` | Optionally `authors`, `repository`; `license` stays or changes to the approved expression; add `license-file` only if a custom licence is chosen |
-| `THIRD_PARTY_NOTICES` (new, before the first release) | Generated notices for dependencies (M24) |
-| `docs/VISION.md`, `docs/CAPABILITIES.md`, `docs/DECISIONS.md` | Replace "proposed" with "confirmed" in OD-3 and the open questions |
-| `TASKS.md` | Close KI-17 |
-| `.github/workflows/ci.yml` | Optionally add a licence allow-list check (`cargo-deny`) |
-| Contributor policy (new, if OD-5 says so) | A DCO or CLA statement in `CONTRIBUTING.md` |
+| `THIRD_PARTY_NOTICES` (not written) | Dependency attribution before a binary distribution (M24). Not done by `LICENSE` |
+| `.github/workflows/ci.yml` | No dependency-licence allow-list (`cargo-deny` or equivalent) |
+| Contributor policy (OD-5, still open) | A DCO or CLA is not decided |
+| Future licence | Undecided. A different model needs a new owner decision |
 
 ## Blockers
 
@@ -392,8 +393,7 @@ Done on macOS arm64 (2026-10-13); see "Task T3 results" for the evidence and its
 
 ## Carried from M2 (owner input needed)
 
-- Licence files matching `Cargo.toml` (KI-17): the licence is **proposed, not confirmed**; the owner must
-  approve it and name the copyright holder (OD-3, OD-5) before any licence file is added. See "Licence audit".
+- Dimora's own notice is accepted (OD-3, 2026-10-28): proprietary, Caleb Young, root `LICENSE`. A future licensing model is undecided. Third-party notices are still absent (KI-17, M24). OD-5, a contributor policy, is still open. See "Licence audit".
 - CI: the GitHub Actions workflow exists (ADR-0005, D-22 Provisional); results are in "CI results". The
   owner still has to confirm GitHub as the long-term host.
 - The capability audit table now lives in [docs/CAPABILITIES.md](docs/CAPABILITIES.md); update its rows in

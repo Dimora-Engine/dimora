@@ -12,6 +12,18 @@ Public constructors for those placements exist. What is tested, and what is stil
 and one camera model. Several cameras can view that world. The editor and the other character types are planned,
 not built; see [Status](#status).
 
+### License
+
+Dimora is currently proprietary software.
+
+Copyright © 2026 Caleb Young. All rights reserved.
+
+The source code is made available for inspection only. Public access does not grant permission to use, compile, modify, redistribute, or incorporate Dimora's original code into other projects.
+
+See [LICENSE](LICENSE) for the complete copyright and source-access notice.
+
+Dimora may adopt a different licensing model in the future.
+
 > **2.5D is a spatial world, not a fake 2D layer system.** Every object has a real `Vec3` position. Depth drives
 > projection, parallax, occlusion and lighting. There is no integer z-index.
 
