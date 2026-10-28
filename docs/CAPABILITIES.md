@@ -557,7 +557,7 @@ Missing from the original category list and now tracked: **save games** (34), **
 ## Gameplay
 
 ### 23. Collision and spatial queries
-* **Now.** Partial (M7-1A and M7-1B-2). Sphere, box, and capsule colliders, with a local offset, layers, mask,
+* **Now.** Partial (M7-1A through M7-1B-3). Sphere, box, and capsule colliders, with a local offset, layers, mask,
   sensor flag, and enabled flag. `CollisionWorld` is rebuilt at the end of each fixed iteration from
   a sorted list and a linear AABB scan. Overlap and ray queries return world-space results. Sensors
   emit `TriggerEvent` on one queue: `Entered` when a qualifying pair starts overlapping, `Exited`
@@ -570,7 +570,9 @@ Missing from the original category list and now tracked: **save games** (34), **
   uniform when `(max - min) / max` of the column lengths is at most `1e-4`. `CollisionDebug` is off
   unless a caller enables it; a normal step with colliders submits no collision wires. When it is
   on, indexed shapes become finite `DebugDraw` segments, and several fixed iterations append them.
-  **Not implemented.** The `spatial_scene` pillar block and locomotion. The contract is
+  **Not implemented.** Locomotion. The opt-in `spatial_scene --collision` example does demonstrate the
+  pillar block, a slide wall, a sensor pass-through, and a second motor; the default scene does not.
+  The contract is
   [ADR-0025](adr/0025-kinematic-collision.md).
   **Depends on.** M3, M4, M6, D-10. D-09 is settled. M7 is not complete.
 * **Integration.** World-space 3D, attached to the **gameplay** entity; tilemap collision layer (M13)
@@ -579,7 +581,7 @@ Missing from the original category list and now tracked: **save games** (34), **
 * **Not initially.** Rigid bodies, joints, continuous collision for dynamic bodies, convex colliders, navmesh.
 
 ### 24. Physics and movement
-* **Now.** Partial (M7-1B-1, with the M7-1B-1G near-tangent correction and the M7-1B-2R sensor rule). `CharacterMotor` stores skin
+* **Now.** Partial (M7-1B-1, with the M7-1B-1G near-tangent correction, the M7-1B-2R sensor rule, and the M7-1B-3 example integration). `CharacterMotor` stores skin
   (default `0.01`), `max_slides` (default 4), and `locked_axes` (`BVec3`, default none).
   `MoveIntent.translation` is the world displacement for one fixed iteration. The sealed collision
   system sweeps it, writes `Transform.position`, patches that collider, and stores `MoveResult`.
@@ -595,7 +597,10 @@ Missing from the original category list and now tracked: **save games** (34), **
   movement is the default. A sprite or mesh child does not change it, and neither does the camera.
   A sensor mover is not blocked by a solid, a sensor, or another sensor, and it writes no contact
   normal for those pairs. One gameplay entity has one collider. An indexed descendant still rejects
-  the ancestor motor.
+  the ancestor motor. `spatial_scene --collision` places that one collider on the gameplay root and
+  the sprite or mesh on a child. IJKL requests world XZ at 90 units per second. Y is not locked.
+  The same fixed step moves a second capsule between two bumpers. Headless tests step `Game` under
+  several cameras and with either visual.
   **Not implemented.** Gravity, jumping, walking acceleration, a grounded flag, floor/wall/ceiling
   labels, stairs, slopes, and moving platforms. Trigger enter/exit is row 23. Triangle meshes and convex hulls are
   not supported. The `1e-4` band is an absolute tolerance, not a guarantee at every world scale.

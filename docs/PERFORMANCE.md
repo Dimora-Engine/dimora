@@ -1024,3 +1024,51 @@ M7-1B-2R, recorded 2026-10-28 at 12:08 PM America/Chicago, same machine, OS, Rus
 | Sensors on the path, 100 colliders | 108.9 µs | 83.6 µs | 100 | 11.09 |
 | One motor crossing 8 sensors | 6.6 µs | 6.5 µs | 9 | 30.00 |
 
+M7-1B-3, recorded 2026-10-28 at 1:36 PM America/Chicago, on the same Apple M5 (Mac17,2), macOS 27.0, and rustc 1.99.0 (`b940084d7` 2026-09-28). Release profile. This section does not replace the 11:18 AM or 12:08 PM tables. Thermal and power were not measured. The agent process was the other load on the machine.
+
+The controlled comparison uses the existing sweep fixture only. The pre-integration binary is commit `410d0be`, built once in a detached worktree with its own target directory. The post-integration binary is this checkpoint, also built once. The timed call in both is `sync_collision` alone. Neither binary was rebuilt during the measurements. Five processes of each ran in alternation, old then new. Each process warmed up 10 times and took 31 samples. The pre binary prints the median. The post binary also prints quartiles, minimum, and maximum of those 31. Every shared row still stopped at x = 11.09, or at x = 30.00 for `cross 8`.
+
+The first process of each binary was several times slower than the four that followed. Those four agree with each other and with the 11:18 AM table. The 12:08 PM table is a different sitting and is not used as a regression baseline. All five medians are listed. Process 1 is the cold one.
+
+| Call | Pre medians (µs) | Post medians (µs) |
+|---|---|---|
+| Sweep, 10 colliders | 16.7, 2.3, 2.3, 2.4, 2.2 | 14.2, 2.2, 2.3, 2.3, 2.2 |
+| Sweep, 100 colliders | 30.2, 11.8, 11.7, 11.5, 10.8 | 28.2, 11.1, 11.2, 10.8, 11.2 |
+| Sensors on the path, 10 colliders | 9.4, 4.5, 4.5, 4.4, 4.5 | 9.9, 4.5, 4.5, 4.5, 4.4 |
+| Sensors on the path, 100 colliders | 110.7, 49.9, 49.6, 50.2, 49.1 | 117.2, 49.8, 49.2, 49.5, 48.9 |
+| One motor crossing 8 sensors | 8.3, 3.8, 4.0, 3.9, 3.9 | 8.5, 3.8, 3.8, 3.8, 3.8 |
+
+A steady post-integration process (the second of the five) spread like this. These are the 31 samples inside that process, not a comparison with `410d0be`.
+
+| Call | Median | Q1 | Q3 | Min | Max |
+|---|---:|---:|---:|---:|---:|
+| Sweep, 10 | 2.2 | 2.1 | 2.3 | 2.0 | 4.8 |
+| Sweep, 100 | 11.1 | 10.8 | 11.4 | 10.4 | 13.1 |
+| Sensors, 10 | 4.5 | 4.4 | 4.6 | 4.3 | 5.9 |
+| Sensors, 100 | 49.8 | 49.0 | 50.8 | 48.5 | 66.5 |
+| Cross 8 | 3.8 | 3.8 | 3.9 | 3.7 | 5.6 |
+
+The collision sources were not changed to chase these numbers. The steady medians sit on top of the 11:18 AM table. That is not a speedup claim.
+
+The crowd rows are a new baseline. The same harness and fixture were not run at `410d0be`, so there is no historical comparison. Each motor is a capsule of radius 0.4 and segment half-height 0.6, offset 1 on Y, skin 0.01, displaced 6 units on +X. The first motors run into a box whose near face is x = 3.5 and stop at x = 3.09. The next motors pass through one thin sensor and finish at x = 6. Each of those crossings emits one enter and one exit. The remaining motors finish at x = 6 with no contact. Extra solids sit at x = 40, except in `dense`, where they sit beside the lanes and are still not contacts. Indexed counts are motors plus solids plus sensors. Event counts are `TriggerEvent` values from one sync after the queue was cleared. They are not geometric intersection counts. `small` emits none because it has no sensors.
+
+| Scene | Motors | Solids | Sensors | Indexed | Events per sync | Process medians (µs) |
+|---|---:|---:|---:|---:|---:|---|
+| Small | 10 | 20 | 0 | 30 | 0 | 26.6, 12.1, 12.2, 12.0, 12.0 |
+| Mixed | 50 | 50 | 10 | 110 | 20 | 120.3, 55.9, 54.9, 54.5, 55.0 |
+| Crowd | 100 | 50 | 20 | 170 | 40 | 243.8, 115.6, 115.1, 121.1, 114.9 |
+| Dense | 100 | 100 | 20 | 220 | 40 | 143.6, 141.7, 144.8, 147.0, 142.7 |
+
+The first process is again the cold outlier, except `dense`, which stayed near 143 µs in every process. A steady `sync_collision` sample (second process) was small 12.1 µs (11.9–14.8), mixed 55.9 (54.6–113.3), crowd 115.6 (112.2–166.0), and dense 141.7 (140.8–171.7). Dense costs more than crowd at the same motor count because it indexes 50 more solids beside the sweep. Ten sensors on the mixed scene are not a separate overhead number: that scene also has more motors. Nothing here was optimized. M13 remains the broadphase work. These times are not a frame-time gate. The project does not promise a budget for hundreds of motors.
+
+`cargo run --release -p engine --example fixed_crowd` times `Diagnostics.stages.fixed_update` for one fixed iteration of the same four scenes. Intents are written before `step`. The stage includes the sealed collision system and the loop, not a gameplay producer, and not the GPU. Three processes, after the sync bench, so they were already warm:
+
+| Scene | Medians (µs) | Events in that step | Fixed steps |
+|---|---|---:|---:|
+| Small | 12.4, 12.3, 12.7 | 0 | 1 |
+| Mixed | 55.5, 55.2, 56.5 | 20 | 1 |
+| Crowd | 114.6, 114.5, 115.7 | 40 | 1 |
+| Dense | 145.1, 144.3, 143.0 | 40 | 1 |
+
+The second process spread was small 12.3 (12.2–14.5), mixed 55.2 (54.6–58.6), crowd 114.5 (113.6–120.0), and dense 144.3 (143.2–162.8). The stage time matches the steady `sync_collision` time on these worlds. It is a different measurement, not a second copy of the table above.
+

@@ -9,6 +9,10 @@
 //!   is behind it. A spinning cube (mesh) cuts straight through a tree sprite at Z = 400.
 //! * A walker (W) patrols along X: a sprite moved by a plain `Transform` write each frame. It is not
 //!   part of either environment, so switching scenes leaves it where it is.
+//! * `--collision` turns that walker into a gameplay root. The sprite moves to a child with no
+//!   collider. I/J/K/L request world XZ motion through `MoveIntent` on the fixed step. The pillar
+//!   in environment A is solid. A sensor and a slide wall are added only in this mode. The default
+//!   launch does not pass the flag, and the patrol, the cameras, and the screenshots stay as they are.
 //! * Translucent ghosts are alpha-blended after the opaque geometry, still depth-tested; two pairs overlap
 //!   at equal depth, one with an explicit `RenderOrder`.
 //! * At the left, flat decals lie on the ground at equal and nearly equal heights, cutout and blended: the
@@ -35,13 +39,25 @@
 //! Esc          quit
 //! ```
 //!
+//! `--collision` adds a second set of keys. They move the character on world axes, not relative to
+//! the camera. `I` is +Z, `K` is −Z, `J` is −X, and `L` is +X. The camera keys above are unchanged.
+//! None of I, J, K, or L is bound by this example unless the flag is set. Diagonal input is
+//! normalized. The speed is [`scene::WALK_SPEED`] world units per second. Y is not locked; these
+//! keys simply request no vertical motion.
+//!
 //! Tab is one gameplay action. A press queues one replacement and the stage flush runs it. Holding
 //! Tab does not queue another. The active environment changes only after that replacement reports
 //! success. A failed replacement leaves the current environment in place; the engine logs the failure.
 //!
 //! Headless: `cargo run --release -p spatial_scene -- --screenshot out.png [--camera NAME | --ortho]
 //! [--environment a|b] [--cam x,y,z] [--yaw deg] [--pitch deg] [--size WxH]
-//! [--orientation billboard|upright|fixed] [--frames N]`
+//! [--orientation billboard|upright|fixed] [--frames N] [--collision]`
+//!
+//! `--collision` is off unless that flag is present. A screenshot of the default scene does not
+//! pass it. In collision mode, Tab still replaces the environment. Environment A's pillar collider
+//! goes with that entity. The sensor, the slide wall, and the second character stay, because they
+//! are not scene members. Returning to A attaches a collider to the new pillar. The index sees
+//! that on the following fixed step.
 //!
 //! The default environment is A. `--environment b` publishes B before the first step, for a
 //! screenshot of that yard. It does not change the default launch.
@@ -68,6 +84,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or((1280, 720));
 
     let config = cameras::config_from_args(value("--camera").as_deref(), flag("--ortho"))?;
+    let collision = flag("--collision");
 
     let mut game = Game::new(GameConfig::default().with_title("Dimora - spatial_scene").with_size(width, height));
     art::register(&mut game.assets());
@@ -102,6 +119,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     game.world.insert_resource(scene);
     bind_controls(&mut game);
+    if collision {
+        bind_walk(&mut game);
+        scene::install_collision(&mut game.world, scene::BodyVisual::Sprite);
+        game.add_fixed_system("collision_motion", scene::collision_motion);
+        game.add_system("collision_feedback", scene::collision_feedback);
+    }
 
     game.add_system("controls", controls_system);
     game.add_system("camera", scene::camera_system);
@@ -164,6 +187,12 @@ fn bind_controls(game: &mut Game) {
     actions.bind_button("quit", ButtonSource::Key(Key::Escape));
 }
 
+fn bind_walk(game: &mut Game) {
+    let mut actions = game.world.resource_mut::<Actions>();
+    actions.bind_axis(scene::WALK_X_ACTION, ButtonSource::Key(Key::J), ButtonSource::Key(Key::L));
+    actions.bind_axis(scene::WALK_Z_ACTION, ButtonSource::Key(Key::K), ButtonSource::Key(Key::I));
+}
+
 fn controls_system(world: &mut World) {
     let dt = world.resource::<Time>().delta_secs();
     let input = world.resource::<Input>();
@@ -207,9 +236,15 @@ fn controls_system(world: &mut World) {
     }
     let orientation = scene.figure_orientation;
     let figures: Vec<Entity> = scene.figures.iter().map(|&(_, e)| e).collect();
+    let visual = scene.walker_visual;
     drop(scene);
     for e in figures {
         if let Ok(mut sprite) = world.component_mut::<Sprite>(e) {
+            sprite.orientation = orientation;
+        }
+    }
+    if let Some(visual) = visual {
+        if let Ok(mut sprite) = world.component_mut::<Sprite>(visual) {
             sprite.orientation = orientation;
         }
     }
@@ -228,8 +263,15 @@ fn hud_system(world: &mut World) {
         return;
     }
     scene.title_timer = 0.25;
-    let (rig, camera, orientation, name, environment) =
-        (scene.rig, scene.camera, scene.figure_orientation, scene.config_name(), scene.environment);
+    let (rig, camera, orientation, name, environment, collision, walker) = (
+        scene.rig,
+        scene.camera,
+        scene.figure_orientation,
+        scene.config_name(),
+        scene.environment,
+        scene.collision,
+        scene.walker,
+    );
     let figures = scene.figures.clone();
     drop(scene);
 
@@ -253,8 +295,18 @@ fn hud_system(world: &mut World) {
         .collect();
     let stats = *world.resource::<RenderStats>();
     let diagnostics = *world.resource::<Diagnostics>();
+    let collision_note = if collision {
+        let pos = world.component::<Transform>(walker).map(|transform| transform.position).unwrap_or(Vec3::ZERO);
+        let status = world
+            .component::<MoveResult>(walker)
+            .map(|result| format!("{:?}", result.status))
+            .unwrap_or_else(|_| "idle".to_string());
+        format!(" | body ({:.1}, {:.1}, {:.1}) {status}", pos.x, pos.y, pos.z)
+    } else {
+        String::new()
+    };
     let title = format!(
-        "spatial_scene | env {environment:?} | {name} ({}) | cam ({:.0}, {:.0}, {:.0}) | {:?} | {} | {} draws | gpu cache {} tex {} mesh | {} ents, {} fixed, {:.2} ms cpu",
+        "spatial_scene | env {environment:?} | {name} ({}) | cam ({:.0}, {:.0}, {:.0}) | {:?} | {} | {} draws | gpu cache {} tex {} mesh | {} ents, {} fixed, {:.2} ms cpu{}",
         projection_name,
         rig.position.x,
         rig.position.y,
@@ -267,6 +319,7 @@ fn hud_system(world: &mut World) {
         diagnostics.entities,
         diagnostics.fixed_steps,
         diagnostics.stages.total().as_secs_f64() * 1000.0,
+        collision_note,
     );
     world.resource_mut::<WindowControl>().title = Some(title);
 }

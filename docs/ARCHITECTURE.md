@@ -640,8 +640,21 @@ criteria. Open decisions stay in [DECISIONS.md](DECISIONS.md).
   is dropped and the rest of that remainder is still tested. M7-1B-1G classifies a gap inside the
   skin band with the closest-feature wall. M7-1B-2 sends `TriggerEvent` on the existing queue from
   committed movement segments. M7-1B-2R makes a sensor pair nonblocking whichever side moves.
-  Gravity, jumping, grounded support, and the `spatial_scene` pillar
-  block are not written.
+  `spatial_scene --collision` is the opt-in example of that contract and is off unless the flag is
+  set. The default walker stays a sprite moved by a direct `Transform` write. In collision mode the
+  entity named `walker` is the gameplay root: `Transform`, one capsule `Collider`, `CharacterMotor`,
+  and the runtime intent and result. The capsule's local offset is `half_height + radius` on +Y, so
+  a root at Y = 0 is the feet while the capsule stands upward. The sprite, or a mesh in the test
+  variant, is a child with no collider. A fixed-update system registered before `sync_collision`
+  reads the held world-axis actions, normalizes a diagonal, and writes `MoveIntent` as speed times
+  the fixed delta. It does not write `Transform` from the variable-rate update. The sealed system
+  consumes the intent. `TriggerEvent` is visible in `update` and is gone when `step` returns, so the
+  example logs it there. The environment A pillar uses one `aabb_box` whose half extents are half of
+  the mesh size constant shared with scene construction. Replacing that environment despawns the
+  pillar; the next rebuild omits it, and returning attaches a collider to the new entity for the
+  following fixed step. The sensor, the slide wall, and the second character are not scene members.
+  The camera is not an input to movement or to the index. Gravity, jumping, and grounded support
+  are not written.
 * **Sprite-sheet animation** (M8), **a character gameplay layer with an API surface list** (M9), **a UI
   runtime** (M10), **pose-first skeletal animation** (M11) and **3D skinned characters** (M12), within the
   boundaries below.
