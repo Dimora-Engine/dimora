@@ -303,8 +303,8 @@ fn scan(cast: &SweepCast<'_>) -> Scan {
     let mut push: Option<(f32, Entity, Vec3)> = None;
 
     for (index, entry) in list.iter().enumerate() {
-        // Sensor obstacles never block. The mover's own sensor flag is not consulted.
-        if index == mover || entry.sensor || !masks(layers, mask, entry.layers, entry.mask) {
+        // A pair blocks only when both colliders are solid. Either sensor makes it nonblocking.
+        if index == mover || list[mover].sensor || entry.sensor || !masks(layers, mask, entry.layers, entry.mask) {
             continue;
         }
         if !bounds_overlap(&bounds, &entry.prepared.aabb) {

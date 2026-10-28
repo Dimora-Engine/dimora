@@ -152,7 +152,7 @@ There is no second clock. Queries do not propagate and do not rebuild. The snaps
 
 ## Filters
 
-Two colliders interact when both are enabled, the entities differ, and both `(layers & other.mask)` tests are non-zero. A free query tests `layers` against the query mask only, excludes an optional entity, and includes sensors unless the caller says otherwise. Sensors never block. Solid/solid pairs emit no events. Several entities may share a layer. `enabled = false` drops the entry on the next rebuild. Removal and despawn are observed on the next pass that rebuilds without them, which is the next iteration, or the next step when the command flush is after this system.
+Two colliders interact when both are enabled, the entities differ, and both `(layers & other.mask)` tests are non-zero. A free query tests `layers` against the query mask only, excludes an optional entity, and includes sensors unless the caller says otherwise. A pair blocks only when both colliders are solid and that mutual filter passes. If either collider is a sensor, the pair does not block and does not write a contact normal, whether the sensor is moving or stationary. Sensor pairs still emit trigger events when the filter passes. Solid/solid pairs emit no events. One gameplay entity has one `Collider`. An indexed descendant still rejects its ancestor's motor. Several entities may share a layer. `enabled = false` drops the entry on the next rebuild. Removal and despawn are observed on the next pass that rebuilds without them, which is the next iteration, or the next step when the command flush is after this system.
 
 Results and pairs are sorted by `Entity`.
 
@@ -179,7 +179,7 @@ Motors run in ascending `Entity` order. A segment cast sees earlier movers alrea
 
 For each slide while `remainder` is longer than `1e-6` and the count is below `max_slides`:
 
-1. For each solid candidate in the swept bounds, compute the closest-feature gap and wall. The wall is world-space and points from the obstacle toward the mover. Do not rotate it again. A sphere core is its center. A capsule core is its local-Y segment. A cuboid core is the finite box. Cuboid against cuboid uses Parry's SAT contact, and the wall is the negation of world-space `normal1`. A non-finite gap drops the remainder and stops.
+1. For each solid candidate in the swept bounds, compute the closest-feature gap and wall. A sensor mover has no blocking candidates: the unlocked remainder is applied and no contact normal is stored. The wall is world-space and points from the obstacle toward the mover. Do not rotate it again. A sphere core is its center. A capsule core is its local-Y segment. A cuboid core is the finite box. Cuboid against cuboid uses Parry's SAT contact, and the wall is the negation of world-space `normal1`. A non-finite gap drops the remainder and stops.
 2. Skin band: `-1e-4 < gap <= skin + 1e-4`. Do not use the shape-cast time or `normal1`. If `dot(remainder, wall) < -1e-4`, the candidate blocks at time zero. Otherwise it is tangent or separating for this sweep: drop it and keep testing the other candidates over the same `remainder`. `1e-4` is an absolute world-unit tolerance, not a fraction of the request. A missing wall drops the remainder and stops. The cast normal is not a substitute.
 3. Deeper than the band (`gap <= -1e-4`) keeps the one recovery push. A time-zero cast whose `contact` distance is negative pushes once by the unlocked part of `-normal1 * (-dist + skin)`. That `normal1` is already world-space. If the unlocked part is shorter than `1e-4` while the locked part was required, apply nothing and log. Do not push a second time. A cast that does not confirm the penetration does not contribute its time of impact. A separating remainder does not block. An approaching remainder blocks at time zero on the feature wall when `dot(remainder, wall) < -1e-4`.
 4. Farther than the band (`gap > skin + 1e-4`), cast with `max_time_of_impact = 1`, `target_distance = skin`, `stop_at_penetration = false`, and `compute_impact_geometry_on_penetration = true`. Velocity is `remainder`. A time of impact in `(1e-6, 1]` blocks, and the slide normal is the feature wall at the impact pose. A time-zero cast is ignored because it disagrees with the gap. A missing impact wall drops the remainder and stops.
@@ -247,7 +247,11 @@ The overlap fixture in the movement tests is one case. The sphere center starts 
 
 Trigger delivery uses one `TriggerEvent` queue, as written in Triggers above. `Entered` and `Exited` are variants, not two event types, so a pass-through stays adjacent across fixed iterations. A repeated crossing of the same pair in one iteration collapses to that section's single outcome. The recovery push is a committed segment when it is written. An uncommitted remainder is not tested. `MoveResult.applied` stays the net origin change.
 
-This amendment does not change the sweep. Sensor obstacles are still skipped. The sweep does not read the mover's own sensor flag, so a motor whose collider is a sensor is still stopped by solids. That is the obstacle rule in Filters ("sensors never block"), not a ghost mover. Changing it would be a motor change and is outside M7-1B-2.
+M7-1B-2 left the sweep's sensor test as an obstacle check, so a motor whose own collider was a sensor was still stopped by solids. M7-1B-2R replaces that reading. The closest-feature classification for a solid against a solid is unchanged.
+
+### 2026-10-28, owner approved (M7-1B-2R)
+
+A collision pair in which either collider is a sensor is nonblocking. The rule is symmetric: solid against sensor, sensor against solid, and sensor against sensor do not produce a blocking contact or a slide normal. Solid against solid still uses the sweep above. A sensor mover writes the same kind of committed segment a clear move writes, and trigger detection casts that segment. A rejected move, including `max_slides == 0`, still writes no segment. One gameplay entity has one `Collider`. An indexed descendant still rejects the ancestor motor. This amendment does not add a second collider, a ghost controller, or moving platforms.
 
 ## Evidence and revisit conditions
 
@@ -281,6 +285,7 @@ Headless, one fixed step of `1/60` s, no window. Positions include both signs. T
 | Sensor still overlapped | One enter, no duplicate on an idle step |
 | Sensor crossed by an applied segment | Enter then exit, adjacent |
 | Sensor behind a solid that stopped the move | No pass-through event |
+| Sensor mover through a solid or another sensor | Full unlocked displacement, no contact normal, enter then exit |
 | Mask excludes an obstacle | Absent; same-layer peers sorted by `Entity` |
 | `enabled = false`, and a despawn | Exit on the next observing pass |
 | Ancestor motor with an indexed descendant | Transform unchanged; descendant pose unchanged |
@@ -290,4 +295,4 @@ Headless, one fixed step of `1/60` s, no window. Positions include both signs. T
 | `CollisionDebug` off | No collision wires. Indexing and queries still run |
 | `CollisionDebug` on | Finite segments for each indexed collider. Several fixed iterations append |
 
-M7-1A writes the geometry, filter, ordering, camera, and debug rows. M7-1B-1 writes the movement rows, including the thin wall, the diagonal slide, wall A then wall B, one recovery push, locked axes, and a same-process 1,000-step `to_bits` hash of a sphere stopped against another sphere. M7-1B-1G writes the tangent, repeated-step, tiny-into, and corner rows. M7-1B-2 writes the sensor rows: one enter, no duplicate while the overlap continues, enter then exit for a committed crossing, and no event for a sensor past a solid that stopped the move. M7-1B-1 measured a tilted cast normal on repeated grazes along a large box. The skin-band amendment corrects that classification. The 1,000-step hash is still the sphere-sphere stop, not that graze.
+M7-1A writes the geometry, filter, ordering, camera, and debug rows. M7-1B-1 writes the movement rows, including the thin wall, the diagonal slide, wall A then wall B, one recovery push, locked axes, and a same-process 1,000-step `to_bits` hash of a sphere stopped against another sphere. M7-1B-1G writes the tangent, repeated-step, tiny-into, and corner rows. M7-1B-2 writes the sensor rows: one enter, no duplicate while the overlap continues, enter then exit for a committed crossing, and no event for a sensor past a solid that stopped the move. M7-1B-2R writes the symmetric row: a sensor mover is not stopped by a solid. M7-1B-1 measured a tilted cast normal on repeated grazes along a large box. The skin-band amendment corrects that classification. The 1,000-step hash is still the sphere-sphere stop, not that graze.

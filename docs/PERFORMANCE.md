@@ -1014,3 +1014,13 @@ M7-1B-2, recorded 2026-10-28 at 11:18 AM America/Chicago, same machine (Apple M5
 | Sensors on the path, 100 colliders | 50.1 µs | 49.2 µs | 100 | 11.09 |
 | One motor crossing 8 sensors | 3.9 µs | 3.8 µs | 9 | 30.00 |
 
+M7-1B-2R, recorded 2026-10-28 at 12:08 PM America/Chicago, same machine, OS, Rust, command, warmup, and sample count. The mover is still solid in every row. `sweep 10` and `sweep 100` still have zero sensors, still stop at x = 11.09, and still skip the trigger pair pass. `cross 8` still runs the full 30 units. This table does not replace the 11:18 AM rows. The medians are a later sample of the same fixtures. They are higher than that morning sample, and the 100-sensor row differs between these two invocations. The added test is one boolean on the mover. It is not a second solid sweep.
+
+| Call | First median | Second median | Indexed | Stopped x |
+|---|---|---|---|---|
+| Sweep, 10 colliders, zero sensors | 3.7 µs | 3.3 µs | 10 | 11.09 |
+| Sweep, 100 colliders, zero sensors | 18.5 µs | 17.6 µs | 100 | 11.09 |
+| Sensors on the path, 10 colliders | 7.5 µs | 7.3 µs | 10 | 11.09 |
+| Sensors on the path, 100 colliders | 108.9 µs | 83.6 µs | 100 | 11.09 |
+| One motor crossing 8 sensors | 6.6 µs | 6.5 µs | 9 | 30.00 |
+

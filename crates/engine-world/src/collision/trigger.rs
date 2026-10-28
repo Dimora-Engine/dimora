@@ -11,10 +11,8 @@
 //! hit is a boolean. `MoveResult.applied` is the net origin change and is not cast as one segment.
 //! A direct transform write has no segments, so it can only change the endpoint sets.
 //!
-//! Sensor obstacles never stop a sweep. The sweep does not read the mover's own sensor flag, so a
-//! motor whose collider is a sensor is still stopped by solids. Trigger casts follow those
-//! committed segments. Making a sensor mover pass through solids would be a motor change and is
-//! not part of this pass.
+//! A pair blocks only when both colliders are solid. A sensor mover still writes its committed
+//! segments, and those segments are cast here. A rejected move writes none.
 
 use engine_math::{Quat, Vec3};
 use hecs::Entity;

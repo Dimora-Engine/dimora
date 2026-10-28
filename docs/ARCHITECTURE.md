@@ -237,7 +237,11 @@ read that flag. After the rebuild, each `CharacterMotor` that has a `MoveIntent`
 ascending `Entity` order. The intent is a world-space displacement for that iteration, not a
 velocity and not a camera direction. World axes stay world axes: +X right, +Y up, +Z forward into
 the scene, and XZ is the ground plane. A camera rotation does not rotate them. Locked axes are
-cleared on the request, on each slide, and on the one recovery push. The sweep tests solid
+cleared on the request, on each slide, and on the one recovery push. A pair blocks only when
+both colliders are solid. A sensor on either side is skipped before the closest-feature query, so
+a sensor mover applies its unlocked displacement and stores no contact normal from a solid. That
+displacement is still a committed segment for trigger casts. One gameplay entity has one collider.
+An indexed descendant still rejects the ancestor motor. The sweep tests the remaining solid
 colliders in a bounds volume that covers the start and the end of the remaining displacement, plus
 skin. A gap inside `(-1e-4, skin + 1e-4]` is classified with the closest-feature wall: motion into
 that wall blocks at time zero, and tangent or separating motion drops that candidate while the other
@@ -635,7 +639,8 @@ criteria. Open decisions stay in [DECISIONS.md](DECISIONS.md).
   transforms, a linear AABB list, and no rigid-body pipeline. A nonblocking zero-time skin contact
   is dropped and the rest of that remainder is still tested. M7-1B-1G classifies a gap inside the
   skin band with the closest-feature wall. M7-1B-2 sends `TriggerEvent` on the existing queue from
-  committed movement segments. Gravity, jumping, grounded support, and the `spatial_scene` pillar
+  committed movement segments. M7-1B-2R makes a sensor pair nonblocking whichever side moves.
+  Gravity, jumping, grounded support, and the `spatial_scene` pillar
   block are not written.
 * **Sprite-sheet animation** (M8), **a character gameplay layer with an API surface list** (M9), **a UI
   runtime** (M10), **pose-first skeletal animation** (M11) and **3D skinned characters** (M12), within the

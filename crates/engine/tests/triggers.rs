@@ -103,6 +103,7 @@ fn a_zero_fixed_step_keeps_the_pair_and_emits_nothing() {
 #[test]
 fn cameras_and_visual_children_do_not_change_trigger_events() {
     let bare = trace(None, false, false);
+    let sensor_motor = sensor_trace(None, false, false);
     let cameras = [
         None,
         Some(Camera::perspective(50.0)),
@@ -112,9 +113,50 @@ fn cameras_and_visual_children_do_not_change_trigger_events() {
     ];
     for camera in cameras {
         assert_eq!(trace(camera, false, false), bare);
+        assert_eq!(sensor_trace(camera, false, false), sensor_motor);
     }
     assert_eq!(trace(None, true, false), bare);
     assert_eq!(trace(None, false, true), bare);
+    assert_eq!(sensor_trace(None, true, false), sensor_motor);
+    assert_eq!(sensor_trace(None, false, true), sensor_motor);
+}
+
+fn sensor_trace(camera: Option<Camera>, sprite: bool, mesh: bool) -> Vec<&'static str> {
+    let mut game = Game::new(GameConfig::default());
+    let seen = watch(&mut game);
+    if let Some(camera) = camera {
+        game.world.spawn((Transform::from_xyz(3.0, 4.0, -8.0), camera));
+    }
+    let character = game.world.spawn((
+        Transform::IDENTITY,
+        Collider::sphere(0.4).sensor(),
+        CharacterMotor { skin: 0.0, ..CharacterMotor::default() },
+    ));
+    if sprite {
+        game.world.spawn_child(character, (Transform::from_xyz(0.0, 1.0, 0.0), Sprite::new("hero")));
+    }
+    if mesh {
+        game.world.spawn_child(character, (Transform::from_xyz(0.0, 1.0, 0.0), Mesh::new("hero")));
+    }
+    let solid = game.world.spawn((Transform::from_xyz(2.0, 0.0, 0.0), Collider::aabb_box(Vec3::new(0.05, 1.5, 1.5))));
+    game.add_fixed_system("go", move |world| {
+        let _ = world.insert(character, (MoveIntent::new(Vec3::new(5.0, 0.0, 0.0)),));
+    });
+    game.step(fixed_step());
+    let moved = game.world.component::<Transform>(character).unwrap().position;
+    assert!(moved.approx_eq(Vec3::new(5.0, 0.0, 0.0), 1e-4), "moved {moved:?}");
+    let result = game.world.component::<MoveResult>(character).unwrap();
+    assert_eq!(result.status, MoveStatus::Completed);
+    assert!(result.normals.is_empty());
+    let events = seen.borrow().clone();
+    assert_eq!(events, vec![entered(character, solid), exited(character, solid)]);
+    events
+        .iter()
+        .map(|event| match event {
+            TriggerEvent::Entered { .. } => "entered",
+            TriggerEvent::Exited { .. } => "exited",
+        })
+        .collect()
 }
 
 fn trace(camera: Option<Camera>, sprite: bool, mesh: bool) -> Vec<&'static str> {
