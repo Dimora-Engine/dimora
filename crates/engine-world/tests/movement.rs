@@ -2,8 +2,8 @@
 
 use engine_math::{Quat, Transform, Vec3};
 use engine_world::{
-    register_world_components, sync_collision, CharacterMotor, Collider, CollisionWorld, ComponentRegistry, MoveIntent,
-    MoveResult, MoveStatus, Persistence, World,
+    register_world_components, sync_collision, CharacterMotor, Collider, ColliderShape, CollisionWorld,
+    ComponentRegistry, MoveIntent, MoveResult, MoveStatus, Persistence, World,
 };
 
 const EPS: f32 = 1e-4;
@@ -147,6 +147,9 @@ fn tie_normal(high_first: bool) -> f32 {
 
 #[test]
 fn penetration_pushes_once_then_the_request_stops_on_the_surface() {
+    // The box face is x = 0. The sphere center starts at x = 0.3, so the overlap is 0.8.
+    // The push is 0.81 along -X (overlap plus skin). Applied displacement is -0.81 and the
+    // center finishes at 0.3 - 0.81 = -0.51. Those are one fixture, not two results.
     let mut world = fresh();
     world.spawn((Transform::from_xyz(5.0, 0.0, 0.0), Collider::aabb_box(Vec3::splat(5.0))));
     let entity = world.spawn((Transform::from_xyz(0.3, 0.0, 0.0), Collider::sphere(0.5), motor(0.01)));
@@ -455,4 +458,360 @@ fn mix(hash: u64, position: Vec3) -> u64 {
 
 fn center_missing(world: &World, entity: engine_world::Entity) -> bool {
     world.resource::<CollisionWorld>().center(entity).is_none()
+}
+
+fn spawn_face(world: &mut World, half_y: f32, half_z: f32) {
+    let half_x = 2.0;
+    world.spawn((Transform::from_xyz(half_x, 0.0, 0.0), Collider::aabb_box(Vec3::new(half_x, half_y, half_z))));
+}
+
+fn assert_moved(kind: &str, start: Vec3, motion: Vec3, end: Vec3, result: &MoveResult) {
+    assert!(
+        end.approx_eq(start + motion, EPS),
+        "{kind} start {start:?} motion {motion:?} end {end:?} status {:?} normals {:?}",
+        result.status,
+        result.normals
+    );
+}
+
+#[test]
+fn tangent_requests_along_a_flat_wall_keep_their_length() {
+    let motions = [Vec3::Y * 4.0, -Vec3::Y * 4.0, Vec3::Z * 4.0, -Vec3::Z * 4.0];
+    for skin in [0.0, 0.01] {
+        for half_z in [4.0, 8_000.0] {
+            for motion in motions {
+                let start = Vec3::new(-(0.5 + skin), 0.0, 0.0);
+                let mut world = fresh();
+                spawn_face(&mut world, 6.0, half_z);
+                let sphere =
+                    world.spawn((Transform::from_xyz(start.x, start.y, start.z), Collider::sphere(0.5), motor(skin)));
+                let result = slide(&mut world, sphere, motion);
+                assert_moved("sphere", start, motion, position(&world, sphere), &result);
+                assert!(result.normals.iter().all(|normal| normal.yz_flat()), "tilted {result:?}");
+
+                let mut world = fresh();
+                spawn_face(&mut world, 6.0, half_z);
+                let capsule = world.spawn((
+                    Transform::from_xyz(start.x, start.y, start.z),
+                    Collider::capsule(0.3, 0.4),
+                    motor(skin),
+                ));
+                let capsule_start = Vec3::new(-(0.3 + skin), 0.0, 0.0);
+                world.component_mut::<Transform>(capsule).unwrap().position = capsule_start;
+                let result = slide(&mut world, capsule, motion);
+                assert_moved("capsule", capsule_start, motion, position(&world, capsule), &result);
+            }
+        }
+    }
+}
+
+#[test]
+fn a_capsule_lying_along_the_wall_stays_on_the_face() {
+    let rotation = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
+    for skin in [0.0, 0.01] {
+        let start = Vec3::new(-(0.25 + skin), 0.0, 0.0);
+        let mut world = fresh();
+        spawn_face(&mut world, 4.0, 8_000.0);
+        let entity = world.spawn((
+            Transform::from_xyz(start.x, start.y, start.z).with_rotation(rotation),
+            Collider::capsule(0.25, 1.5),
+            motor(skin),
+        ));
+        let motion = Vec3::Z * 4.0;
+        let result = slide(&mut world, entity, motion);
+        assert_moved("horizontal capsule", start, motion, position(&world, entity), &result);
+    }
+}
+
+#[test]
+fn twenty_diagonal_steps_along_a_wall_do_not_drift_or_amplify() {
+    let skin = 0.01;
+    let start = Vec3::new(-(0.5 + skin), 1.0, 0.0);
+    let mut world = fresh();
+    spawn_face(&mut world, 4.0, 8_000.0);
+    let entity = world.spawn((Transform::from_xyz(start.x, start.y, start.z), Collider::sphere(0.5), motor(skin)));
+    for _ in 0..20 {
+        let result = slide(&mut world, entity, Vec3::new(4.0, 0.0, 4.0));
+        assert!(!result.rejected());
+        assert!(result.applied.length() <= 4.0 + EPS, "amplified {:?}", result.applied);
+    }
+    near(position(&world, entity), start + Vec3::new(0.0, 0.0, 80.0));
+}
+
+#[test]
+fn into_and_away_requests_respect_the_skin_band() {
+    for into in [0.001, 0.05] {
+        let start = Vec3::new(-0.51, 0.0, 0.0);
+        let mut world = fresh();
+        spawn_face(&mut world, 4.0, 8.0);
+        let entity = world.spawn((Transform::from_xyz(start.x, start.y, start.z), Collider::sphere(0.5), motor(0.01)));
+        let result = slide(&mut world, entity, Vec3::new(into, 0.0, 4.0));
+        assert_moved("into", start, Vec3::new(0.0, 0.0, 4.0), position(&world, entity), &result);
+        assert!(result.blocked());
+        assert!(result.normals[0].approx_eq(-Vec3::X, 1e-3), "normal {:?}", result.normals);
+    }
+
+    let start = Vec3::new(-0.51, 0.0, 0.0);
+    let mut world = fresh();
+    spawn_face(&mut world, 4.0, 8.0);
+    let entity = world.spawn((Transform::from_xyz(start.x, start.y, start.z), Collider::sphere(0.5), motor(0.01)));
+    let away = slide(&mut world, entity, Vec3::new(-0.05, 0.0, 4.0));
+    assert_moved("away", start, Vec3::new(-0.05, 0.0, 4.0), position(&world, entity), &away);
+    assert_eq!(away.status, MoveStatus::Completed);
+}
+
+#[test]
+fn repeated_tiny_into_steps_stay_inside_the_tolerance() {
+    let radius = 0.5;
+    let start = Vec3::new(-radius, 0.0, 0.0);
+    let mut world = fresh();
+    spawn_face(&mut world, 2.0, 2.0);
+    let entity = world.spawn((Transform::from_xyz(start.x, start.y, start.z), Collider::sphere(radius), motor(0.0)));
+    for _ in 0..40 {
+        slide(&mut world, entity, Vec3::new(5e-5, 0.0, 0.0));
+    }
+    let end = position(&world, entity);
+    let penetration = end.x - start.x;
+    assert!(penetration < 2e-4, "40 steps of 5e-5 penetrated {penetration}");
+    assert!(penetration > -2e-4, "recovery jumped by {penetration}");
+    assert!(end.y.abs() < EPS && end.z.abs() < EPS, "end {end:?}");
+}
+
+#[test]
+fn a_skin_wall_does_not_hide_the_wall_ahead() {
+    let mut world = fresh();
+    world.spawn((Transform::from_xyz(-2.51, 0.0, 0.0), Collider::aabb_box(Vec3::new(2.0, 3.0, 10.0))));
+    world.spawn((Transform::from_xyz(0.0, 0.0, 4.0), Collider::aabb_box(Vec3::new(2.0, 2.0, 1.0))));
+    let entity = world.spawn((Transform::IDENTITY, Collider::sphere(0.5), motor(0.01)));
+    let result = slide(&mut world, entity, Vec3::new(0.0, 0.0, 4.0));
+    near(position(&world, entity), Vec3::new(0.0, 0.0, 2.49));
+    assert!(result.blocked());
+    assert!(result.normals[0].approx_eq(-Vec3::Z, 1e-3), "normal {:?}", result.normals);
+}
+
+#[test]
+fn several_near_skin_walls_still_stop_on_the_wall_ahead() {
+    let mut world = fresh();
+    world.spawn((Transform::from_xyz(-2.51, 0.0, 0.0), Collider::aabb_box(Vec3::new(2.0, 3.0, 10.0))));
+    world.spawn((Transform::from_xyz(2.51, 0.0, 0.0), Collider::aabb_box(Vec3::new(2.0, 3.0, 10.0))));
+    world.spawn((Transform::from_xyz(0.0, 2.51, 0.0), Collider::aabb_box(Vec3::new(3.0, 2.0, 10.0))));
+    world.spawn((Transform::from_xyz(0.0, 0.0, 4.0), Collider::aabb_box(Vec3::new(2.0, 2.0, 1.0))));
+    let entity = world.spawn((Transform::IDENTITY, Collider::sphere(0.5), motor(0.01)));
+    let result = slide(&mut world, entity, Vec3::Z * 4.0);
+    near(position(&world, entity), Vec3::new(0.0, 0.0, 2.49));
+    assert!(result.blocked());
+    assert!(result.applied.x.abs() < EPS && result.applied.y.abs() < EPS, "drift {:?}", result.applied);
+}
+
+#[test]
+fn supported_shape_pairs_slide_along_a_contact_and_reverse() {
+    let skin = 0.01;
+    let cases = [
+        (Collider::sphere(0.4), 0.4, Collider::sphere(0.5), 0.5),
+        (Collider::sphere(0.4), 0.4, Collider::capsule(0.3, 0.6), 0.3),
+        (Collider::capsule(0.3, 0.5), 0.3, Collider::capsule(0.2, 0.7), 0.2),
+        (Collider::sphere(0.4), 0.4, Collider::aabb_box(Vec3::new(0.5, 1.0, 1.5)), 0.5),
+        (Collider::capsule(0.3, 0.4), 0.3, Collider::aabb_box(Vec3::new(0.6, 1.2, 2.0)), 0.6),
+        (Collider::aabb_box(Vec3::new(0.4, 0.5, 0.4)), 0.4, Collider::aabb_box(Vec3::new(0.7, 1.0, 1.3)), 0.7),
+    ];
+    for (mover_shape, mover_extent, obstacle_shape, obstacle_extent) in cases {
+        let motion = Vec3::Z * 4.0;
+        let end = slide_separated(mover_shape, obstacle_shape, mover_extent, obstacle_extent, skin, motion);
+        assert!(end.approx_eq(motion, EPS), "mover {mover_shape:?} end {end:?}");
+        let reversed = slide_separated(obstacle_shape, mover_shape, obstacle_extent, mover_extent, skin, motion);
+        assert!(reversed.approx_eq(motion, EPS), "reversed {obstacle_shape:?} end {reversed:?}");
+    }
+}
+
+fn slide_separated(
+    mover_shape: Collider,
+    obstacle_shape: Collider,
+    mover_extent: f32,
+    obstacle_extent: f32,
+    skin: f32,
+    motion: Vec3,
+) -> Vec3 {
+    let mut world = fresh();
+    let separation = mover_extent + obstacle_extent + skin;
+    world.spawn((Transform::from_xyz(separation, 0.0, 0.0), obstacle_shape));
+    let mover = world.spawn((Transform::IDENTITY, mover_shape, motor(skin)));
+    slide(&mut world, mover, motion);
+    position(&world, mover)
+}
+
+#[test]
+fn a_rotated_wall_keeps_a_face_normal_for_tangent_and_into_motion() {
+    let yaw = Quat::from_rotation_y(30.0_f32.to_radians());
+    let outward = yaw.rotate(Vec3::X);
+    let tangent = yaw.rotate(Vec3::Z);
+    let radius = 0.5;
+    let skin = 0.01;
+    let half_x = 1.0;
+    let box_center = -outward * (half_x + radius + skin);
+    let mut world = fresh();
+    world.spawn((
+        Transform::from_xyz(box_center.x, box_center.y, box_center.z).with_rotation(yaw),
+        Collider::aabb_box(Vec3::new(half_x, 3.0, 6.0)),
+    ));
+    let entity = world.spawn((Transform::IDENTITY, Collider::sphere(radius), motor(skin)));
+    let along = slide(&mut world, entity, tangent * 4.0);
+    assert_moved("yaw tangent", Vec3::ZERO, tangent * 4.0, position(&world, entity), &along);
+
+    let mut world = fresh();
+    world.spawn((
+        Transform::from_xyz(box_center.x, box_center.y, box_center.z).with_rotation(yaw),
+        Collider::aabb_box(Vec3::new(half_x, 3.0, 6.0)),
+    ));
+    let entity = world.spawn((Transform::IDENTITY, Collider::sphere(radius), motor(skin)));
+    let into = slide(&mut world, entity, -outward * 0.05 + tangent * 4.0);
+    assert_moved("yaw into", Vec3::ZERO, tangent * 4.0, position(&world, entity), &into);
+    assert!(into.normals[0].approx_eq(outward, 1e-3), "normal {:?}", into.normals);
+
+    let mover_half = 0.4;
+    let pair_center = -outward * (half_x + mover_half + skin);
+    let mut world = fresh();
+    world.spawn((
+        Transform::from_xyz(pair_center.x, pair_center.y, pair_center.z).with_rotation(yaw),
+        Collider::aabb_box(Vec3::new(half_x, 3.0, 6.0)),
+    ));
+    let boxes =
+        world.spawn((Transform::IDENTITY.with_rotation(yaw), Collider::aabb_box(Vec3::splat(mover_half)), motor(skin)));
+    let along = slide(&mut world, boxes, tangent * 4.0);
+    assert_moved("yawed boxes", Vec3::ZERO, tangent * 4.0, position(&world, boxes), &along);
+}
+
+#[test]
+fn a_parented_mover_slides_along_a_world_wall() {
+    let start = Vec3::new(-0.51, 2.0, 1.0);
+    let mut world = fresh();
+    world.spawn((Transform::from_xyz(-3.02, 2.0, 1.0), Collider::aabb_box(Vec3::new(2.0, 4.0, 8.0))));
+    let parent =
+        world.spawn((Transform::from_xyz(start.x, start.y, start.z).with_rotation(Quat::from_rotation_y(0.7)),));
+    let child = world.spawn_child(parent, (Transform::IDENTITY, Collider::sphere(0.5), motor(0.01)));
+    let result = slide(&mut world, child, Vec3::Z * 4.0);
+    near(center(&world, child), start + Vec3::Z * 4.0);
+    assert_eq!(result.status, MoveStatus::Completed);
+    assert!(result.applied.approx_eq(Vec3::Z * 4.0, EPS), "applied {:?}", result.applied);
+}
+
+#[test]
+fn reflected_wall_and_mover_keep_a_tangent_slide() {
+    let mut world = fresh();
+    let wall = world.spawn((
+        Transform::IDENTITY.with_scale(Vec3::new(-1.0, 1.0, 1.0)),
+        Collider::aabb_box(Vec3::new(1.0, 2.0, 4.0)).with_offset(Vec3::X * 2.0),
+    ));
+    sync_collision(&mut world);
+    let wall_center = center(&world, wall);
+    let ColliderShape::Box { half_extents } = world.resource::<CollisionWorld>().indexed_shape(wall).unwrap() else {
+        panic!("reflected box was not indexed");
+    };
+    let face = wall_center.x + half_extents.x;
+    let start = Vec3::new(face + 0.5 + 0.01, 0.0, 0.0);
+    let entity = world.spawn((Transform::from_xyz(start.x, start.y, start.z), Collider::sphere(0.5), motor(0.01)));
+    let result = slide(&mut world, entity, Vec3::Z * 4.0);
+    assert_moved("reflected wall", start, Vec3::Z * 4.0, position(&world, entity), &result);
+
+    let mut world = fresh();
+    world.spawn((Transform::from_xyz(3.0, 0.0, 0.0), Collider::aabb_box(Vec3::new(2.0, 2.0, 4.0))));
+    let mover = world.spawn((Transform::IDENTITY.with_scale(Vec3::splat(-2.0)), Collider::sphere(0.5), motor(0.0)));
+    sync_collision(&mut world);
+    let radius = match world.resource::<CollisionWorld>().indexed_shape(mover).unwrap() {
+        ColliderShape::Sphere { radius } => radius,
+        other => panic!("indexed {other:?}"),
+    };
+    let face = 1.0;
+    let start = Vec3::new(face - radius, 0.0, 0.0);
+    world.component_mut::<Transform>(mover).unwrap().position = start;
+    let result = slide(&mut world, mover, Vec3::Z * 4.0);
+    near(center(&world, mover), start + Vec3::Z * 4.0);
+    assert!(result.applied.approx_eq(Vec3::Z * 4.0, EPS), "applied {:?}", result.applied);
+}
+
+#[test]
+fn small_and_large_colliders_keep_a_tangent_slide() {
+    for (radius, skin, half_z) in [(0.02, 0.0, 4.0), (0.02, 0.01, 4.0), (2.0, 0.01, 8_000.0)] {
+        let start = Vec3::new(-(radius + skin), 0.0, 0.0);
+        let mut world = fresh();
+        spawn_face(&mut world, 6.0, half_z);
+        let entity =
+            world.spawn((Transform::from_xyz(start.x, start.y, start.z), Collider::sphere(radius), motor(skin)));
+        let result = slide(&mut world, entity, Vec3::Z * 4.0);
+        assert_moved("size", start, Vec3::Z * 4.0, position(&world, entity), &result);
+    }
+
+    let mut world = fresh();
+    spawn_face(&mut world, 6.0, 20.0);
+    let entity =
+        world.spawn((Transform::from_xyz(-1.5, 0.0, 0.0), Collider::aabb_box(Vec3::new(1.5, 0.4, 1.5)), motor(0.0)));
+    let result = slide(&mut world, entity, Vec3::Z * 4.0);
+    assert_moved("large box", Vec3::new(-1.5, 0.0, 0.0), Vec3::Z * 4.0, position(&world, entity), &result);
+}
+
+#[test]
+fn a_finite_wall_does_not_trap_a_tangent_slide() {
+    let start = Vec3::new(-0.5, 0.0, 0.0);
+    let mut world = fresh();
+    spawn_face(&mut world, 2.0, 0.5);
+    let entity = world.spawn((Transform::from_xyz(start.x, start.y, start.z), Collider::sphere(0.5), motor(0.0)));
+    let result = slide(&mut world, entity, Vec3::Z * 4.0);
+    assert_moved("past the end", start, Vec3::Z * 4.0, position(&world, entity), &result);
+    assert_eq!(result.status, MoveStatus::Completed);
+}
+
+#[test]
+fn corners_and_edges_keep_a_diagonal_normal() {
+    let radius = 0.5;
+    let corner = Vec3::new(1.0, -1.0, 1.0);
+    let outward = Vec3::new(-1.0, -1.0, -1.0).normalized();
+    let expected = corner + outward * radius;
+    let start = corner + outward * (radius + 2.0);
+    let mut world = fresh();
+    world.spawn((Transform::from_xyz(2.0, 0.0, 2.0), Collider::aabb_box(Vec3::splat(1.0))));
+    let entity = world.spawn((Transform::from_xyz(start.x, start.y, start.z), Collider::sphere(radius), motor(0.0)));
+    let result = slide(&mut world, entity, -outward * 3.0);
+    near(position(&world, entity), expected);
+    assert!(result.normals[0].approx_eq(outward, 1e-3), "corner {:?}", result.normals);
+
+    let edge = Vec3::new(1.0, 0.0, 1.0);
+    let edge_direction = edge.normalized();
+    let edge_stop = edge - edge_direction * 0.3;
+    let edge_start = edge_stop - edge_direction * 2.0;
+    let mut world = fresh();
+    world.spawn((Transform::from_xyz(2.0, 0.0, 2.0), Collider::aabb_box(Vec3::splat(1.0))));
+    let capsule = world.spawn((
+        Transform::from_xyz(edge_start.x, edge_start.y, edge_start.z),
+        Collider::capsule(0.3, 0.4),
+        motor(0.0),
+    ));
+    let result = slide(&mut world, capsule, edge_direction * 3.0);
+    near(position(&world, capsule), edge_stop);
+    assert!(result.normals[0].approx_eq(-edge_direction, 1e-3), "edge {:?}", result.normals);
+    assert!(result.normals[0].y.abs() < 1e-3, "edge gained height {:?}", result.normals);
+
+    let sphere_at = Vec3::new(2.0, 0.0, 2.0);
+    let toward_sphere = sphere_at.normalized();
+    let support = 0.3 * std::f32::consts::SQRT_2;
+    let box_stop = sphere_at - toward_sphere * (radius + support);
+    let box_start = box_stop - toward_sphere * 2.0;
+    let mut world = fresh();
+    world.spawn((Transform::from_xyz(sphere_at.x, sphere_at.y, sphere_at.z), Collider::sphere(radius)));
+    let box_mover = world.spawn((
+        Transform::from_xyz(box_start.x, box_start.y, box_start.z),
+        Collider::aabb_box(Vec3::splat(0.3)),
+        motor(0.0),
+    ));
+    let result = slide(&mut world, box_mover, toward_sphere * 3.0);
+    near(position(&world, box_mover), box_stop);
+    assert!(result.normals[0].approx_eq(-toward_sphere, 1e-3), "box edge {:?}", result.normals);
+}
+
+trait FlatNormal {
+    fn yz_flat(self) -> bool;
+}
+
+impl FlatNormal for Vec3 {
+    fn yz_flat(self) -> bool {
+        self.y.abs() < 1e-3 && self.z.abs() < 1e-3
+    }
 }

@@ -573,16 +573,23 @@ Missing from the original category list and now tracked: **save games** (34), **
 * **Not initially.** Rigid bodies, joints, continuous collision for dynamic bodies, convex colliders, navmesh.
 
 ### 24. Physics and movement
-* **Now.** Partial (M7-1B-1). `CharacterMotor` stores skin (default `0.01`), `max_slides` (default 4),
-  and `locked_axes` (`BVec3`, default none). `MoveIntent.translation` is the world displacement for
-  one fixed iteration. The sealed collision system sweeps it, writes `Transform.position`, patches
-  that collider, and stores `MoveResult`. `requested` is the intent before axis locks. `applied` is
-  the world origin change, including one recovery push. `Blocked` and `Rejected` are exclusive.
-  Rejection leaves the transform and the index unchanged. A later step that does not process a new
-  intent leaves the previous result in place. That result is the last resolution, not a ground
-  contact. Full XYZ movement is the default. A sprite or mesh child does not change it, and neither
-  does the camera. **Not implemented.** Gravity, jumping, walking acceleration, a grounded flag,
-  floor/wall/ceiling labels, trigger events, stairs, slopes, and moving platforms.
+* **Now.** Partial (M7-1B-1, with the M7-1B-1G near-tangent correction). `CharacterMotor` stores skin
+  (default `0.01`), `max_slides` (default 4), and `locked_axes` (`BVec3`, default none).
+  `MoveIntent.translation` is the world displacement for one fixed iteration. The sealed collision
+  system sweeps it, writes `Transform.position`, patches that collider, and stores `MoveResult`.
+  A gap inside `(-1e-4, skin + 1e-4]` uses the closest-feature wall instead of the shape-cast normal.
+  Tangent and separating motion in that band drop that candidate and keep testing the others. Inward
+  motion at or above `1e-4` blocks at time zero. Wider gaps keep the cast time of impact. Deeper
+  overlap stays one recovery push. Tested pairs are sphere-sphere, sphere-capsule, capsule-capsule,
+  sphere-box, capsule-box, and box-box, including reversed roles, rotated and reflected boxes, and
+  parented colliders. `requested` is the intent before axis locks. `applied` is the world origin
+  change, including one recovery push. `Blocked` and `Rejected` are exclusive. Rejection leaves the
+  transform and the index unchanged. A later step that does not process a new intent leaves the
+  previous result in place. That result is the last resolution, not a ground contact. Full XYZ
+  movement is the default. A sprite or mesh child does not change it, and neither does the camera.
+  **Not implemented.** Gravity, jumping, walking acceleration, a grounded flag, floor/wall/ceiling
+  labels, trigger events, stairs, slopes, and moving platforms. Triangle meshes and convex hulls are
+  not supported. The `1e-4` band is an absolute tolerance, not a guarantee at every world scale.
   **Depends on.** M7-1A and [ADR-0025](adr/0025-kinematic-collision.md). M7 is not complete.
 * **Not initially.** Rigid-body dynamics, joints, ragdolls, vehicles. The broadphase may be quadratic
   until a later milestone replaces the candidate function.

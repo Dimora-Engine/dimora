@@ -175,13 +175,13 @@ A path with more than `max_slides` segments does not cast the discarded tail. Th
 
 For each slide while `remainder` is longer than `1e-6` and the count is below `max_slides`:
 
-1. Cast against solid candidates. `max_time_of_impact = 1`, `target_distance = skin`, `stop_at_penetration = false`, `compute_impact_geometry_on_penetration = true`. Velocity is `remainder`.
-2. Among hits within `1e-5` of the earliest time, the lowest `Entity` supplies the normal. `wall = normalize(-(rotation * normal1))`. A non-finite or near-zero normal drops the remainder and stops.
-3. No hit: apply `remainder`, then stop.
-4. Otherwise `traveled = remainder * toi` and `unconsumed = remainder * (1 - toi)`. Apply `traveled` only. The full request is never reused.
-5. `PenetratingOrWithinTargetDist` is not penetration. Call `contact`. A negative `dist` is penetration. Push once by the unlocked part of `-normal1 * (-dist + skin)`. If the unlocked part is shorter than `1e-4` while the locked part was required, apply nothing and log. Do not push a second time.
-6. A non-negative `dist` at time zero is skin contact, not a push. If `remainder` points into the wall (`dot(remainder, wall) <= 0`), `traveled` is zero and `unconsumed` is `remainder`. If `remainder` points out of the wall (`dot(remainder, wall) > 0`), that contact does not block this sweep: drop it and keep casting the other solid candidates over the same `remainder`. Step 2 still selects the earliest remaining hit and breaks ties by the lowest `Entity`. Apply the whole `remainder` only when no blocking candidate remains. The dropped surface stays in the world. The next slide segment evaluates it again under the new `remainder`. Penetration recovery, `max_slides`, locked world axes, and `wall = normalize(-(rotation * normal1))` are unchanged.
-7. Project only `unconsumed` onto the plane: if `dot(unconsumed, wall) < 0`, subtract that component. Then clear locked axes again. That vector is the next `remainder`.
+1. For each solid candidate in the swept bounds, compute the closest-feature gap and wall. The wall is world-space and points from the obstacle toward the mover. Do not rotate it again. A sphere core is its center. A capsule core is its local-Y segment. A cuboid core is the finite box. Cuboid against cuboid uses Parry's SAT contact, and the wall is the negation of world-space `normal1`. A non-finite gap drops the remainder and stops.
+2. Skin band: `-1e-4 < gap <= skin + 1e-4`. Do not use the shape-cast time or `normal1`. If `dot(remainder, wall) < -1e-4`, the candidate blocks at time zero. Otherwise it is tangent or separating for this sweep: drop it and keep testing the other candidates over the same `remainder`. `1e-4` is an absolute world-unit tolerance, not a fraction of the request. A missing wall drops the remainder and stops. The cast normal is not a substitute.
+3. Deeper than the band (`gap <= -1e-4`) keeps the one recovery push. A time-zero cast whose `contact` distance is negative pushes once by the unlocked part of `-normal1 * (-dist + skin)`. That `normal1` is already world-space. If the unlocked part is shorter than `1e-4` while the locked part was required, apply nothing and log. Do not push a second time. A cast that does not confirm the penetration does not contribute its time of impact. A separating remainder does not block. An approaching remainder blocks at time zero on the feature wall when `dot(remainder, wall) < -1e-4`.
+4. Farther than the band (`gap > skin + 1e-4`), cast with `max_time_of_impact = 1`, `target_distance = skin`, `stop_at_penetration = false`, and `compute_impact_geometry_on_penetration = true`. Velocity is `remainder`. A time of impact in `(1e-6, 1]` blocks, and the slide normal is the feature wall at the impact pose. A time-zero cast is ignored because it disagrees with the gap. A missing impact wall drops the remainder and stops.
+5. Among blocking hits within `1e-5` of the earliest time, the lowest `Entity` wins. No blocking hit: apply `remainder`, then stop.
+6. Otherwise `traveled = remainder * toi` and `unconsumed = remainder * (1 - toi)`. Apply `traveled` only. The full request is never reused.
+7. Project only `unconsumed` onto the plane: if `dot(unconsumed, wall) < 0`, subtract that component. Then clear locked axes again. That vector is the next `remainder`. A dropped surface stays in the world and is eligible on the next segment.
 
 After `max_slides`, drop whatever remains. `Err(Unsupported)` or a non-finite position drops the rest and keeps the last finite origin. The applied world delta is written through the parent inverse. Then that entry is patched.
 
@@ -227,6 +227,18 @@ Deferred commands queued by a fixed system flush after the rebuild in that itera
 
 `parry3d`'s `alloc` feature is enabled. Ball, cuboid, and capsule sweeps go through the support-map cast, and that code is behind `alloc`. `spade` stays off. The sweep, filter, transform, and fixed-step rules above are unchanged.
 
+### 2026-10-27, owner approved (M7-1B-1G)
+
+Near-tangent shape casts are not a wall normal. Parry's support-map cast replaces its normal from a contact query only when the time of impact is below `1e-4`. Hits just above that cutoff can return a normal aligned with the motion and a tiny positive time. The M7-1B-1 sweep treated that hit as blocking and consumed the move. On this machine, a sphere of radius 0.5 with skin 0.01, already on a box whose Z half-extent is 8000, applied about `0.00049` of a `+Z` request of length 4. The same request along `-Z` applied the full 4. A capsule on that wall left the surface. Those are two faults: the cast normal, and the solver spending the move on it.
+
+The replacement is the sweep above. The closest-feature wall is selected from the primitive cores, in world space, after collider offset and signed scale have already been folded into the indexed pose. Faces, edges, and corners are the closest point on that core. The pair is evaluated in either order, and the wall is then oriented from the obstacle toward the mover. Shape-cast `normal1` stays mover-local. Contact `normal1` stays world-space. A world-space normal is not rotated again.
+
+Inside the skin band, tangent and separating motion drop that candidate only. Other candidates are still tested over the same remainder, so a near wall does not hide a blocking wall ahead. Inward motion at or above the `1e-4` threshold blocks at time zero and the unconsumed remainder is projected. A true approach from outside the band still uses the cast time and the existing earliest-`Entity` order. The one-push recovery, locked world axes, parent writeback, index patch, and `MoveResult` fields are unchanged.
+
+If the cores meet and no face, edge, or corner direction is usable, or the gap is not finite, the remainder is dropped and the move stops at the last finite position. That path does not fall back to the cast normal, does not tunnel, and does not write a non-finite position. Triangle meshes and convex hulls are outside this checkpoint. Cuboid-cuboid still depends on Parry's SAT contact. The `1e-4` band is a numerical compromise at this scale: a true approach smaller than that can be absorbed, and a wrong cast time while the gap is outside the band is not repaired.
+
+The overlap fixture in the movement tests is one case. The sphere center starts at `x = 0.3` against the face `x = 0`, radius `0.5`, skin `0.01`. The overlap is `0.8`. The push is `0.81` along `-X`, so the applied displacement is `-0.81` and the final center is `-0.51`.
+
 ## Evidence and revisit conditions
 
 Probe, not in the repo: `/tmp/dimora-parry-probe`, `parry3d` 0.31.1, 2026-10-27, America/Chicago. `cargo +1.99.0 run` and `cargo +1.90.0 run` (SDKROOT `MacOSX26.5.sdk`) both exited 0. Asserted overlap, a penetrating `contact` with world `normal1 = +X`, a ray time of impact `4` and a world outward normal, an identity sweep time of impact `3` with local `normal1 = +X`, and the yawed sweep whose world wall normal is `+Z`.
@@ -246,6 +258,12 @@ Headless, one fixed step of `1/60` s, no window. Positions include both signs. T
 | Non-uniform sphere | Absent from the index |
 | Displacement longer than a thin wall | Stops at the near face plus skin |
 | Diagonal `(4, 0, 4)` into an X wall | Path length ≤ request; no extra Z |
+| Tangent length 4 on a flat wall, skin `0` and `0.01`, including Z half-extent `8000` | Advances about 4. Lateral drift within `1e-4`. The normal stays a face normal |
+| Twenty `(4, 0, 4)` steps from contact | Tangent sum only. No accumulated penetration and no amplification |
+| Into `0.001` and `0.05`, and an outward request | The into component is removed. The outward request is applied |
+| Forty inward steps of `5e-5` | Penetration stays inside `2e-4` |
+| A skin-band wall beside the mover and another wall ahead | Stops at the wall ahead. No lateral drift |
+| Sphere or capsule into a corner or a vertical edge | Diagonal feature normal |
 | Two walls | Crease or stop, within `1e-4` |
 | Skin contact with wall A, remainder toward wall B | Stops at B's near face plus skin; does not tunnel. A is eligible on the next segment |
 | Spawned overlapping a solid | At most one recovery push |
@@ -262,4 +280,4 @@ Headless, one fixed step of `1/60` s, no window. Positions include both signs. T
 | `CollisionDebug` off | No collision wires. Indexing and queries still run |
 | `CollisionDebug` on | Finite segments for each indexed collider. Several fixed iterations append |
 
-M7-1A writes the geometry, filter, ordering, camera, and debug rows. M7-1B-1 writes the movement rows, including the thin wall, the diagonal slide, wall A then wall B, one recovery push, locked axes, and a same-process 1,000-step `to_bits` hash of a sphere stopped against another sphere. Trigger rows stay M7-1B-2 and are not implemented. Grazing repeats along a large box can accumulate a tilted cast normal; that is not what the hash measures.
+M7-1A writes the geometry, filter, ordering, camera, and debug rows. M7-1B-1 writes the movement rows, including the thin wall, the diagonal slide, wall A then wall B, one recovery push, locked axes, and a same-process 1,000-step `to_bits` hash of a sphere stopped against another sphere. M7-1B-1G writes the tangent, repeated-step, tiny-into, and corner rows. Trigger rows stay M7-1B-2 and are not implemented. M7-1B-1 measured a tilted cast normal on repeated grazes along a large box. The skin-band amendment corrects that classification. The 1,000-step hash is still the sphere-sphere stop, not that graze.

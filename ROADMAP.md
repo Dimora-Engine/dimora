@@ -701,13 +701,14 @@ MSAA is `crates/engine-renderer/tests/msaa.rs`, `crates/engine-renderer-wgpu/tes
   different Z does not collide.
 - A `CollisionWorld` resource rebuilt in the fixed stage (a sorted list and linear AABB tests,
   [ADR-0025](docs/adr/0025-kinematic-collision.md)), raycast and overlap queries.
-- Kinematic move-and-slide controller with swept tests.
+- Kinematic move-and-slide controller with swept tests. A gap inside the skin band uses the
+  closest-feature wall; a wider gap keeps the shape-cast time of impact.
 - Trigger enter/exit events through an event channel.
 - Debug visualisation through M6 debug draw, opt-in and off unless `CollisionDebug` is enabled.
 - Colliders attach to the gameplay entity, not to a visual child, so a change of character representation
   (M9) cannot change collision.
 
-**Dependencies.** D-09 is settled ([ADR-0025](docs/adr/0025-kinematic-collision.md)). D-10 is settled. M7-1A implements the query index. M7-1B-1 implements the sweep. Triggers, the pillar scene, and locomotion are not implemented. M7 is not complete.
+**Dependencies.** D-09 is settled ([ADR-0025](docs/adr/0025-kinematic-collision.md)). D-10 is settled. M7-1A implements the query index. M7-1B-1 implements the sweep. M7-1B-1G corrects near-tangent classification and does not start triggers or locomotion. Triggers, the pillar scene, and locomotion are not implemented. M7 is not complete.
 
 **Acceptance criteria.**
 - Shape-pair overlap tests over a table of cases; raycast tests per shape.

@@ -378,8 +378,9 @@ Decided in [ADR-0015](adr/0015-material-alpha-classes.md). Opaque, Mask, and Ble
   skin hit is dropped for that sweep and the other candidates are still tested, and `CollisionDebug`
   is opt-in and off by default. M7-1B-1 adds `BVec3` in `engine-math`, persistent `CharacterMotor`,
   runtime `MoveIntent` and `MoveResult`, and the sweep inside `sync_collision`. `MoveResult` reports
-  the last resolution. It does not report a grounded state. Trigger events and locomotion are not
-  implemented. M7 is not complete.
+  the last resolution. It does not report a grounded state. M7-1B-1G, owner approved 2026-10-27,
+  classifies a gap inside `(-1e-4, skin + 1e-4]` with the closest-feature wall and does not trust a
+  near-tangent shape-cast normal. Trigger events and locomotion are not implemented. M7 is not complete.
 * **Needed by.** M7. **Blocks.** M7 and M9 until that implementation lands. The decision itself no
   longer blocks starting M7.
 

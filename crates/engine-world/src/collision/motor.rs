@@ -1,11 +1,15 @@
 //! Sweep-and-slide for [`CharacterMotor`]. World axes stay world axes. A camera and a visual
 //! child are not inputs.
+//!
+//! A gap inside the skin band is classified with the closest-feature wall, not the shape-cast
+//! normal. Outside that band the sweep keeps the cast's time of impact and slides on the feature
+//! wall at the impact pose.
 
 use engine_math::{Mat4, Quat, Vec3};
 use hecs::Entity;
 use parry3d::bounding_volume::Aabb;
 use parry3d::math::{Pose, Rotation, Vector};
-use parry3d::query::{cast_shapes, contact, ShapeCastOptions, ShapeCastStatus};
+use parry3d::query::{cast_shapes, contact, ShapeCastHit, ShapeCastOptions, ShapeCastStatus};
 use parry3d::shape::Shape;
 
 use crate::hierarchy::{Children, GlobalTransform, Parent};
@@ -13,12 +17,16 @@ use crate::Transform;
 use crate::World;
 
 use super::convert::{to_vector, Prepared};
+use super::feature::feature_hit;
 use super::index::{entries, entries_mut, CollisionWorld};
 use super::types::{point_finite, CharacterMotor, MoveIntent, MoveResult, MoveStatus};
 
 const STOP: f32 = 1e-6;
 const TIE: f32 = 1e-5;
 const RECOVERY_MIN: f32 = 1e-4;
+/// Absolute world-unit width of a near-contact. This is the position tolerance, not a fraction of
+/// the request. A gap in `(-BAND, skin + BAND]` uses the closest-feature classifier.
+const BAND: f32 = 1e-4;
 
 struct Motion {
     delta: Vec3,
@@ -147,7 +155,8 @@ fn sweep(collision: &CollisionWorld, entity: Entity, motor: &CharacterMotor, req
     while remainder.length() > STOP && slides < motor.max_slides {
         slides += 1;
         let pose = pose_at(rotation, center);
-        let cast = SweepCast { list, mover, pose: &pose, layers, mask, rotation, remainder, skin: motor.skin, pushed };
+        let cast =
+            SweepCast { list, mover, pose: &pose, layers, mask, remainder, skin: motor.skin, pushed, center, entity };
         match scan(&cast) {
             Scan::Stop => {
                 blocked = true;
@@ -223,14 +232,15 @@ struct SweepCast<'a> {
     pose: &'a Pose,
     layers: u32,
     mask: u32,
-    rotation: Quat,
     remainder: Vec3,
     skin: f32,
     pushed: bool,
+    center: Vec3,
+    entity: Entity,
 }
 
 fn scan(cast: &SweepCast<'_>) -> Scan {
-    let SweepCast { list, mover, pose, layers, mask, rotation, remainder, skin, .. } = *cast;
+    let SweepCast { list, mover, pose, layers, mask, remainder, skin, center, entity, .. } = *cast;
     let shape = list[mover].prepared.parry.as_shape();
     let bounds = swept_bounds(shape, pose, remainder, skin);
     let options = ShapeCastOptions {
@@ -250,7 +260,26 @@ fn scan(cast: &SweepCast<'_>) -> Scan {
         if !bounds_overlap(&bounds, &entry.prepared.aabb) {
             continue;
         }
-        let cast_hit = cast_shapes(
+        let Some(feature) = feature_hit(&list[mover].prepared, center, &entry.prepared) else {
+            log::warn!("character motor on {entity:?} stopped a move: closest-feature query failed");
+            return Scan::Stop;
+        };
+        if !feature.gap.is_finite() {
+            log::warn!("character motor on {entity:?} stopped a move: closest-feature gap is not finite");
+            return Scan::Stop;
+        }
+
+        // Near the surface, a shape cast can report a motion-aligned normal and a tiny positive
+        // time. Classify this candidate from the feature wall and keep scanning the others.
+        if in_skin_band(feature.gap, skin) {
+            if !consider_feature(&mut hits, entry.entity, feature.wall, remainder) {
+                log::warn!("character motor on {entity:?} stopped a move: closest-feature normal is degenerate");
+                return Scan::Stop;
+            }
+            continue;
+        }
+
+        let cast_hit = match cast_shapes(
             pose,
             velocity,
             shape,
@@ -258,30 +287,24 @@ fn scan(cast: &SweepCast<'_>) -> Scan {
             to_vector(Vec3::ZERO),
             entry.prepared.parry.as_shape(),
             options,
-        );
-        let hit = match cast_hit {
-            Ok(Some(hit)) => hit,
-            Ok(None) => continue,
+        ) {
+            Ok(hit) => hit,
             Err(error) => {
                 log::warn!("character motor shape cast is unsupported ({error}); the rest of the move is dropped");
                 return Scan::Stop;
             }
         };
-        if !hit.time_of_impact.is_finite() {
-            return Scan::Stop;
-        }
-        let time_zero = hit.status == ShapeCastStatus::PenetratingOrWithinTargetDist || hit.time_of_impact <= STOP;
-        if time_zero {
-            match classify_touch(cast, shape, entry, &hit) {
-                Touch::Ignore => {}
-                Touch::Stop => return Scan::Stop,
-                Touch::Push { dist, outward } => consider_push(&mut push, dist, entry.entity, outward),
-                Touch::Block { wall } => hits.push((0.0, entry.entity, wall)),
+
+        if feature.gap <= -BAND {
+            if !resolve_overlap(cast, entry, cast_hit.as_ref(), feature.wall, &mut hits, &mut push) {
+                return Scan::Stop;
             }
-        } else if (0.0..=1.0).contains(&hit.time_of_impact) {
-            match wall_normal(rotation, from_vector(hit.normal1)) {
-                Some(wall) => hits.push((hit.time_of_impact, entry.entity, wall)),
-                None => return Scan::Stop,
+            continue;
+        }
+
+        if let Some(hit) = cast_hit {
+            if !consider_separated(cast, entry, &hit, &mut hits) {
+                return Scan::Stop;
             }
         }
     }
@@ -292,29 +315,110 @@ fn scan(cast: &SweepCast<'_>) -> Scan {
     earliest(hits).map(|(toi, wall)| Scan::Hit { toi, wall }).unwrap_or(Scan::Clear)
 }
 
+fn in_skin_band(gap: f32, skin: f32) -> bool {
+    gap > -BAND && gap <= skin + BAND
+}
+
+/// Block at time zero when the remainder approaches the wall. A tangent or separating remainder
+/// drops this candidate only.
+fn consider_feature(hits: &mut Vec<(f32, Entity, Vec3)>, entity: Entity, wall: Option<Vec3>, remainder: Vec3) -> bool {
+    match wall {
+        Some(wall) if remainder.dot(wall) < -BAND => {
+            hits.push((0.0, entity, wall));
+            true
+        }
+        Some(_) => true,
+        None => false,
+    }
+}
+
+fn resolve_overlap(
+    cast: &SweepCast<'_>,
+    entry: &super::index::Entry,
+    hit: Option<&ShapeCastHit>,
+    wall: Option<Vec3>,
+    hits: &mut Vec<(f32, Entity, Vec3)>,
+    push: &mut Option<(f32, Entity, Vec3)>,
+) -> bool {
+    if let Some(hit) = hit {
+        if !hit.time_of_impact.is_finite() {
+            return false;
+        }
+        let time_zero = hit.status == ShapeCastStatus::PenetratingOrWithinTargetDist || hit.time_of_impact <= STOP;
+        if time_zero {
+            match classify_touch(cast, entry) {
+                Touch::Ignore => return true,
+                Touch::Stop => return false,
+                Touch::Push { dist, outward } => {
+                    consider_push(push, dist, entry.entity, outward);
+                    return true;
+                }
+                Touch::Block { wall } => {
+                    hits.push((0.0, entry.entity, wall));
+                    return true;
+                }
+                Touch::Unconfirmed => {}
+            }
+        }
+    }
+    // The cast did not confirm a penetration. Do not travel its time of impact while already inside.
+    if !consider_feature(hits, entry.entity, wall, cast.remainder) {
+        log::warn!("character motor on {:?} stopped a move: overlapped shapes have no feature normal", cast.entity);
+        return false;
+    }
+    true
+}
+
+fn consider_separated(
+    cast: &SweepCast<'_>,
+    entry: &super::index::Entry,
+    hit: &ShapeCastHit,
+    hits: &mut Vec<(f32, Entity, Vec3)>,
+) -> bool {
+    if !hit.time_of_impact.is_finite() {
+        return false;
+    }
+    // A time-zero cast disagrees with a gap outside the skin band. Ignore that cast.
+    if hit.time_of_impact <= STOP || hit.time_of_impact > 1.0 {
+        return true;
+    }
+    let impact = cast.center + cast.remainder * hit.time_of_impact;
+    let Some(feature) = feature_hit(&cast.list[cast.mover].prepared, impact, &entry.prepared) else {
+        log::warn!("character motor on {:?} stopped a move: impact feature query failed", cast.entity);
+        return false;
+    };
+    match feature.wall {
+        Some(wall) => {
+            hits.push((hit.time_of_impact, entry.entity, wall));
+            true
+        }
+        None => {
+            log::warn!("character motor on {:?} stopped a move: impact feature normal is degenerate", cast.entity);
+            false
+        }
+    }
+}
+
 enum Touch {
     Ignore,
     Stop,
+    Unconfirmed,
     Push { dist: f32, outward: Vec3 },
     Block { wall: Vec3 },
 }
 
-fn classify_touch(
-    cast: &SweepCast<'_>,
-    shape: &dyn Shape,
-    entry: &super::index::Entry,
-    hit: &parry3d::query::ShapeCastHit,
-) -> Touch {
+fn classify_touch(cast: &SweepCast<'_>, entry: &super::index::Entry) -> Touch {
     let prediction = if cast.skin > 0.0 { cast.skin } else { 1e-4 };
-    let pose = cast.pose;
-    let touch = match contact(pose, shape, &entry.prepared.pose, entry.prepared.parry.as_shape(), prediction) {
+    let shape = cast.list[cast.mover].prepared.parry.as_shape();
+    let touch = match contact(cast.pose, shape, &entry.prepared.pose, entry.prepared.parry.as_shape(), prediction) {
         Ok(Some(touch)) => touch,
-        Ok(None) => return Touch::Ignore,
+        Ok(None) => return Touch::Unconfirmed,
         Err(_) => return Touch::Stop,
     };
     if !touch.dist.is_finite() {
         return Touch::Stop;
     }
+    // Contact `normal1` is already world-space and points from the mover toward the obstacle.
     let Some(toward_obstacle) = finite_unit(from_vector(touch.normal1)) else {
         return Touch::Stop;
     };
@@ -325,10 +429,7 @@ fn classify_touch(
         }
         return Touch::Push { dist: touch.dist, outward };
     }
-    match wall_normal(cast.rotation, from_vector(hit.normal1)) {
-        Some(wall) => block_or_ignore(cast.remainder, wall),
-        None => Touch::Stop,
-    }
+    Touch::Unconfirmed
 }
 
 fn block_or_ignore(remainder: Vec3, wall: Vec3) -> Touch {
@@ -361,10 +462,6 @@ fn earliest(mut hits: Vec<(f32, Entity, Vec3)>) -> Option<(f32, Vec3)> {
 
 fn masks(layers: u32, mask: u32, other_layers: u32, other_mask: u32) -> bool {
     layers & other_mask != 0 && other_layers & mask != 0
-}
-
-fn wall_normal(rotation: Quat, local_normal: Vec3) -> Option<Vec3> {
-    finite_unit(-(rotation.rotate(local_normal)))
 }
 
 fn swept_bounds(shape: &dyn Shape, pose: &Pose, delta: Vec3, skin: f32) -> Aabb {

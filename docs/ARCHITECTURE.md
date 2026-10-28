@@ -237,11 +237,13 @@ read that flag. After the rebuild, each `CharacterMotor` that has a `MoveIntent`
 ascending `Entity` order. The intent is a world-space displacement for that iteration, not a
 velocity and not a camera direction. World axes stay world axes: +X right, +Y up, +Z forward into
 the scene, and XZ is the ground plane. A camera rotation does not rotate them. Locked axes are
-cleared on the request, on each slide, and on the one recovery push. The sweep casts the mover
-against solid colliders in a bounds volume that covers the start and the end of the remaining
-displacement, plus skin. A nonblocking zero-time skin contact is dropped and the other candidates
-are still tested. The traveled part is applied, and only the unconsumed remainder is projected
-along the wall. The motor writes `Transform.position` through the parent inverse when there is a
+cleared on the request, on each slide, and on the one recovery push. The sweep tests solid
+colliders in a bounds volume that covers the start and the end of the remaining displacement, plus
+skin. A gap inside `(-1e-4, skin + 1e-4]` is classified with the closest-feature wall: motion into
+that wall blocks at time zero, and tangent or separating motion drops that candidate while the other
+candidates are still tested. A wider gap keeps the shape-cast time of impact and slides on the
+feature wall at the impact pose. Deeper overlap stays the one recovery push. The traveled part is
+applied, and only the unconsumed remainder is projected along the wall. The motor writes `Transform.position` through the parent inverse when there is a
 parent, and does not write `GlobalTransform`, rotation, or scale. It then patches that collider's
 center, pose, and bounds so the next motor in the same iteration sees the new pose. `MoveResult`
 records that resolution. It is not a claim that the character is standing on a surface. After the

@@ -993,3 +993,10 @@ Two consecutive invocations:
 
 The scan is still linear. These medians are CPU time for this fixture. They are not a production frame budget.
 
+M7-1B-1G, recorded 2026-10-27 at 10:25 PM America/Chicago, same machine, OS, Rust, command, warmup, and sample count. The mover still stops at x = 11.09. This table does not replace the 3:07 PM rows. Each swept candidate now pays a closest-feature query before the shape cast, and a positive-time hit pays a second query at the impact pose. There is no extra full-world rebuild. The feature query itself does not allocate. The medians are higher. This is not a performance improvement.
+
+| Call | First median | Second median |
+|---|---|---|
+| Sweep, 10 colliders | 4.8 µs | 4.2 µs |
+| Sweep, 100 colliders | 25.1 µs | 19.6 µs |
+

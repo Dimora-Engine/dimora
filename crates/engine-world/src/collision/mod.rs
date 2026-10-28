@@ -4,6 +4,7 @@
 //! [`sync_collision`]. Parry types stay in this module.
 
 mod convert;
+mod feature;
 mod index;
 mod motor;
 mod query;

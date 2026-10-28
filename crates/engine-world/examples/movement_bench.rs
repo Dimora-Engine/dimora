@@ -3,10 +3,12 @@
 //! `cargo run --release -p engine-world --example movement_bench`
 //!
 //! Each sample rebuilds the index and sweeps one sphere 30 units along +X into a blocking box.
-//! The other colliders sit on that same path, past the box, so the swept bounds include them and
-//! each one is cast. The mover is placed back at the origin between samples; that reset is not
-//! timed. Warmup is 10 calls and the reported value is the median of 31. This is a linear scan,
-//! not a frame-time budget, and it says nothing about the GPU.
+//! The other colliders sit on that same path, past the box, so the swept bounds include them.
+//! Each candidate pays a closest-feature query and, outside the skin band, a shape cast. A
+//! positive-time hit pays a second feature query at the impact pose. The mover is placed back at
+//! the origin between samples; that reset is not timed. Warmup is 10 calls and the reported value
+//! is the median of 31. This is
+//! a linear scan, not a frame-time budget, and it says nothing about the GPU.
 
 use std::time::Instant;
 
