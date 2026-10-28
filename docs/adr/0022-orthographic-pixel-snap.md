@@ -1,6 +1,7 @@
 # ADR-0022: Orthographic camera views can snap their translation to pixels
 
-* **Status:** Settled for D-06A only. This does not close D-06.
+* **Status:** Settled for D-06A only.
+* **Follow-up (2026-10-26).** D-06 is closed for its approved policy. Option B, per-object snapping, stays deferred. The camera-translation contract in this record is unchanged.
 * **Date:** 2026-10-25
 * **Backlog id:** The view-snapping slice of D-06 (D-06A). Integer-resolution output, letterboxing, nearest-neighbor upscaling, MSAA, and per-object snapping stay open.
 * **Decided by:** Cal, 2026-10-25, accepting the verified behavior of the D-06A prototype (`4a87bb0`, recorded 2026-10-24). Not an acceptance of the rest of D-06.
@@ -63,4 +64,4 @@ Perspective, custom, oblique, a non-positive height, a non-finite scale, and a f
 
 `4a87bb0` on `feat/m6-d06a-pixel-snap`. CPU coverage is `crates/engine-renderer/tests/pixel_snap.rs` (19 tests). GPU coverage is `crates/engine-renderer-wgpu/tests/pixel_snap.rs` (12 tests), Apple M5, Metal, `Rgba8Unorm`. `DIMORA_REQUIRE_GPU=1 scripts/check.sh` on 2026-10-24 at 6:44 PM America/Chicago: exit 0, 837 passed, 0 failed, 0 ignored, 73 suites, `rustc 1.99.0`. The four historical 1280×720 screenshot hashes matched, with `depth_view_draws` 0. Release extract of 10,000 sprites is in [../PERFORMANCE.md](../PERFORMANCE.md). Allocation traffic and batch counts match the unsnapped rows. A later off/on/on/off order on the same scene does not show a consistent extract-time difference. GPU pass time was not measured. Vulkan, DirectX, OpenGL, and lavapipe are not verified.
 
-Reopen D-06A if a scene needs per-object snap, if the half-away-from-zero tie is the wrong pixel-center rule, or if integer-resolution output replaces view snapping. The rest of D-06 is a separate decision.
+Reopen D-06A if a scene needs per-object snap, if the half-away-from-zero tie is the wrong pixel-center rule, or if integer-resolution output replaces view snapping. Per-object snap remains option B and was left deferred when D-06 closed on 2026-10-26.

@@ -1,6 +1,7 @@
 # ADR-0024: Optional renderer-wide 4× MSAA
 
-* **Status:** Settled for the verified 1×/4× contract, including private-frame window presentation. This does not close D-06, and it does not complete M6.
+* **Status:** Settled for the verified 1×/4× contract, including private-frame window presentation. This does not complete M6.
+* **Follow-up (2026-10-26).** D-06 is closed for its approved policy. Alpha-to-coverage stays off. Sample counts other than one and four stay deferred. This record's MSAA contract is unchanged.
 * **Date:** 2026-10-26
 * **Backlog id:** The MSAA slice of D-06 (D-06C). Per-object snapping stays open.
 * **Decided by:** Cal, 2026-10-26, accepting the verified 1×/4× behavior on `feat/m6-d06c-msaa`. Not an acceptance of the rest of D-06 or of M6.

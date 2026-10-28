@@ -1,6 +1,7 @@
 # ADR-0023: A camera may present an integer-scaled internal image
 
-* **Status:** Settled for the current D-06B contract. This does not close D-06.
+* **Status:** Settled for the current D-06B contract.
+* **Follow-up (2026-10-26).** D-06 is closed for its approved policy. `Load` with an internal resolution stays rejected. A small-window scale other than scale 0 stays deferred. This record's presentation contract is unchanged.
 * **Date:** 2026-10-25
 * **Backlog id:** The integer-resolution slice of D-06 (D-06B). MSAA and per-object snapping stay open.
 * **Decided by:** Cal, 2026-10-25, accepting the verified behavior of `d491bda` and the acceptance tests in `18257d4`. Not an acceptance of the rest of D-06.

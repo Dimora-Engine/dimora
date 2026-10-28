@@ -41,12 +41,20 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y mesa-vulkan-drivers
+          sudo apt-get install -y mesa-vulkan-drivers xvfb libxkbcommon0 libxkbcommon-x11-0
 
       - uses: Swatinem/rust-cache@v2
 
+      # window_msaa opens a real winit window. Ubuntu runners have no DISPLAY, and cargo
+      # stops the workspace at that binary, before the renderer GPU tests. Xvfb supplies
+      # the display. It does not replace the Vulkan adapter.
       - name: scripts/check.sh
-        run: scripts/check.sh
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            xvfb-run -a -s "-screen 0 1280x720x24" scripts/check.sh
+          else
+            scripts/check.sh
+          fi
 
       - name: Record which adapter the GPU tests used
         run: cargo test -p engine-renderer-wgpu --locked --test headless -- --nocapture --test-threads=1 2>&1 | grep -i -E 'adapter' | sort -u || true
@@ -86,11 +94,16 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y mesa-vulkan-drivers
+          sudo apt-get install -y mesa-vulkan-drivers xvfb libxkbcommon0 libxkbcommon-x11-0
 
       - uses: Swatinem/rust-cache@v2
         with:
           key: msrv
 
       - name: cargo +1.90.0 test --workspace --locked
-        run: cargo +1.90.0 test --workspace --locked
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            xvfb-run -a -s "-screen 0 1280x720x24" cargo +1.90.0 test --workspace --locked
+          else
+            cargo +1.90.0 test --workspace --locked
+          fi

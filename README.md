@@ -183,6 +183,8 @@ green run on a machine without a GPU proves nothing about rendering. Set `DIMORA
 makes them fail with a message saying that no GPU adapter was found (on Linux it suggests
 `sudo apt install mesa-vulkan-drivers`). `scripts/check.sh` sets it. Run
 `cargo test -p engine-renderer-wgpu -- --nocapture` to see which adapter the tests used.
+`crates/engine/tests/window_msaa.rs` opens a real window. The Ubuntu CI jobs start Xvfb first so that
+test can run; the GPU adapter is still the Vulkan driver installed above.
 
 To see the failure path on purpose, remove the adapter: on Linux `VK_ICD_FILENAMES=/nonexistent`, on macOS
 `WGPU_BACKEND=vulkan` (Vulkan is not built on macOS, so no adapter is found), for example
@@ -192,11 +194,10 @@ To see the failure path on purpose, remove the adapter: on Linux `VK_ICD_FILENAM
 
 Dimora is early. The living record of what runs is [docs/CAPABILITIES.md](docs/CAPABILITIES.md). Milestone order
 is [ROADMAP.md](ROADMAP.md). Evidence for the current milestone is [TASKS.md](TASKS.md). M3a, M3b, M4, and M5 are
-complete, and M6 is in progress. The integrated M6 checkpoints through `8d0cee4` are on `origin/main`. M6 is not
-complete. Orthographic camera-view pixel snapping (D-06A, [ADR-0022](docs/adr/0022-orthographic-pixel-snap.md)) is
-settled for that slice. Integer-resolution presentation (D-06B, [ADR-0023](docs/adr/0023-integer-resolution-camera-presentation.md)) is settled for that contract. Optional 4× MSAA is settled for the verified 1×/4× contract ([ADR-0024](docs/adr/0024-optional-4x-msaa.md)). A 4× window composes into a private image. The engine does not assume a native surface is shader-readable. Per-object
-snapping remains open, so D-06 is not complete. Gameplay orientation is still open. Other GPU backends are not
-verified. There are no particles, collision, audio, UI, shadows, scene serialization, asset bundling, or editor.
+complete, and M6 is in progress. The integrated M6 checkpoints through `bbd56d8` are on `origin/main`. M6 is not
+complete until the Ubuntu GPU run of this verification executes. D-06 is closed for the approved policy (2026-10-26): per-texture sampling, orthographic camera-view snap, integer-resolution presentation, and optional 1×/4× MSAA. Per-object
+snapping remains the deferred alternative in [ADR-0022](docs/adr/0022-orthographic-pixel-snap.md). `Load` with an internal resolution stays rejected. Alpha-to-coverage stays off. Sample counts other than one and four are not provided. Gameplay orientation is still open. Other GPU backends are not
+verified on current `main`. There are no particles, collision, audio, UI, shadows, scene serialization, asset bundling, or editor.
 
 Each question has one home, so documents do not compete:
 

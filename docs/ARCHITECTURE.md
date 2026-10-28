@@ -144,7 +144,7 @@ is exact only for uniform scale.
   into the swapchain, which is configured as `RENDER_ATTACHMENT` only. A four-sample window resolves
   surface cameras into a private single-sample image that is not a `RenderTargetId`, then one fullscreen
   copy writes the swapchain. Returning to one sample drops the 4× images and that frame image and keeps
-  the pipelines. This does not close D-06.
+  the pipelines. D-06 is closed for the approved policy (2026-10-26). Per-object snapping, alpha-to-coverage, and sample counts other than one and four stay deferred. M6 is not complete.
 * The `Projection` trait (`matrix(aspect)`, default `project()`) is implemented by `Orthographic`,
   `Perspective` and the enum. A caller-supplied matrix is `CameraProjection::Custom`, not a trait
   object.
@@ -384,7 +384,9 @@ here are binding on milestone designs; open choices point to a decision in [DECI
 `view_proj`; one `Depth32Float` buffer; a depth presentation reads that same buffer after the camera's
 scene pass and does not extract a second scene; GPU tests show a nearer mesh occluding a sprite and the reverse
 (`nearer_mesh_occludes_sprite_and_farther_mesh_does_not`), blended sprites interleaving with meshes
-(`blended_sprites_interleave_with_meshes_by_depth`), and `sprites_and_meshes_share_one_spatial_world`.
+(`blended_sprites_interleave_with_meshes_by_depth` on one camera, and
+`a_blended_sprite_interleaves_with_meshes_by_depth_in_every_configuration` on the seven example cameras),
+and `sprites_and_meshes_share_one_spatial_world`.
 Blended meshes and blended sprites share `RenderScene.transparent` and one GPU submission order.
 *Requirement:* any new renderable (tile, particle, skinned mesh, world-UI quad) enters through the same
 transform, camera and depth contract and declares one **transparency class**: opaque, cutout, or blended.
