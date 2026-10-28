@@ -101,8 +101,8 @@ fn zero_one_and_many_fixed_steps_and_the_stall_cap() {
     assert_eq!(seen.borrow().as_slice(), &[0.0, 1.0, 2.0]);
     assert_eq!(
         globals.borrow().as_slice(),
-        &[0.0, 1.0, 1.0],
-        "later fixed iterations still see the last propagated simulation, not the render blend"
+        &[0.0, 1.0, 2.0],
+        "a later fixed iteration sees the simulation sync_collision propagated, not the render blend"
     );
 
     game.step(Duration::from_secs(10));

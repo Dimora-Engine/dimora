@@ -25,6 +25,43 @@ pub const FIGURES: [(char, Vec3, [f32; 3]); 4] = [
 pub const WALK_Z: f32 = -150.0;
 pub const WALK_RANGE: f32 = 300.0;
 
+/// Full size of the pillar mesh. The mesh is centered on [`PILLAR_CENTER`], so the occupied box is
+/// that center ± half of this size: X −25..25, Y 0..200, Z 175..225.
+pub const PILLAR_SIZE: Vec3 = Vec3::new(50.0, 200.0, 50.0);
+/// World center of the pillar mesh. Shared by environment A, the yard pillar mesh, and the solid collider.
+pub const PILLAR_CENTER: Vec3 = Vec3::new(0.0, 100.0, 200.0);
+
+/// Horizontal radius of the `--collision` capsule, in world units. This is not the 64×96 sprite.
+pub const BODY_RADIUS: f32 = 12.0;
+/// Half-length of the capsule's vertical segment. Total height is `2 * (half_height + radius)` = 80.
+pub const BODY_HALF_HEIGHT: f32 = 28.0;
+/// Local center of the capsule. `Capsule::new_y` extends `half_height + radius` from this point, so a
+/// gameplay root at Y = 0 is the feet and the capsule stands on that ground.
+pub const BODY_OFFSET: Vec3 = Vec3::new(0.0, BODY_HALF_HEIGHT + BODY_RADIUS, 0.0);
+/// Controlled-character speed in world units per second. Diagonal input is normalized before this scale.
+pub const WALK_SPEED: f32 = 90.0;
+/// Scripted second character, world units per second along X.
+pub const PACE_SPEED: f32 = 70.0;
+/// Feet of the controlled character. Used only by `--collision`; the patrol stays at [`WALK_Z`].
+pub const CHARACTER_START: Vec3 = Vec3::new(0.0, 0.0, 100.0);
+/// Feet of the scripted character, behind the pillar (the pillar ends at Z = 225).
+pub const PACE_START: Vec3 = Vec3::new(0.0, 0.0, 250.0);
+
+/// Sensor slab in front of the pillar. Z is 129.5..130.5. A +Z stop against the pillar leaves the
+/// capsule's trailing edge near Z = 151, so the body clears this slab before it is blocked.
+pub const SENSOR_CENTER: Vec3 = Vec3::new(0.0, 40.0, 130.0);
+pub const SENSOR_HALF: Vec3 = Vec3::new(30.0, 50.0, 0.5);
+/// Extra solid for a diagonal slide. The near face is X = 62.
+pub const SLIDE_CENTER: Vec3 = Vec3::new(70.0, 50.0, 145.0);
+pub const SLIDE_HALF: Vec3 = Vec3::new(8.0, 50.0, 40.0);
+/// Bumper centers on X. The inner faces are at X = ±90.
+pub const BUMPER_X: f32 = 102.0;
+pub const BUMPER_HALF: Vec3 = Vec3::new(12.0, 40.0, 20.0);
+
+/// Gameplay axes for `--collision`. `J`/`L` are X and `K`/`I` are Z. They are not camera-relative.
+pub const WALK_X_ACTION: &str = "walk_x";
+pub const WALK_Z_ACTION: &str = "walk_z";
+
 /// Height above the floor slabs of the coplanar bench, small enough to be one surface to the eye.
 pub const DECAL_LIFT: f32 = 0.5;
 
@@ -68,6 +105,14 @@ pub struct Scene {
     pub instance: SceneInstanceId,
     /// A replacement that has been queued and not yet dismissed.
     pub pending: Option<SceneOpId>,
+    /// `--collision` is on. The sine patrol does not write the walker, and the pillar can carry a collider.
+    pub collision: bool,
+    /// Non-colliding presentation child of [`Scene::walker`]. `None` until collision mode installs it.
+    pub walker_visual: Option<Entity>,
+    /// Second gameplay root. It is not a scene member, so a replacement leaves it in place.
+    pub pace: Option<Entity>,
+    /// `+1` walks toward +X. Flips only when the previous step was blocked on that side.
+    pub pace_direction: f32,
 }
 
 impl Scene {
@@ -104,6 +149,10 @@ pub fn build_world(world: &mut World, config: usize) -> Scene {
         environment: Environment::A,
         instance,
         pending: None,
+        collision: false,
+        walker_visual: None,
+        pace: None,
+        pace_direction: 1.0,
     };
     refresh_tracked(world, &mut scene);
     scene
@@ -140,7 +189,7 @@ pub fn build_environment_b(builder: &mut SceneBuilder<'_>) -> Result<(), SceneEr
         Name::new("yard cube"),
     ));
     builder.spawn((
-        Transform::from_xyz(0.0, 100.0, 200.0),
+        Transform::from_xyz(PILLAR_CENTER.x, PILLAR_CENTER.y, PILLAR_CENTER.z),
         Mesh::new("pillar").with_material(panel(Color::rgb(0.25, 0.45, 0.85))),
         Name::new("yard pillar"),
     ));
@@ -201,7 +250,7 @@ fn add_meshes(world: &mut World) {
         MeshData::cuboid(Vec3::new(100.0, 8.0, 100.0)).expect("cuboid dimensions are finite and positive"),
     );
     add("pad", MeshData::cuboid(Vec3::new(84.0, 2.0, 84.0)).expect("cuboid dimensions are finite and positive"));
-    add("pillar", MeshData::cuboid(Vec3::new(50.0, 200.0, 50.0)).expect("cuboid dimensions are finite and positive"));
+    add("pillar", MeshData::cuboid(PILLAR_SIZE).expect("cuboid dimensions are finite and positive"));
     add("cube", MeshData::cuboid(Vec3::splat(80.0)).expect("cuboid dimensions are finite and positive"));
     add("pyramid", MeshData::cone(60.0, 130.0, 4));
 }
@@ -231,7 +280,7 @@ fn add_content(builder: &mut SceneBuilder<'_>) {
 
     // Two feature meshes. The pillar sits between figures B (in front) and C (behind).
     builder.spawn((
-        Transform::from_xyz(0.0, 100.0, 200.0),
+        Transform::from_xyz(PILLAR_CENTER.x, PILLAR_CENTER.y, PILLAR_CENTER.z),
         Mesh::new("pillar").with_material(panel(Color::rgb(0.88, 0.52, 0.34))),
         Name::new("pillar"),
     ));
@@ -345,21 +394,26 @@ pub fn flat(position: Vec3) -> Transform {
 
 /// Per-frame motion: the cube spins while environment A is published, and the walker patrols.
 ///
-/// Both are plain `Transform` writes. The walker is not a scene member, so it keeps moving after a
-/// replacement. Environment B has no entity named `cube`.
+/// Both are plain `Transform` writes unless `--collision` is on. In that mode the walker's position
+/// comes from the fixed-step motor, and this system leaves it alone. The walker is not a scene
+/// member, so it keeps moving after a replacement. Environment B has no entity named `cube`.
 pub fn motion_system(world: &mut World) {
     let t = world.resource::<Time>().elapsed_secs();
-    let (cube, walker) = {
+    let (cube, walker, collision) = {
         let scene = world.resource::<Scene>();
-        (scene.cube, scene.walker)
+        (scene.cube, scene.walker, scene.collision)
     };
     if let Some(cube) = cube {
         if let Ok(mut transform) = world.component_mut::<Transform>(cube) {
             transform.rotation = Quat::from_rotation_y(t * 0.7) * Quat::from_rotation_x(0.4);
         }
     }
-    if let Ok(mut transform) = world.component_mut::<Transform>(walker) {
-        transform.position = Vec3::new(WALK_RANGE * (t * 0.8).sin(), 0.0, WALK_Z);
+    // Collision mode moves the gameplay root from a fixed-step intent. The patrol write would
+    // replace that position every frame.
+    if !collision {
+        if let Ok(mut transform) = world.component_mut::<Transform>(walker) {
+            transform.position = Vec3::new(WALK_RANGE * (t * 0.8).sin(), 0.0, WALK_Z);
+        }
     }
 }
 
@@ -383,6 +437,9 @@ pub fn replace_environment(world: &mut World, scene: &mut Scene, environment: En
     scene.instance = instance;
     scene.environment = environment;
     refresh_tracked(world, scene);
+    if scene.collision && scene.environment == Environment::A {
+        attach_pillar(world);
+    }
     Ok(())
 }
 
@@ -482,11 +539,24 @@ fn retarget_tracked(world: &mut World) {
     refresh_tracked(world, &mut scene);
     let orientation = scene.figure_orientation;
     let figures = scene.figures.clone();
+    let visual = scene.walker_visual;
+    let collision = scene.collision && scene.environment == Environment::A;
     world.insert_resource(scene);
     for (_, entity) in figures {
         if let Ok(mut sprite) = world.component_mut::<Sprite>(entity) {
             sprite.orientation = orientation;
         }
+    }
+    if let Some(visual) = visual {
+        if let Ok(mut sprite) = world.component_mut::<Sprite>(visual) {
+            sprite.orientation = orientation;
+        }
+    }
+    // The replacement already despawned the previous pillar. The new environment A pillar is a new
+    // entity, so the collider has to be attached here. `sync_collision` has already run this step;
+    // the next fixed iteration indexes the new pillar and drops the despawned id.
+    if collision {
+        attach_pillar(world);
     }
 }
 
@@ -524,3 +594,186 @@ pub fn select_config(scene: &mut Scene, index: usize) {
 }
 
 pub use cameras::{FOV_DEGREES, ORTHO_HEIGHT};
+
+/// What the gameplay root displays. The collider stays on the root either way.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BodyVisual {
+    /// The figure sprite, bottom-center anchor, identity local transform.
+    Sprite,
+    /// A mesh child. Used to show that the visual does not own the collider.
+    Mesh,
+}
+
+/// Capsule for a character whose root sits at the feet.
+pub fn character_collider() -> Collider {
+    Collider::capsule(BODY_RADIUS, BODY_HALF_HEIGHT).with_offset(BODY_OFFSET)
+}
+
+/// Turns the persistent walker into a gameplay root and adds the pillar collider, the gate sensor,
+/// the slide wall, and the scripted character.
+///
+/// The walker stays named `walker` and stays outside both environments. Its sprite moves to a child
+/// with no collider. The sensor, the slide wall, and the pace character are also outside the
+/// environments, so Tab leaves them in place. The pillar is a member of environment A. Switching to
+/// B despawns it; switching back attaches a collider to the new pillar entity on the next publish.
+/// Environment B's yard pillar is a different name and stays visual only.
+///
+/// After a switch to B the environment A pillar no longer blocks. The sensor, the slide wall, and
+/// the pace character remain. Nothing here keeps the old pillar id.
+pub fn install_collision(world: &mut World, visual: BodyVisual) {
+    let walker = world.resource::<Scene>().walker;
+    world.component_mut::<Transform>(walker).expect("walker").position = CHARACTER_START;
+    let visual_entity = attach_body_visual(world, walker, visual);
+    world.insert(walker, (character_collider(), CharacterMotor::default())).expect("walker");
+    {
+        let mut scene = world.resource_mut::<Scene>();
+        scene.collision = true;
+        scene.walker_visual = Some(visual_entity);
+        scene.pace_direction = 1.0;
+    }
+    attach_pillar(world);
+    spawn_gate(world);
+    spawn_slide_wall(world);
+    let pace = spawn_pace(world);
+    world.resource_mut::<Scene>().pace = Some(pace);
+}
+
+fn attach_body_visual(world: &mut World, walker: Entity, visual: BodyVisual) -> Entity {
+    match visual {
+        BodyVisual::Sprite => {
+            let mut sprite = *world.component::<Sprite>(walker).expect("the walker starts as a sprite");
+            sprite.anchor = Some(Vec2::new(0.5, 0.0));
+            world.remove::<Sprite>(walker).expect("walker sprite");
+            world.spawn_child(walker, (Transform::IDENTITY, sprite, Name::new("walker visual")))
+        }
+        BodyVisual::Mesh => {
+            world.remove::<Sprite>(walker).expect("walker sprite");
+            let mesh = Mesh::new("cube").with_material(panel(Color::rgb(0.95, 0.55, 0.95)));
+            world.spawn_child(walker, (Transform::IDENTITY, mesh, Name::new("walker visual")))
+        }
+    }
+}
+
+fn attach_pillar(world: &mut World) {
+    let Some(pillar) = named(world, "pillar") else {
+        return;
+    };
+    if world.component::<Collider>(pillar).is_ok() {
+        return;
+    }
+    world.insert(pillar, (Collider::aabb_box(PILLAR_SIZE * 0.5),)).expect("pillar");
+}
+
+fn spawn_gate(world: &mut World) {
+    let sensor = world.spawn((
+        Transform::from_xyz(SENSOR_CENTER.x, SENSOR_CENTER.y, SENSOR_CENTER.z),
+        Collider::aabb_box(SENSOR_HALF).sensor(),
+        Name::new("gate sensor"),
+    ));
+    // Cube mesh is 80 units on a side. Scale it to the sensor slab. The collider stays on the parent.
+    let scale = Vec3::new(SENSOR_HALF.x * 2.0 / 80.0, SENSOR_HALF.y * 2.0 / 80.0, SENSOR_HALF.z * 2.0 / 80.0);
+    world.spawn_child(
+        sensor,
+        (
+            Transform::from_scale(scale),
+            Mesh::new("cube").with_material(panel(Color::rgb(0.45, 0.95, 0.75))),
+            Name::new("gate marker"),
+        ),
+    );
+}
+
+fn spawn_slide_wall(world: &mut World) {
+    let wall = world.spawn((
+        Transform::from_xyz(SLIDE_CENTER.x, SLIDE_CENTER.y, SLIDE_CENTER.z),
+        Collider::aabb_box(SLIDE_HALF),
+        Name::new("slide wall"),
+    ));
+    let scale = Vec3::new(SLIDE_HALF.x * 2.0 / 80.0, SLIDE_HALF.y * 2.0 / 80.0, SLIDE_HALF.z * 2.0 / 80.0);
+    world.spawn_child(
+        wall,
+        (
+            Transform::from_scale(scale),
+            Mesh::new("cube").with_material(panel(Color::rgb(0.75, 0.55, 0.85))),
+            Name::new("slide wall mesh"),
+        ),
+    );
+}
+
+fn spawn_pace(world: &mut World) -> Entity {
+    let pace = world.spawn((
+        Transform::from_xyz(PACE_START.x, PACE_START.y, PACE_START.z),
+        character_collider(),
+        CharacterMotor::default(),
+        Name::new("pace"),
+    ));
+    let mut sprite = figure(Color::rgb(0.35, 0.75, 0.95));
+    sprite.anchor = Some(Vec2::new(0.5, 0.0));
+    world.spawn_child(pace, (Transform::IDENTITY, sprite, Name::new("pace visual")));
+    spawn_bumper(world, BUMPER_X, "bumper +x");
+    spawn_bumper(world, -BUMPER_X, "bumper -x");
+    pace
+}
+
+fn spawn_bumper(world: &mut World, x: f32, name: &str) {
+    let bumper =
+        world.spawn((Transform::from_xyz(x, 40.0, PACE_START.z), Collider::aabb_box(BUMPER_HALF), Name::new(name)));
+    let scale = Vec3::new(BUMPER_HALF.x * 2.0 / 80.0, BUMPER_HALF.y * 2.0 / 80.0, BUMPER_HALF.z * 2.0 / 80.0);
+    world.spawn_child(
+        bumper,
+        (Transform::from_scale(scale), Mesh::new("cube").with_material(panel(Color::rgb(0.55, 0.58, 0.62)))),
+    );
+}
+
+/// Fixed-step producer. Registered before `sync_collision`. Writes a world-axis `MoveIntent` for
+/// one fixed iteration and does not touch `Transform`.
+///
+/// Held `walk_x` / `walk_z` become a direction on XZ. A diagonal is normalized so the two axes do
+/// not stack. The displacement is that direction times [`WALK_SPEED`] times the fixed delta. Y is
+/// zero because the keys do not request it; the motor does not lock Y. No intent is written when
+/// the stick is idle, so a later fixed system can still place one.
+///
+/// The pace character always receives its own X intent. It reverses only after a blocked step that
+/// is still on the side it was walking toward.
+pub fn collision_motion(world: &mut World) {
+    let scene = world.resource::<Scene>();
+    if !scene.collision {
+        return;
+    }
+    let (walker, pace, mut direction) = (scene.walker, scene.pace, scene.pace_direction);
+    drop(scene);
+
+    let dt = world.resource::<Time>().delta_secs();
+    let input = world.resource::<Input>();
+    let actions = world.resource::<Actions>();
+    let wish = Vec3::new(actions.axis(&input, WALK_X_ACTION), 0.0, actions.axis(&input, WALK_Z_ACTION));
+    drop(actions);
+    drop(input);
+    let len_sq = wish.length_squared();
+    if len_sq > 0.0 {
+        let direction = if len_sq > 1.0 { wish.normalized() } else { wish };
+        world.insert(walker, (MoveIntent::new(direction * WALK_SPEED * dt),)).expect("walker");
+    }
+
+    let Some(pace) = pace else {
+        return;
+    };
+    let blocked = world.component::<MoveResult>(pace).is_ok_and(|result| result.blocked());
+    let x = world.component::<Transform>(pace).map(|transform| transform.position.x).unwrap_or(0.0);
+    if blocked && direction > 0.0 && x > 0.0 {
+        direction = -1.0;
+    } else if blocked && direction < 0.0 && x < 0.0 {
+        direction = 1.0;
+    }
+    world.resource_mut::<Scene>().pace_direction = direction;
+    world.insert(pace, (MoveIntent::new(Vec3::new(direction * PACE_SPEED * dt, 0.0, 0.0)),)).expect("pace");
+}
+
+/// Update-stage reader. `TriggerEvent` is visible here and gone when `Game::step` returns.
+pub fn collision_feedback(world: &mut World) {
+    if !world.resource::<Scene>().collision {
+        return;
+    }
+    for event in world.events::<TriggerEvent>() {
+        log::info!("trigger {event:?}");
+    }
+}

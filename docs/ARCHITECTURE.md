@@ -50,7 +50,7 @@ About 8,000 lines of Rust in nine library crates and two examples.
 |---|---|---|---|
 | `engine-math` | `Vec2/3/4`, `Quat`, `Mat3/4`, `Transform`, `Rect`. `f32`, column-major, left-handed | none | none |
 | `engine-core` | `Color`, `Time`, `FixedTimestep`, `Key`/`Input`, `Actions` | math | none |
-| `engine-world` | `World` (wraps `hecs` + typed resources), sequential `Schedule`, `Parent`/`Children`, `GlobalTransform`, `propagate_transforms`, `Interpolate`, `Name`, `Visibility` | math | `hecs` |
+| `engine-world` | `World` (wraps `hecs` + typed resources), sequential `Schedule`, `Parent`/`Children`, `GlobalTransform`, `propagate_transforms`, `Interpolate`, `Name`, `Visibility`, `Collider`, `CollisionWorld` | math | `hecs`, private `parry3d` 0.31.1 (`dim3`, `f32`, `std`) |
 | `engine-assets` | `AssetId`, `AssetKind`, `AssetHandle<T>`, `AssetManager`, `AssetSource` (filesystem, memory), `Texture`, `SpriteAsset`, `MeshData` | math | `image` (PNG), `bytemuck` |
 | `engine-renderer` | Backend-agnostic render model: `Camera`, projections, frustum, render components (`Sprite`, `Mesh`, `Material`, `TileMap`, `Light`, ...), single-frame `DebugDraw` segments, `extract_scene` -> `RenderScene` | math, core, world, assets | none |
 | `engine-renderer-wgpu` | The wgpu backend: pipelines, GPU caches, instance buffers, window/offscreen presentation, WGSL shaders. Consumes `RenderScene` only | math, assets, renderer | `wgpu`, `pollster`, `bytemuck` |
@@ -177,8 +177,8 @@ is exact only for uniform scale.
 Each stage is a `Schedule`. Inside a stage, `before` / `after` order named systems; systems with no
 constraint keep registration order, and a ready-set tie goes to the earlier registration. A cycle,
 a duplicate name, a missing target or a self-dependency is rejected and the schedule is left unchanged
-(ADR-0007). `advance_time` and `process_loads` stay first in their stages. `propagate_transforms` and
-`end_input_frame` stay last. A constraint on the closed side is rejected. `animate` may have systems
+(ADR-0007). `advance_time` and `process_loads` stay first in their stages. `sync_collision`,
+`propagate_transforms`, and `end_input_frame` stay last. A constraint on the closed side is rejected. `animate` may have systems
 on either side when the constraint is explicit. `Game::step` restores the frame delta after the fixed
 loop; that restore is not a system.
 
@@ -210,14 +210,64 @@ logs once and the runner exits. Discarded events are counted and not logged.
 ```text
 time (advance Time, accumulate the fixed step)
   -> loads (AssetManager::process_loads)
-  -> fixed_update (0 to 8 times; each iteration copies marked locals, then runs systems;
-     Time::delta is the fixed step, then restored; the first iteration then conceals
-     the fixed-step input latch)
+  -> fixed_update (0 to 8 times; each iteration copies marked locals, then runs systems,
+     then sync_collision; Time::delta is the fixed step, then restored; the first iteration
+     then conceals the fixed-step input latch)
   -> update (user systems; both examples stay here; they see the frame delta)
   -> animate (animate_system, frame delta)
   -> post_update (propagate_transforms; full pass, no dirty tracking)
   -> input_clear (Input::end_frame and Actions::end_frame; frame edges only)
 ```
+
+`sync_collision` is the last system of each fixed iteration
+([ADR-0025](adr/0025-kinematic-collision.md)). It is the only fixed-step caller of
+`propagate_transforms`, once per iteration, and then rebuilds `CollisionWorld`. A step with no fixed
+iteration does not call it and does not flush the fixed-update command queue from that loop. `time`
+and `loads` still flush before the loop, so a command queued before `step` is already applied when
+the first iteration rebuilds. A command queued by a fixed system flushes after `sync_collision` in
+that iteration: the entity is visible to `update`, and the snapshot omits it until the next
+iteration that rebuilds. A following step with zero fixed iterations leaves that snapshot in place.
+A direct `World` write in a fixed system, before `sync_collision`, is part of that iteration's
+snapshot. A `Transform`, `Parent`, or `Collider` write after the system, including one in `update`,
+is absent until the next iteration. `post_update` still propagates after animation and does not
+rebuild the index. Interpolation snapshots locals at the start of each iteration and does not read
+`CollisionWorld`; a zero-iteration step does not take that snapshot. Collision wires are copied into
+`DebugDraw` only when `CollisionDebug` is enabled. It defaults to off. Indexing and queries do not
+read that flag. After the rebuild, each `CharacterMotor` that has a `MoveIntent` is swept in
+ascending `Entity` order. The intent is a world-space displacement for that iteration, not a
+velocity and not a camera direction. World axes stay world axes: +X right, +Y up, +Z forward into
+the scene, and XZ is the ground plane. A camera rotation does not rotate them. Locked axes are
+cleared on the request, on each slide, and on the one recovery push. A pair blocks only when
+both colliders are solid. A sensor on either side is skipped before the closest-feature query, so
+a sensor mover applies its unlocked displacement and stores no contact normal from a solid. That
+displacement is still a committed segment for trigger casts. One gameplay entity has one collider.
+An indexed descendant still rejects the ancestor motor. The sweep tests the remaining solid
+colliders in a bounds volume that covers the start and the end of the remaining displacement, plus
+skin. A gap inside `(-1e-4, skin + 1e-4]` is classified with the closest-feature wall: motion into
+that wall blocks at time zero, and tangent or separating motion drops that candidate while the other
+candidates are still tested. A wider gap keeps the shape-cast time of impact and slides on the
+feature wall at the impact pose. Deeper overlap stays the one recovery push. The traveled part is
+applied, and only the unconsumed remainder is projected along the wall. The motor writes `Transform.position` through the parent inverse when there is a
+parent, and does not write `GlobalTransform`, rotation, or scale. It then patches that collider's
+center, pose, and bounds so the next motor in the same iteration sees the new pose. `MoveResult`
+records that resolution. It is not a claim that the character is standing on a surface. `applied`
+is the net origin change. Trigger detection does not cast that vector. It keeps the displacements
+the sweep wrote: the recovery push when one is written, each applied slide piece, and a clear of
+the remaining remainder. A rejected move, a failed parent writeback, and an unapplied tail are
+not segments. Those segments are cast from their own start poses with `target_distance` 0, so
+motor skin does not grow the trigger volume. The cast sees earlier motors already patched and
+later motors still at their start poses. It is not a simultaneous sweep of two moving bodies.
+After the motors, the sync compares the stored sensor-pair list, the overlaps in the patched
+index, and those path hits. The list is runtime state and is left unchanged when a step runs no
+fixed iteration. An index with no sensors and an empty list skips the pair pass. `TriggerEvent`
+is one queue. `Entered { a, b }` and `Exited { a, b }` use ascending `Entity` order. A
+pass-through sends `Entered` then `Exited` for that pair before the next pair. A pair crossed
+more than once in the iteration still produces that one outcome. A direct `Transform` write has
+no segments, so it only changes the endpoint sets. The events stay pending until the promote
+after the fixed loop. Trigger code does not read the camera or a sprite or mesh child. After the
+fixed loop, including a loop of zero iterations, every leftover `MoveIntent` is removed. An intent
+written during `update` waits for the next simulating step. Gravity, jumping, and a grounded flag
+are not implemented.
 
 `elapsed` and `frame` advance once per `step`, not once per fixed iteration. Extract and render are
 not stages: `Game::extract()` then `WindowRenderer::render` (or `render_to_rgba` offscreen).
@@ -525,7 +575,7 @@ systems they touch. Each cites evidence from this audit.
 | R-13 | **Diagnostics are counters, not a profile.** Logging is the `log` crate. `Diagnostics` holds one step of CPU stage times, the frame delta, and the latest render stats. There is no history, no per-system timing, and no GPU timestamp | `logging.rs`, `diagnostics.rs`, `missing.rs`; ADR-0012 | Low for the current call sites. A profiler bolted on later would duplicate them | M3a-4 implemented the records and the resource. M20 may add `tracing` or another profiler. The on-screen overlay stays in M10 |
 | R-14 | **Verification is narrower than it looks.** CI now runs on Windows, macOS and Linux (first run green), but only on software or paravirtual adapters, offscreen; GPU tests skip unless `DIMORA_REQUIRE_GPU=1` (CI sets it). A macOS window was checked for DPI (Phase 3). Phase 4's macOS window check is the one recorded in TASKS.md; Windows and Linux windowed paths are unverified. Performance is unmeasured. Pixel tests use tolerances that held on three rasterisers | TASKS.md "CI results" and "M3b Phase 4 results"; KI-3, KI-24, KI-27 | Rises slowly; regressions on real GPUs or untested windowed paths found by users | Keep CI green and required. Real-GPU timing needs a different runner (ADR-0005 option B) |
 | R-15 | **Foundations not yet shaped for the editor.** Registered components now have hand-written field names and a persistence class (M4 Phase 1, ADR-0014). Those lists are not derived from the structs. Unregistered components still have none. There is no undo stack, entities and assets still lack stable file ids (R-4), there is no scene format, and the renderer draws one view (R-2) | `registry.rs`, `components.rs`, `world.rs`, `extract.rs`; CAPABILITIES rows 2, 8, 32, 33, 36 | High for the parts still missing: commands exist, but editor undo, identities, and a viewport do not | M4 still owes scene membership. M6 owes camera-to-texture. M19 owes serialization. Write no component that hides state the editor must edit |
-| R-16 | **Single-view assumptions hide in details.** Evidence: `Upright` sprites are edge-on under a straight-down camera and foreshortened in a steep view (settled, ADR-0021); cutout content that has not opted in still follows draw order or depth-test rounding (`spatial_scene` does not attach `CoplanarPriority`; ADR-0020 is the opt-in); the world is +Y up with an XZ ground (a provisional convention, ADR-0004) while gameplay orientation and movement planes have no design yet; directional animation (D-31) will read the camera; shadow and light code is not yet written and could assume a perspective view. Isometric, top-down and side are ordinary cameras built by `PlacedCamera` | `components.rs` (`SpriteOrientation`), `extract.rs`, `coplanar.rs`, `scene_renderer.rs`; `examples/spatial_scene/tests/configurations.rs`; ADR-0004; ADR-0020 | High if found late: orientation and light direction are baked into M7, M8, M13 and M14 | D-26 is settled (ADR-0021). Gameplay orientation is still open before M7 and M8. Coplanar sprite priority is settled (ADR-0020). M14 tests under three camera configurations |
+| R-16 | **Single-view assumptions hide in details.** Evidence: `Upright` sprites are edge-on under a straight-down camera and foreshortened in a steep view (settled, ADR-0021); cutout content that has not opted in still follows draw order or depth-test rounding (`spatial_scene` does not attach `CoplanarPriority`; ADR-0020 is the opt-in); the world is +Y up with an XZ ground (a provisional convention, ADR-0004). `CharacterMotor.locked_axes` is an explicit world-axis lock, and the gameplay-orientation component is still open; directional animation (D-31) will read the camera; shadow and light code is not yet written and could assume a perspective view. Isometric, top-down and side are ordinary cameras built by `PlacedCamera` | `components.rs` (`SpriteOrientation`), `extract.rs`, `coplanar.rs`, `scene_renderer.rs`; `examples/spatial_scene/tests/configurations.rs`; ADR-0004; ADR-0020 | High if found late: orientation and light direction are baked into M7, M8, M13 and M14 | D-26 is settled (ADR-0021). Gameplay orientation is still open before M7 and M8. Coplanar sprite priority is settled (ADR-0020). M14 tests under three camera configurations |
 
 Expensive redesigns, ranked by likelihood times cost, if nothing changes: **R-4 (asset identity)**, **R-1
 and R-2 (render model shape)**, **R-5 and R-8 (mutation and threading)**, **R-7 and R-6 (API and format
@@ -563,8 +613,8 @@ These are settled; revisit only with a concrete problem.
 
 ## Proposed future architecture (NOT implemented)
 
-Direction only; none of this exists in the code. Where an ADR is cited, the decision is settled and the
-implementation is still a later task. Each item is a roadmap milestone with its own acceptance
+Direction only. A bullet names a checkpoint when that part is already in the code. Where an ADR is
+cited, the decision is settled. Each item is a roadmap milestone with its own acceptance
 criteria. Open decisions stay in [DECISIONS.md](DECISIONS.md).
 
 * **Scenes as units** (M4): the registry and text dumps exist (Phase 1, `cdb5ec3`, ADR-0014). Extraction
@@ -582,7 +632,29 @@ criteria. Open decisions stay in [DECISIONS.md](DECISIONS.md).
   sprites into one instanced draw. M5-6 (`92286ce`) adds plane, cube, cuboid, sphere,
   and cylinder meshes as ordinary `MeshData` (ADR-0018). M5 is accepted locally. Localized mip-texel regeneration is not implemented.
 * **A list of camera passes** instead of one `RenderScene` camera, plus render-to-texture (M6).
-* **A collision world** as a resource rebuilt in the fixed stage, with spatial 3D queries (M7).
+* **Kinematic movement** on the collision world (rest of M7). M7-1A rebuilds `CollisionWorld` in the
+  fixed stage and answers overlap and ray queries. M7-1B-1 sweeps `CharacterMotor` in that same
+  system and writes the local position. The contract is
+  [ADR-0025](adr/0025-kinematic-collision.md): private `parry3d` 0.31.1 queries, ECS-owned
+  transforms, a linear AABB list, and no rigid-body pipeline. A nonblocking zero-time skin contact
+  is dropped and the rest of that remainder is still tested. M7-1B-1G classifies a gap inside the
+  skin band with the closest-feature wall. M7-1B-2 sends `TriggerEvent` on the existing queue from
+  committed movement segments. M7-1B-2R makes a sensor pair nonblocking whichever side moves.
+  `spatial_scene --collision` is the opt-in example of that contract and is off unless the flag is
+  set. The default walker stays a sprite moved by a direct `Transform` write. In collision mode the
+  entity named `walker` is the gameplay root: `Transform`, one capsule `Collider`, `CharacterMotor`,
+  and the runtime intent and result. The capsule's local offset is `half_height + radius` on +Y, so
+  a root at Y = 0 is the feet while the capsule stands upward. The sprite, or a mesh in the test
+  variant, is a child with no collider. A fixed-update system registered before `sync_collision`
+  reads the held world-axis actions, normalizes a diagonal, and writes `MoveIntent` as speed times
+  the fixed delta. It does not write `Transform` from the variable-rate update. The sealed system
+  consumes the intent. `TriggerEvent` is visible in `update` and is gone when `step` returns, so the
+  example logs it there. The environment A pillar uses one `aabb_box` whose half extents are half of
+  the mesh size constant shared with scene construction. Replacing that environment despawns the
+  pillar; the next rebuild omits it, and returning attaches a collider to the new entity for the
+  following fixed step. The sensor, the slide wall, and the second character are not scene members.
+  The camera is not an input to movement or to the index. Gravity, jumping, and grounded support
+  are not written.
 * **Sprite-sheet animation** (M8), **a character gameplay layer with an API surface list** (M9), **a UI
   runtime** (M10), **pose-first skeletal animation** (M11) and **3D skinned characters** (M12), within the
   boundaries below.

@@ -74,8 +74,8 @@ without it.
 | 21 | 3D skinned characters | Absent | `Vertex` has no joints/weights; no importer | M12 |
 | 22 | Character gameplay layer | Absent | The demo's own system drives the animation player | M9 |
 | **Gameplay** | | | | |
-| 23 | Collision and spatial queries | Absent | | M7 |
-| 24 | Physics and movement | Absent | Kinematic controller planned; no solver | M7 |
+| 23 | Collision and spatial queries | Partial | Sphere, box, and capsule; fixed-step `CollisionWorld`; overlap, ray, and `TriggerEvent` enter/exit. Movement is row 24 | M7 |
+| 24 | Physics and movement | Partial | Kinematic sweep on `CharacterMotor`; no gravity, jump, or grounded state | M7 |
 | 25 | Audio | Absent | | M16 |
 | **UI** | | | | |
 | 26 | UI runtime (screen and world space) | Absent | No fonts, layout, widgets, overlay pass | M10 |
@@ -557,19 +557,56 @@ Missing from the original category list and now tracked: **save games** (34), **
 ## Gameplay
 
 ### 23. Collision and spatial queries
-* **Now.** Absent. **Planned.** M7: 3D colliders (sphere/box/capsule, layers), a `CollisionWorld`
-  resource rebuilt in the fixed stage, raycast and overlap, triggers via events. Bounds can use
-  `DebugDraw::wire_box` and raycasts can use `DebugDraw::ray`. That call is not written.
-  **Depends on.** M3, M4, M6, D-09, D-10. Debug drawing exists. M7 has not started.
+* **Now.** Partial (M7-1A through M7-1B-3). Sphere, box, and capsule colliders, with a local offset, layers, mask,
+  sensor flag, and enabled flag. `CollisionWorld` is rebuilt at the end of each fixed iteration from
+  a sorted list and a linear AABB scan. Overlap and ray queries return world-space results. Sensors
+  emit `TriggerEvent` on one queue: `Entered` when a qualifying pair starts overlapping, `Exited`
+  when it stops, and both, adjacent, when a committed movement segment crosses a pair that is
+  outside at both endpoints. A repeated crossing in one fixed iteration collapses to that one
+  outcome. Solid/solid pairs emit nothing. A pair blocks only when both colliders are solid, so a sensor
+  mover passes through a solid and still emits these events. The pair list is runtime state and is unchanged on a
+  zero-iteration step. An index with no sensors and an empty list skips the pair pass. Each indexed entry stores `mask`. Movement uses the mutual
+  filter. A free query still tests `layers` against the query mask only. Sphere and capsule scale is
+  uniform when `(max - min) / max` of the column lengths is at most `1e-4`. `CollisionDebug` is off
+  unless a caller enables it; a normal step with colliders submits no collision wires. When it is
+  on, indexed shapes become finite `DebugDraw` segments, and several fixed iterations append them.
+  **Not implemented.** Locomotion. The opt-in `spatial_scene --collision` example does demonstrate the
+  pillar block, a slide wall, a sensor pass-through, and a second motor; the default scene does not.
+  The contract is
+  [ADR-0025](adr/0025-kinematic-collision.md).
+  **Depends on.** M3, M4, M6, D-10. D-09 is settled. M7 is not complete.
 * **Integration.** World-space 3D, attached to the **gameplay** entity; tilemap collision layer (M13)
   and foot placement (M12) feed it; scripts and UI hit-testing may use queries.
-* **Performance.** Broadphase must scale with entity count; deterministic across runs.
+* **Performance.** The first broadphase is a sorted list and can be quadratic. Replacement stays behind the candidate function. Determinism is same-process, not cross-platform bitwise identity.
 * **Not initially.** Rigid bodies, joints, continuous collision for dynamic bodies, convex colliders, navmesh.
 
 ### 24. Physics and movement
-* **Now.** Absent. **Planned.** Kinematic move-and-slide with swept tests in M7. A physics library is an
-  open question (D-09); the leaning is a small custom layer.
-* **Not initially.** Rigid-body dynamics, joints, ragdolls, vehicles.
+* **Now.** Partial (M7-1B-1, with the M7-1B-1G near-tangent correction, the M7-1B-2R sensor rule, and the M7-1B-3 example integration). `CharacterMotor` stores skin
+  (default `0.01`), `max_slides` (default 4), and `locked_axes` (`BVec3`, default none).
+  `MoveIntent.translation` is the world displacement for one fixed iteration. The sealed collision
+  system sweeps it, writes `Transform.position`, patches that collider, and stores `MoveResult`.
+  A gap inside `(-1e-4, skin + 1e-4]` uses the closest-feature wall instead of the shape-cast normal.
+  Tangent and separating motion in that band drop that candidate and keep testing the others. Inward
+  motion at or above `1e-4` blocks at time zero. Wider gaps keep the cast time of impact. Deeper
+  overlap stays one recovery push. Tested pairs are sphere-sphere, sphere-capsule, capsule-capsule,
+  sphere-box, capsule-box, and box-box, including reversed roles, rotated and reflected boxes, and
+  parented colliders. `requested` is the intent before axis locks. `applied` is the world origin
+  change, including one recovery push. `Blocked` and `Rejected` are exclusive. Rejection leaves the
+  transform and the index unchanged. A later step that does not process a new intent leaves the
+  previous result in place. That result is the last resolution, not a ground contact. Full XYZ
+  movement is the default. A sprite or mesh child does not change it, and neither does the camera.
+  A sensor mover is not blocked by a solid, a sensor, or another sensor, and it writes no contact
+  normal for those pairs. One gameplay entity has one collider. An indexed descendant still rejects
+  the ancestor motor. `spatial_scene --collision` places that one collider on the gameplay root and
+  the sprite or mesh on a child. IJKL requests world XZ at 90 units per second. Y is not locked.
+  The same fixed step moves a second capsule between two bumpers. Headless tests step `Game` under
+  several cameras and with either visual.
+  **Not implemented.** Gravity, jumping, walking acceleration, a grounded flag, floor/wall/ceiling
+  labels, stairs, slopes, and moving platforms. Trigger enter/exit is row 23. Triangle meshes and convex hulls are
+  not supported. The `1e-4` band is an absolute tolerance, not a guarantee at every world scale.
+  **Depends on.** M7-1A and [ADR-0025](adr/0025-kinematic-collision.md). M7 is not complete.
+* **Not initially.** Rigid-body dynamics, joints, ragdolls, vehicles. The broadphase may be quadratic
+  until a later milestone replaces the candidate function.
 
 ### 25. Audio
 * **Now.** Absent. **Planned.** M16 behind a backend interface with a null backend; spatial audio from the

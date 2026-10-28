@@ -11,6 +11,7 @@
 //! [`ComponentRegistry`] names those components for debug dumps. It does not serialize them.
 
 mod builtin;
+mod collision;
 mod commands;
 mod dump;
 mod events;
@@ -30,6 +31,10 @@ mod world;
 pub use hecs::{Entity, EntityRef, Query, QueryBorrow};
 
 pub use builtin::register_world_components;
+pub use collision::{
+    clear_move_intents, pair_interacts, sync_collision, CharacterMotor, Collider, ColliderShape, CollisionDebug,
+    CollisionQuery, CollisionWorld, MoveIntent, MoveResult, MoveStatus, RayHit, SkipReason, TriggerEvent,
+};
 pub use commands::{CommandError, CommandFailure, CommandWriter};
 pub use dump::DumpError;
 pub use engine_math::Transform;

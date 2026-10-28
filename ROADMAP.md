@@ -688,24 +688,25 @@ MSAA is `crates/engine-renderer/tests/msaa.rs`, `crates/engine-renderer-wgpu/tes
 
 ---
 
-## M7. Collision and gameplay primitives: Not started
+## M7. Collision and gameplay primitives: In progress
 
 **Objective.** Spatial collision and a kinematic character controller; no rigid-body physics.
 
-**Prerequisites.** M3 (fixed stage), M4 (events/commands), M6. Debug drawing, the part of M6 this milestone names for collider visualization, is implemented locally. M6 itself is not complete, and M7 has not started.
+**Prerequisites.** M3 (fixed stage), M4 (events/commands), M6. Debug drawing, the part of M6 this milestone names for collider visualization, is implemented locally. M6 itself is not complete. M7-1A, the geometric query index, M7-1B-1, the kinematic sweep, M7-1B-2, trigger events, M7-1B-2R, the symmetric sensor rule, and M7-1B-3, the opt-in `spatial_scene --collision` integration, are implemented on `feat/m7-collision`. Locomotion is not.
 
 **Tasks.**
 - Collider components (sphere, box, capsule; layers/masks) in **3D world space**, so an object at a
   different Z does not collide.
-- A `CollisionWorld` resource rebuilt in the fixed stage (uniform grid or sweep-and-prune
-  broadphase), raycast and overlap queries.
-- Kinematic move-and-slide controller with swept tests.
+- A `CollisionWorld` resource rebuilt in the fixed stage (a sorted list and linear AABB tests,
+  [ADR-0025](docs/adr/0025-kinematic-collision.md)), raycast and overlap queries.
+- Kinematic move-and-slide controller with swept tests. A gap inside the skin band uses the
+  closest-feature wall; a wider gap keeps the shape-cast time of impact.
 - Trigger enter/exit events through an event channel.
-- Debug visualisation through M6 debug draw.
+- Debug visualisation through M6 debug draw, opt-in and off unless `CollisionDebug` is enabled.
 - Colliders attach to the gameplay entity, not to a visual child, so a change of character representation
   (M9) cannot change collision.
 
-**Dependencies.** D-09, D-10.
+**Dependencies.** D-09 is settled ([ADR-0025](docs/adr/0025-kinematic-collision.md)). D-10 is settled. M7-1A implements the query index. M7-1B-1 implements the sweep. M7-1B-1G corrects near-tangent classification. M7-1B-2 implements trigger events on one `TriggerEvent` queue. M7-1B-2R makes a sensor pair nonblocking from either side. M7-1B-3 demonstrates the pillar, a slide, a sensor, and a second motor in `spatial_scene --collision`. Locomotion is not implemented. M7 is not complete.
 
 **Acceptance criteria.**
 - Shape-pair overlap tests over a table of cases; raycast tests per shape.
@@ -716,6 +717,14 @@ MSAA is `crates/engine-renderer/tests/msaa.rs`, `crates/engine-renderer-wgpu/tes
   configurations, and a constrained 2D-style movement plane (D-48) is expressed as a movement option, not a
   separate controller.
 - `spatial_scene`: the walkable figure is blocked by the pillar.
+- The first checkpoint's geometry cases are written: mirrored offsets, shear rejection, shape-pair
+  overlap, world-space ray normals, filters, camera independence, and stable ordering. M7-1B-1 writes
+  the diagonal slide, locked axes, wall A then wall B, and a same-process 1,000-step movement hash.
+  M7-1B-2 writes trigger enter/exit on one queue, including a crossing of a committed slide segment
+  and no event for a sensor past a solid that stopped a solid mover. M7-1B-2R lets a sensor mover pass through that solid. M7-1B-3 runs that contract through `Game::step` in `spatial_scene --collision`: the default scene is unchanged, the gameplay root blocks on the pillar, a diagonal slides, a sensor emits enter and exit, and cameras and the visual child do not change the trace. Locomotion remains a separate milestone.
+- A mover in skin contact with wall A, traveling away from A toward wall B, stops at B's near face
+  plus skin and does not tunnel. Owner approved 2026-10-27
+  ([ADR-0025](docs/adr/0025-kinematic-collision.md)). M7-1B-1 implements that case.
 
 **Tests/examples.** Collision unit/property tests; controller test; example.
 

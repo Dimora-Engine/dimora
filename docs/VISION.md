@@ -204,8 +204,9 @@ Not pursued without a recorded, compelling reason (an ADR citing a concrete need
 * **A Unity or Godot clone**: no node-tree or scene-graph-as-API, no asset store, no visual scripting.
   The editor is purpose-built for the spatial model and for the games Dimora targets, not a generic editor
   for every kind of game.
-* **Rigid-body physics solver, ragdolls, cloth, vehicles.** Kinematic collision and queries only (M7);
-  a physics library would be an ADR.
+* **Rigid-body physics solver, ragdolls, cloth, vehicles.** Kinematic collision and queries only (M7).
+  Geometric queries are a private Parry dependency ([ADR-0025](adr/0025-kinematic-collision.md)); that
+  record does not add a rigid-body solver.
 * **Networking and multiplayer** (though determinism keeps the door open).
 * **Mobile, web and console targets** before the first desktop release.
 * **A custom scripting language** and a second scripting language.

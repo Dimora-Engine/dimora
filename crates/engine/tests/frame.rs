@@ -46,7 +46,10 @@ fn stages_run_in_order_and_builtins_stay_at_their_anchors() {
     game.add_to_stage_before(Stage::Animate, "before_animate", Stage::ANIMATE, push("before_animate")).unwrap();
     game.add_to_stage(Stage::Animate, "after_animate", push("after_animate")).unwrap();
     game.add_to_stage(Stage::PostUpdate, "before_propagate", move |world| {
-        assert!(world.component::<GlobalTransform>(child).is_err());
+        // The fixed step already ran sync_collision, so this child has a snapshot from before
+        // `update` moved the parent. post_update still rebuilds it afterwards.
+        let synced = world.component::<GlobalTransform>(child).unwrap().translation();
+        assert!(synced.approx_eq(Vec3::new(0.0, 0.0, 1.0), 1e-5), "{synced:?}");
         world.resource_mut::<Vec<&str>>().push("before_propagate");
     })
     .unwrap();

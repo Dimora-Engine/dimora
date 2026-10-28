@@ -72,7 +72,7 @@ pub mod prelude {
         TexturePixelEdits, TextureRegionError,
     };
     pub use engine_core::{Actions, ButtonSource, Color, FixedTimestep, Input, Key, MouseButton, Time};
-    pub use engine_math::{Mat4, Quat, Rect, Transform, Vec2, Vec3, Vec4};
+    pub use engine_math::{BVec3, Mat4, Quat, Rect, Transform, Vec2, Vec3, Vec4};
     pub use engine_renderer::{
         AmbientLight, Camera, CameraClear, CameraOutput, CameraPresentation, CameraProjection, CameraView,
         CoplanarPriority, CoplanarSettings, DebugDraw, DebugSegment, Fog, Light, LightKind, Material, Mesh, MsaaError,
@@ -81,9 +81,10 @@ pub mod prelude {
         DEBUG_SPHERE_SEGMENTS, MAX_COPLANAR_PRIORITY,
     };
     pub use engine_world::{
-        Children, CommandError, CommandFailure, CommandWriter, ComponentDesc, ComponentInfo, ComponentRegistry,
-        DumpError, Entity, FieldDesc, GlobalTransform, Interpolate, Name, Parent, Persistence, RegistryError,
-        SceneBuilder, SceneError, SceneInstanceId, SceneMember, SceneOpId, SceneOpStatus, Schedule, ScheduleError,
-        Tags, Visibility, World,
+        pair_interacts, CharacterMotor, Children, Collider, ColliderShape, CollisionDebug, CollisionQuery,
+        CollisionWorld, CommandError, CommandFailure, CommandWriter, ComponentDesc, ComponentInfo, ComponentRegistry,
+        DumpError, Entity, FieldDesc, GlobalTransform, Interpolate, MoveIntent, MoveResult, MoveStatus, Name, Parent,
+        Persistence, RayHit, RegistryError, SceneBuilder, SceneError, SceneInstanceId, SceneMember, SceneOpId,
+        SceneOpStatus, Schedule, ScheduleError, SkipReason, Tags, TriggerEvent, Visibility, World,
     };
 }

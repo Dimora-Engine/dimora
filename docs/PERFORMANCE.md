@@ -917,3 +917,158 @@ The presented rows call `present_to_surface` on the 64-sprite, 4-cuboid scene. T
 
 One sample allocates no private frame and records no frame-present draw. Four samples add one present draw. Timed frames do not create another frame image. After the timed 4× samples, presenting at 640×360 reallocates the private image once (`reallocs` 1) and returning to one sample drops that image and the 4× images (`dropped_frame_and_msaa` true, `frame_drops` 1). Run 2's 4× encode median is about 64 µs above its one-sample presented median. That is CPU time recording the resolve and the copy. It is not a GPU cost. The one-sample presented encode is the same scene call path as a direct render plus a drop of an image that was never created. Its median sits inside the spread of the direct one-sample encodes from this run. No separate 1× tax is claimed.
 
+## Collision index baseline
+
+Recorded 2026-10-27 at 10:18 AM America/Chicago. M7-1A. The index is one sorted vector and a linear AABB scan. This is not a production broadphase, and it is not the tilemap budget above.
+
+| | |
+|---|---|
+| Machine | Apple M5, Mac17,2, arm64 |
+| OS | macOS 27.0 |
+| Rust | rustc 1.99.0 (`b940084d7` 2026-09-28) |
+| Profile | `cargo run --release -p engine-world --example collision_index_bench` |
+| Binary | `crates/engine-world/examples/collision_index_bench.rs` |
+
+Each row is the median of 31 samples after 10 warmup calls, in one process. `sync_collision` includes `propagate_transforms` and the rebuild. Colliders are spheres of radius 0.5 on a line, 3 units apart. The overlap probe is a sphere of radius 0.5 at the origin. The ray starts at x = -2 and travels along +X with a maximum distance of 400. Disabled colliders are omitted before conversion.
+
+Two consecutive invocations:
+
+| Call | First median | Second median |
+|---|---|---|
+| `sync_collision`, 10 indexed | 1.4 µs | 1.0 µs |
+| `sync_collision`, 100 indexed | 8.5 µs | 5.9 µs |
+| `sync_collision`, 100 disabled | 2.3 µs | 1.7 µs |
+| Overlap against 100 indexed | 0.2 µs | 0.2 µs |
+| Ray against 100 indexed | 1.4 µs | 1.4 µs |
+
+The rebuild spread between the two runs is cache noise at this size. The candidate scan visits every indexed entry. A later pairwise or trigger pass over the same list would be quadratic in the collider count. That pass is not implemented and was not timed. These figures do not claim a broadphase that stays cheap for a tile layer.
+
+### Fixed collision phase
+
+Recorded 2026-10-27 at 10:59 AM America/Chicago. M7-1A-R. The timed body is one call of the sealed collision system: `sync_collision`, then wire submission only when `CollisionDebug` is enabled. `DebugDraw` is cleared before the timer, matching the once-per-step clear ahead of a single iteration. Overlap and ray queries are not included. The index is still the linear scan above.
+
+| | |
+|---|---|
+| Machine | Apple M5, Mac17,2, arm64 |
+| OS | macOS 27.0 |
+| Rust | rustc 1.99.0 (`b940084d7` 2026-09-28) |
+| Profile | `cargo run --release -p engine --example collision_phase_bench` |
+| Binary | `crates/engine/examples/collision_phase_bench.rs` |
+
+Each row is the median of 31 samples after 10 warmup calls. Colliders are spheres of radius 0.5 on a line, 3 units apart. Debug on builds three 16-segment circles per sphere (480 wires for 10, 4800 for 100). Debug off submits none.
+
+Two consecutive invocations:
+
+| Call | First median | Second median |
+|---|---|---|
+| Phase, 10 indexed, debug off | 1.2 µs | 1.2 µs |
+| Phase, 10 indexed, debug on | 10.5 µs | 9.1 µs |
+| Phase, 100 indexed, debug off | 8.0 µs | 7.0 µs |
+| Phase, 100 indexed, debug on | 97.0 µs | 80.8 µs |
+
+Debug off matches the rebuild row above. Debug on is the cost of building and storing the wires, not a second index. A pairwise pass is still not timed. None of these medians is a frame-time guarantee.
+
+Harness check, 2026-10-27 at 11:39 AM America/Chicago, same machine and `rustc 1.99.0`, one release invocation of each example. The tables above stay the recorded baselines. `collision_index_bench` printed 1.8 µs, 11.2 µs, 3.0 µs, overlap 0.3 µs, and ray 2.6 µs. `collision_phase_bench` printed debug off 1.4 µs and 8.6 µs (0 wires) and debug on 11.4 µs (480 wires) and 97.7 µs (4800 wires). The spread against the two-run tables is cache noise at this size.
+
+### Kinematic sweep
+
+Recorded 2026-10-27 at 3:07 PM America/Chicago. M7-1B-1. The timed body is `sync_collision` with one motor: propagate, rebuild, and one sweep of 30 units along +X into a box. The other colliders are spheres on that path, past the box, so the swept bounds include them. The mover is returned to the origin between samples, and that reset is outside the timer. Debug wires are not built. This does not replace the index or phase tables above, and it is not a frame-time or GPU measurement.
+
+| | |
+|---|---|
+| Machine | Apple M5, Mac17,2, arm64 |
+| OS | macOS 27.0 |
+| Rust | rustc 1.99.0 (`b940084d7` 2026-09-28) |
+| Profile | `cargo run --release -p engine-world --example movement_bench` |
+| Binary | `crates/engine-world/examples/movement_bench.rs` |
+
+Each row is the median of 31 samples after 10 warmup calls. The mover is a sphere of radius 0.4 with skin 0.01. The box face is at x = 11.5. Both runs stopped at x = 11.09, with 10 and 100 colliders indexed.
+
+Two consecutive invocations:
+
+| Call | First median | Second median |
+|---|---|---|
+| Sweep, 10 colliders | 2.7 µs | 2.9 µs |
+| Sweep, 100 colliders | 10.0 µs | 11.2 µs |
+
+The scan is still linear. These medians are CPU time for this fixture. They are not a production frame budget.
+
+M7-1B-1G, recorded 2026-10-27 at 10:25 PM America/Chicago, same machine, OS, Rust, command, warmup, and sample count. The mover still stops at x = 11.09. This table does not replace the 3:07 PM rows. Each swept candidate now pays a closest-feature query before the shape cast, and a positive-time hit pays a second query at the impact pose. There is no extra full-world rebuild. The feature query itself does not allocate. The medians are higher. This is not a performance improvement.
+
+| Call | First median | Second median |
+|---|---|---|
+| Sweep, 10 colliders | 4.8 µs | 4.2 µs |
+| Sweep, 100 colliders | 25.1 µs | 19.6 µs |
+
+M7-1B-2, recorded 2026-10-28 at 11:18 AM America/Chicago, same machine (Apple M5, Mac17,2), macOS 27.0, and rustc 1.99.0. Command: `cargo run --release -p engine-world --example movement_bench`. Release profile, warmup 10, median of 31, two consecutive invocations. This table does not replace the 3:07 PM or 10:25 PM rows, and these medians are not a production frame budget.
+
+`sweep 10` and `sweep 100` are the same solid fixture as M7-1B-1G: one sphere moves 30 units along +X into a box, and the other colliders are solids past that box. There are zero sensors. The mover still stops at x = 11.09. Today's medians are lower than the 10:25 PM closest-feature table. The sweep itself is unchanged. This run measures that fixture again, including the linear scan that sees there is nothing to trigger. It is not a claim that the closest-feature query got cheaper.
+
+`sensors 10` and `sensors 100` keep that wall and replace the extra solids with thin sensors standing on the committed path, before the box. `cross 8` is one motor and eight thin sensors, no wall, and the motor runs the full 30 units.
+
+| Call | First median | Second median | Indexed | Stopped x |
+|---|---|---|---|---|
+| Sweep, 10 colliders, zero sensors | 2.2 µs | 2.2 µs | 10 | 11.09 |
+| Sweep, 100 colliders, zero sensors | 10.8 µs | 10.9 µs | 100 | 11.09 |
+| Sensors on the path, 10 colliders | 4.5 µs | 4.4 µs | 10 | 11.09 |
+| Sensors on the path, 100 colliders | 50.1 µs | 49.2 µs | 100 | 11.09 |
+| One motor crossing 8 sensors | 3.9 µs | 3.8 µs | 9 | 30.00 |
+
+M7-1B-2R, recorded 2026-10-28 at 12:08 PM America/Chicago, same machine, OS, Rust, command, warmup, and sample count. The mover is still solid in every row. `sweep 10` and `sweep 100` still have zero sensors, still stop at x = 11.09, and still skip the trigger pair pass. `cross 8` still runs the full 30 units. This table does not replace the 11:18 AM rows. The medians are a later sample of the same fixtures. They are higher than that morning sample, and the 100-sensor row differs between these two invocations. The added test is one boolean on the mover. It is not a second solid sweep.
+
+| Call | First median | Second median | Indexed | Stopped x |
+|---|---|---|---|---|
+| Sweep, 10 colliders, zero sensors | 3.7 µs | 3.3 µs | 10 | 11.09 |
+| Sweep, 100 colliders, zero sensors | 18.5 µs | 17.6 µs | 100 | 11.09 |
+| Sensors on the path, 10 colliders | 7.5 µs | 7.3 µs | 10 | 11.09 |
+| Sensors on the path, 100 colliders | 108.9 µs | 83.6 µs | 100 | 11.09 |
+| One motor crossing 8 sensors | 6.6 µs | 6.5 µs | 9 | 30.00 |
+
+M7-1B-3, recorded 2026-10-28 at 1:36 PM America/Chicago, on the same Apple M5 (Mac17,2), macOS 27.0, and rustc 1.99.0 (`b940084d7` 2026-09-28). Release profile. This section does not replace the 11:18 AM or 12:08 PM tables. Thermal and power were not measured. The agent process was the other load on the machine.
+
+The controlled comparison uses the existing sweep fixture only. The pre-integration binary is commit `410d0be`, built once in a detached worktree with its own target directory. The post-integration binary is this checkpoint, also built once. The timed call in both is `sync_collision` alone. Neither binary was rebuilt during the measurements. Five processes of each ran in alternation, old then new. Each process warmed up 10 times and took 31 samples. The pre binary prints the median. The post binary also prints quartiles, minimum, and maximum of those 31. Every shared row still stopped at x = 11.09, or at x = 30.00 for `cross 8`.
+
+The first process of each binary was several times slower than the four that followed. Those four agree with each other and with the 11:18 AM table. The 12:08 PM table is a different sitting and is not used as a regression baseline. All five medians are listed. Process 1 is the cold one.
+
+| Call | Pre medians (µs) | Post medians (µs) |
+|---|---|---|
+| Sweep, 10 colliders | 16.7, 2.3, 2.3, 2.4, 2.2 | 14.2, 2.2, 2.3, 2.3, 2.2 |
+| Sweep, 100 colliders | 30.2, 11.8, 11.7, 11.5, 10.8 | 28.2, 11.1, 11.2, 10.8, 11.2 |
+| Sensors on the path, 10 colliders | 9.4, 4.5, 4.5, 4.4, 4.5 | 9.9, 4.5, 4.5, 4.5, 4.4 |
+| Sensors on the path, 100 colliders | 110.7, 49.9, 49.6, 50.2, 49.1 | 117.2, 49.8, 49.2, 49.5, 48.9 |
+| One motor crossing 8 sensors | 8.3, 3.8, 4.0, 3.9, 3.9 | 8.5, 3.8, 3.8, 3.8, 3.8 |
+
+A steady post-integration process (the second of the five) spread like this. These are the 31 samples inside that process, not a comparison with `410d0be`.
+
+| Call | Median | Q1 | Q3 | Min | Max |
+|---|---:|---:|---:|---:|---:|
+| Sweep, 10 | 2.2 | 2.1 | 2.3 | 2.0 | 4.8 |
+| Sweep, 100 | 11.1 | 10.8 | 11.4 | 10.4 | 13.1 |
+| Sensors, 10 | 4.5 | 4.4 | 4.6 | 4.3 | 5.9 |
+| Sensors, 100 | 49.8 | 49.0 | 50.8 | 48.5 | 66.5 |
+| Cross 8 | 3.8 | 3.8 | 3.9 | 3.7 | 5.6 |
+
+The collision sources were not changed to chase these numbers. The steady medians sit on top of the 11:18 AM table. That is not a speedup claim.
+
+The crowd rows are a new baseline. The same harness and fixture were not run at `410d0be`, so there is no historical comparison. Each motor is a capsule of radius 0.4 and segment half-height 0.6, offset 1 on Y, skin 0.01, displaced 6 units on +X. The first motors run into a box whose near face is x = 3.5 and stop at x = 3.09. The next motors pass through one thin sensor and finish at x = 6. Each of those crossings emits one enter and one exit. The remaining motors finish at x = 6 with no contact. Extra solids sit at x = 40, except in `dense`, where they sit beside the lanes and are still not contacts. Indexed counts are motors plus solids plus sensors. Event counts are `TriggerEvent` values from one sync after the queue was cleared. They are not geometric intersection counts. `small` emits none because it has no sensors.
+
+| Scene | Motors | Solids | Sensors | Indexed | Events per sync | Process medians (µs) |
+|---|---:|---:|---:|---:|---:|---|
+| Small | 10 | 20 | 0 | 30 | 0 | 26.6, 12.1, 12.2, 12.0, 12.0 |
+| Mixed | 50 | 50 | 10 | 110 | 20 | 120.3, 55.9, 54.9, 54.5, 55.0 |
+| Crowd | 100 | 50 | 20 | 170 | 40 | 243.8, 115.6, 115.1, 121.1, 114.9 |
+| Dense | 100 | 100 | 20 | 220 | 40 | 143.6, 141.7, 144.8, 147.0, 142.7 |
+
+The first process is again the cold outlier, except `dense`, which stayed near 143 µs in every process. A steady `sync_collision` sample (second process) was small 12.1 µs (11.9–14.8), mixed 55.9 (54.6–113.3), crowd 115.6 (112.2–166.0), and dense 141.7 (140.8–171.7). Dense costs more than crowd at the same motor count because it indexes 50 more solids beside the sweep. Ten sensors on the mixed scene are not a separate overhead number: that scene also has more motors. Nothing here was optimized. M13 remains the broadphase work. These times are not a frame-time gate. The project does not promise a budget for hundreds of motors.
+
+`cargo run --release -p engine --example fixed_crowd` times `Diagnostics.stages.fixed_update` for one fixed iteration of the same four scenes. Intents are written before `step`. The stage includes the sealed collision system and the loop, not a gameplay producer, and not the GPU. Three processes, after the sync bench, so they were already warm:
+
+| Scene | Medians (µs) | Events in that step | Fixed steps |
+|---|---|---:|---:|
+| Small | 12.4, 12.3, 12.7 | 0 | 1 |
+| Mixed | 55.5, 55.2, 56.5 | 20 | 1 |
+| Crowd | 114.6, 114.5, 115.7 | 40 | 1 |
+| Dense | 145.1, 144.3, 143.0 | 40 | 1 |
+
+The second process spread was small 12.3 (12.2–14.5), mixed 55.2 (54.6–58.6), crowd 114.5 (113.6–120.0), and dense 144.3 (143.2–162.8). The stage time matches the steady `sync_collision` time on these worlds. It is a different measurement, not a second copy of the table above.
+
