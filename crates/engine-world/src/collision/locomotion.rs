@@ -1,15 +1,23 @@
-//! Flat-ground support, gravity, and jumping for a gameplay body. This is not slope travel.
+//! Ground support, gravity, jumping, and walkable-slope traversal for a gameplay body.
 //!
 //! [`CharacterMotor`] remains the displacement solver. An enabled [`CharacterLocomotion`] writes
 //! that motor's [`MoveIntent`] for the iteration. The support query reads the index
 //! [`sync_collision`](super::sync_collision) just rebuilt. It does not build a second index.
 //! Ceiling contact is read from that iteration's fresh [`MoveResult`], not from an older one.
 //!
-//! The probe is along world −Y. A candidate counts only when the closest-feature gap is inside
-//! the reach window: not a deep penetration, and not farther than `skin + stick`. The nearest
-//! valid gap wins. Gaps within `1e-5` keep the lower [`Entity`]. The wall normal is the feature
-//! normal, from the surface toward the body, and it must face up within `max_slope`. Sensors and
-//! a one-way query mask do not count. The motor's mutual layer test does.
+//! The probe uses the closest-feature gap. A candidate counts only when that gap is inside the
+//! reach window: not a deep penetration, and not farther than `skin + stick`. The nearest valid
+//! gap wins. Gaps within `1e-5` keep the lower [`Entity`]. The wall normal is the feature normal,
+//! from the surface toward the body. It is walkable only when it faces up within `max_slope`.
+//! `normal.y` must be strictly positive, so an exactly vertical wall is not ground even when
+//! `max_slope` is π/2 and `cos(π/2)` is a tiny negative value. Sensors and a one-way query mask
+//! do not count. The motor's mutual layer test does.
+//!
+//! Grounded walking projects the XZ wish onto the plane perpendicular to that normal and travels
+//! `speed` along the surface. The tangent keeps its Y component. Adhesion is `stick` along the
+//! negated normal, in the same intent. Flat ground, whose normal is world +Y, is the previous
+//! horizontal step plus a downward stick. Airborne motion and takeoff stay on world axes: the
+//! wish is horizontal, and the jump is world +Y. Neither inherits the slope tangent or the stick.
 //!
 //! `Unknown` becomes `Supported` or `Airborne` on the first positive fixed step. Spawning already
 //! inside the support window is that classification, not a landing. Gravity is world −Y. It is
@@ -34,7 +42,7 @@ use super::types::{point_finite, CharacterMotor, MoveIntent, MoveResult, MoveSta
 const SUPPORT_TIE: f32 = 1e-5;
 /// Extra penetration, beyond skin, that still counts as standing on the surface.
 const PENETRATION_SLOP: f32 = 1e-4;
-/// Horizontal displacement shorter than this is not a walk.
+/// Committed traversal shorter than this is not a walk.
 const WALK_EPSILON: f32 = 1e-3;
 /// A contact normal this far below the horizon is a ceiling, not a wall or a floor.
 const CEILING_Y: f32 = -0.5;
@@ -43,10 +51,13 @@ const LEFT_GROUND: f32 = 1e-4;
 
 /// Persistent locomotion settings for one gameplay body.
 ///
-/// `speed` is world units per second on the XZ plane. `wish` is a direction, and this speed is
-/// what turns it into a displacement. `max_slope` is the largest angle, in radians, between world
-/// +Y and a support normal. `stick` is a downward adhesion along −Y, in world units, used while
-/// the pre-move probe says the body is supported and it is not jumping. It does not follow a slope.
+/// `speed` is world units per second along a walkable surface. In the air it is horizontal XZ
+/// speed. `wish` is a direction, and this speed is what turns it into a displacement.
+/// `max_slope` is the largest angle, in radians, between world +Y and a support normal. A normal
+/// with `y <= 0` is never walkable, including an exactly vertical wall at `max_slope` of π/2.
+/// `stick` is adhesion toward the supporting surface, along the negated support normal, in world
+/// units. On flat ground that direction is world −Y. It is applied while the pre-move probe says
+/// the body is supported and the body is not jumping or still rising in the takeoff lock.
 ///
 /// `gravity` is acceleration along world Y, in units per second squared. Up is +Y, so the default
 /// is negative. A positive or non-finite value contributes nothing. `jump_speed` is the upward
@@ -102,10 +113,13 @@ pub enum GroundSupport {
 }
 
 /// How the body is moving. `Jump` is airborne with upward velocity. `Fall` is airborne after
-/// gravity has been integrated, or after a ceiling stops the rise. `Walk` is a committed
-/// horizontal move that is not jumping or falling, including the step that leaves a ledge before
-/// gravity starts. Holding a wish into a wall, a vertical skin push, and a deep overlap that is
-/// not support stay `Idle`.
+/// gravity has been integrated, or after a ceiling stops the rise. `Walk` is committed traversal
+/// along the ground longer than `1e-3` that is not jumping or falling, including the step that
+/// leaves a ledge before gravity starts. On a walkable slope that length is the part of the
+/// committed move lying in the support plane, so adhesion and a recovery along the normal stay
+/// `Idle`, walking uphill is not `Jump`, and walking downhill is not `Fall`. Airborne motion with
+/// no vertical velocity still uses the horizontal XZ length. Holding a wish into a wall and a
+/// deep overlap that is not support stay `Idle`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum LocomotionPhase {
     #[default]
@@ -121,8 +135,10 @@ pub enum LocomotionPhase {
 /// value gravity and takeoff write. It is not `MoveResult.applied / dt`.
 ///
 /// `velocity.x` and `velocity.z` are reserved for a later acceleration checkpoint. This checkpoint
-/// leaves them at zero and does not read them. Horizontal motion on the ground and in the air is
-/// still the wish times `speed` times the fixed step. They are not `MoveResult.applied / dt`.
+/// leaves them at zero and does not read them. Grounded motion is the wish projected onto the
+/// support plane, times `speed`, times the fixed step. Its Y component is slope travel, not
+/// `velocity.y`. Airborne motion is still the horizontal wish times `speed` times the fixed step,
+/// plus `velocity.y`. Neither is `MoveResult.applied / dt`. The support stick is not stored here.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CharacterMotion {
     pub support: GroundSupport,
@@ -458,12 +474,15 @@ fn displacement(
         return None;
     }
     let speed = finite_nonneg(locomotion.speed).unwrap_or(0.0);
-    let mut delta = Vec3::new(wish.x * speed * step_secs, 0.0, wish.z * speed * step_secs);
-    if airborne_motion || matches!(pre, GroundSupport::Airborne) {
-        delta.y += motion.velocity.y * step_secs;
-    } else if matches!(pre, GroundSupport::Supported { .. }) {
-        delta.y -= finite_nonneg(locomotion.stick).unwrap_or(0.0);
-    }
+    let delta = if let GroundSupport::Supported { normal, .. } = pre {
+        if airborne_motion {
+            airborne_delta(wish, motion.velocity.y, speed, step_secs)
+        } else {
+            surface_travel(wish, *normal, speed, step_secs) + adhesion(*normal, locomotion.stick)
+        }
+    } else {
+        airborne_delta(wish, motion.velocity.y, speed, step_secs)
+    };
     if !point_finite(delta) || delta.length_squared() == 0.0 {
         None
     } else {
@@ -491,12 +510,69 @@ fn phase_after_move(
     if result.status == MoveStatus::Rejected {
         return LocomotionPhase::Idle;
     }
-    let horizontal = Vec3::new(result.applied.x, 0.0, result.applied.z).length();
-    if horizontal > WALK_EPSILON {
+    if ground_traversal(support, result.applied) > WALK_EPSILON {
         LocomotionPhase::Walk
     } else {
         LocomotionPhase::Idle
     }
+}
+
+/// Along-surface distance of a committed move. Adhesion and a normal recovery contribute nothing.
+///
+/// Airborne motion has no walkable plane, so the measure stays the horizontal XZ length. That
+/// includes the step that leaves a ledge.
+fn ground_traversal(support: &GroundSupport, applied: Vec3) -> f32 {
+    match support {
+        GroundSupport::Supported { normal, .. } => match normal.try_normalize() {
+            Some(normal) if normal.y > 0.0 => (applied - normal * applied.dot(normal)).length(),
+            _ => horizontal_length(applied),
+        },
+        _ => horizontal_length(applied),
+    }
+}
+
+fn horizontal_length(applied: Vec3) -> f32 {
+    Vec3::new(applied.x, 0.0, applied.z).length()
+}
+
+/// World-axis airborne step. The wish stays horizontal. Vertical motion is `velocity.y`, including
+/// a jump, and there is no slope tangent and no adhesion.
+fn airborne_delta(wish: Vec3, vertical_speed: f32, speed: f32, step_secs: f32) -> Vec3 {
+    Vec3::new(wish.x * speed * step_secs, vertical_speed * step_secs, wish.z * speed * step_secs)
+}
+
+/// Projects `wish` onto the plane of `normal` and travels `|wish| * speed * step` along it.
+///
+/// `wish` is already horizontal and no longer than 1. A flat normal `(0, 1, 0)` therefore returns
+/// the wish scaled by speed and time. The tangent is normalized only when its length is finite and
+/// above [`engine_math::EPSILON`]. A zero, non-finite, or downward normal contributes nothing.
+fn surface_travel(wish: Vec3, normal: Vec3, speed: f32, step_secs: f32) -> Vec3 {
+    if !point_finite(wish) || !point_finite(normal) || !speed.is_finite() || !step_secs.is_finite() {
+        return Vec3::ZERO;
+    }
+    let Some(normal) = normal.try_normalize().filter(|normal| normal.y > 0.0) else {
+        return Vec3::ZERO;
+    };
+    let scale = wish.length();
+    if !scale.is_finite() || scale <= engine_math::EPSILON {
+        return Vec3::ZERO;
+    }
+    let Some(direction) = (wish - normal * wish.dot(normal)).try_normalize() else {
+        return Vec3::ZERO;
+    };
+    direction * (scale * speed * step_secs)
+}
+
+/// `stick` toward the surface. Flat ground is world −Y. A non-finite, negative, or non-upward
+/// normal contributes nothing, so adhesion cannot push the body sideways off a bad contact.
+fn adhesion(normal: Vec3, stick: f32) -> Vec3 {
+    let Some(stick) = finite_nonneg(stick) else {
+        return Vec3::ZERO;
+    };
+    let Some(normal) = normal.try_normalize().filter(|normal| normal.y > 0.0) else {
+        return Vec3::ZERO;
+    };
+    -normal * stick
 }
 
 fn ceiling_blocked(result: &MoveResult) -> bool {
@@ -579,7 +655,7 @@ fn probe(
         let Some(normal) = feature.wall else {
             continue;
         };
-        if !normal.y.is_finite() || normal.y < min_cosine {
+        if !walkable_normal(normal, min_cosine) {
             continue;
         }
         if feature.gap > reach {
@@ -603,12 +679,30 @@ fn probe(
     (support, buried && matches!(support, GroundSupport::Airborne))
 }
 
+/// Minimum upward component of a unit support normal.
+///
+/// `cos(π/2)` is slightly negative in `f32`. Clamping to zero keeps that value from admitting a
+/// downward normal. [`walkable_normal`] still rejects `y == 0`, so a vertical wall stays unwalkable
+/// when the configured maximum is exactly 90°.
 fn slope_cosine(max_slope: f32) -> Option<f32> {
     if max_slope.is_finite() && (0.0..=std::f32::consts::FRAC_PI_2).contains(&max_slope) {
-        Some(max_slope.cos())
+        Some(max_slope.cos().max(0.0))
     } else {
         None
     }
+}
+
+/// Cosine slack so a slope built at exactly `max_slope` still counts.
+///
+/// A 45° rotation and `cos(π/4)` can disagree by a few ulps. `1e-4` is about 0.008° near 45° and
+/// does not pull a 45.05° face under a 45° limit. It also cannot admit `y <= 0`.
+const SLOPE_COSINE_SLOP: f32 = 1e-4;
+
+/// A unit normal is walkable when it faces strictly upward and its Y meets `min_cosine`.
+///
+/// A slope at the configured angle is walkable. `y == 0` is not, even when `min_cosine` is 0.
+fn walkable_normal(normal: Vec3, min_cosine: f32) -> bool {
+    normal.y.is_finite() && normal.y > 0.0 && normal.y + SLOPE_COSINE_SLOP >= min_cosine
 }
 
 fn finite_nonneg(value: f32) -> Option<f32> {
@@ -632,4 +726,99 @@ fn horizontal_wish(wish: Vec3) -> Vec3 {
 /// not do this.
 fn mutual(layers: u32, mask: u32, other_layers: u32, other_mask: u32) -> bool {
     layers & other_mask != 0 && other_layers & mask != 0
+}
+
+#[cfg(test)]
+mod tests {
+    use engine_math::Quat;
+
+    use super::*;
+
+    const SPEED: f32 = 90.0;
+    const STEP: f32 = 1.0 / 60.0;
+    /// The 30° example from the checkpoint: a plane whose uphill direction is +X.
+    const SLOPE_30: Vec3 = Vec3::new(-0.5, 0.8660254, 0.0);
+
+    fn close(actual: Vec3, expected: Vec3) {
+        let gap = (actual - expected).length();
+        assert!(gap < 1e-3, "{actual:?} vs {expected:?} (gap {gap})");
+    }
+
+    #[test]
+    fn flat_ground_keeps_the_horizontal_step() {
+        let step = surface_travel(Vec3::X, Vec3::Y, SPEED, STEP);
+        close(step, Vec3::new(1.5, 0.0, 0.0));
+        close(adhesion(Vec3::Y, 0.08), Vec3::new(0.0, -0.08, 0.0));
+    }
+
+    #[test]
+    fn a_30_degree_tangent_matches_the_surface_step() {
+        let uphill = surface_travel(Vec3::X, SLOPE_30, SPEED, STEP);
+        let downhill = surface_travel(-Vec3::X, SLOPE_30, SPEED, STEP);
+        close(uphill, Vec3::new(1.299, 0.750, 0.0));
+        close(downhill, Vec3::new(-1.299, -0.750, 0.0));
+        let along = uphill.length();
+        assert!((along - 1.5).abs() < 1e-3, "along-surface speed {along}");
+        assert!(uphill.y > 0.0 && downhill.y < 0.0);
+    }
+
+    #[test]
+    fn a_short_wish_and_a_diagonal_keep_their_scale() {
+        let half = surface_travel(Vec3::X * 0.5, Vec3::Y, SPEED, STEP);
+        close(half, Vec3::new(0.75, 0.0, 0.0));
+        let diagonal = horizontal_wish(Vec3::new(1.0, 9.0, 1.0));
+        let sloped = surface_travel(diagonal, SLOPE_30, SPEED, STEP);
+        assert!((sloped.length() - 1.5).abs() < 1e-3, "{sloped:?}");
+        let flat = surface_travel(diagonal, Vec3::Y, SPEED, STEP);
+        assert!((flat.length() - 1.5).abs() < 1e-3, "{flat:?}");
+    }
+
+    #[test]
+    fn a_slope_yawed_about_y_keeps_the_same_surface_step() {
+        let yaw = Quat::from_rotation_y(std::f32::consts::FRAC_PI_2);
+        let normal = yaw.rotate(SLOPE_30);
+        let uphill = yaw.rotate(surface_travel(Vec3::X, SLOPE_30, SPEED, STEP));
+        // +X uphill rotates to −Z uphill.
+        close(surface_travel(Vec3::new(0.0, 0.0, -1.0), normal, SPEED, STEP), uphill);
+        // Contour of the unrotated slope is world +Z and stays horizontal.
+        close(surface_travel(Vec3::Z, SLOPE_30, SPEED, STEP), Vec3::new(0.0, 0.0, 1.5));
+    }
+
+    #[test]
+    fn degenerate_wishes_and_normals_contribute_nothing() {
+        assert_eq!(surface_travel(Vec3::ZERO, SLOPE_30, SPEED, STEP), Vec3::ZERO);
+        assert_eq!(surface_travel(Vec3::X * 1e-8, SLOPE_30, SPEED, STEP), Vec3::ZERO);
+        assert_eq!(surface_travel(Vec3::new(f32::NAN, 0.0, 0.0), SLOPE_30, SPEED, STEP), Vec3::ZERO);
+        assert_eq!(surface_travel(Vec3::X, Vec3::ZERO, SPEED, STEP), Vec3::ZERO);
+        assert_eq!(surface_travel(Vec3::X, Vec3::new(1.0, 0.0, 0.0), SPEED, STEP), Vec3::ZERO);
+        assert_eq!(surface_travel(Vec3::X, Vec3::new(f32::INFINITY, 1.0, 0.0), SPEED, STEP), Vec3::ZERO);
+        assert_eq!(adhesion(Vec3::ZERO, 0.08), Vec3::ZERO);
+        assert_eq!(adhesion(Vec3::X, 0.08), Vec3::ZERO);
+        assert_eq!(adhesion(SLOPE_30, f32::NAN), Vec3::ZERO);
+        let pull = adhesion(SLOPE_30, 0.08);
+        close(pull, -SLOPE_30.normalized() * 0.08);
+        assert!(pull.x > 0.0 && pull.z.abs() < 1e-6, "adhesion stays in the normal plane {pull:?}");
+    }
+
+    #[test]
+    fn a_vertical_wall_is_not_walkable_at_ninety_degrees() {
+        let min_cosine = slope_cosine(std::f32::consts::FRAC_PI_2).unwrap();
+        assert_eq!(min_cosine, 0.0, "cos(π/2) must not stay negative, got {min_cosine}");
+        assert!(std::f32::consts::FRAC_PI_2.cos() <= 0.0);
+        assert!(!walkable_normal(Vec3::X, min_cosine));
+        assert!(!walkable_normal(Vec3::new(0.0, 0.0, 1.0), min_cosine));
+        assert!(!walkable_normal(-Vec3::Y, min_cosine));
+        // A hair under vertical is inside a 90° limit. It is not a wall.
+        let almost = Vec3::new(1.0, 1.0e-4, 0.0).normalized();
+        assert!(almost.y > 0.0 && almost.y < 1.0e-3, "{almost:?}");
+        assert!(walkable_normal(almost, min_cosine));
+        let limit_45 = slope_cosine(std::f32::consts::FRAC_PI_4).unwrap();
+        let slope_45 = Quat::from_rotation_z(std::f32::consts::FRAC_PI_4).rotate(Vec3::Y);
+        assert!(walkable_normal(slope_45, limit_45), "{slope_45:?} vs {limit_45}");
+        let slope_60 = Quat::from_rotation_z(60.0_f32.to_radians()).rotate(Vec3::Y);
+        assert!(!walkable_normal(slope_60, limit_45), "{slope_60:?}");
+        assert!(slope_cosine(-0.1).is_none());
+        assert!(slope_cosine(f32::NAN).is_none());
+        assert!(slope_cosine(std::f32::consts::PI).is_none());
+    }
 }

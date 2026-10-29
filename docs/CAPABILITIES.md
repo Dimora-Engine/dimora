@@ -75,7 +75,7 @@ without it.
 | 22 | Character gameplay layer | Absent | The demo's own system drives the animation player | M9 |
 | **Gameplay** | | | | |
 | 23 | Collision and spatial queries | Partial | Sphere, box, and capsule; fixed-step `CollisionWorld`; overlap, ray, and `TriggerEvent` enter/exit. Movement is row 24 | M7 |
-| 24 | Physics and movement | Partial | Kinematic sweep on `CharacterMotor`. Locomotion-1A is flat-ground support. Locomotion-1B adds gravity, jump, fall, and landing. No slopes | M7 |
+| 24 | Physics and movement | Partial | Kinematic sweep on `CharacterMotor`. Locomotion-1A is ground support. Locomotion-1B adds gravity, jump, fall, and landing. Locomotion-1C walks walkable slopes. No stairs or platforms | M7 |
 | 25 | Audio | Absent | | M16 |
 | **UI** | | | | |
 | 26 | UI runtime (screen and world space) | Absent | No fonts, layout, widgets, overlay pass | M10 |
@@ -602,20 +602,24 @@ Missing from the original category list and now tracked: **save games** (34), **
   the sprite or mesh on a child. IJKL requests world XZ at 90 units per second. Y is not locked.
   The same fixed step moves a second capsule between two bumpers. Headless tests step `Game` under
   several cameras and with either visual.
-  Locomotion-1A and 1B
+  Locomotion-1A, 1B, and 1C
   ([ADR-0026](adr/0026-character-locomotion.md)) add `CharacterLocomotion`, `CharacterMotion`,
   `LocomotionIntent`, and `LocomotionEvent::Landed`. An enabled component owns the displacement.
-  Support is a downward feature probe on the existing index, before and after the motor, with a
-  reach of `skin + stick`. Gravity defaults to −400 along world −Y and uses semi-implicit Euler
-  when the pre-move probe is already airborne. Jump speed defaults to 200. Terminal fall speed
-  defaults to 800. A competing `MoveIntent` is discarded. `Walk` requires a committed horizontal
-  move that is not a jump or a fall. `Jump` and `Fall` are airborne phases. A missing locomotion
+  Support is the closest-feature probe on the existing index, before and after the motor, with a
+  reach of `skin + stick`. A walkable normal faces strictly upward and meets `max_slope`, so a
+  vertical wall is not ground at a 90° limit. Grounded motion follows the support tangent at
+  `speed`, and adhesion follows the negated normal. Flat ground stays a horizontal step. Gravity
+  defaults to −400 along world −Y and uses semi-implicit Euler when the pre-move probe is already
+  airborne. Jump speed defaults to 200 along world +Y. Terminal fall speed defaults to 800. A
+  competing `MoveIntent` is discarded. `Walk` is committed motion along the ground and is not a
+  jump, a fall, or adhesion by itself. `Jump` and `Fall` are airborne phases. A missing locomotion
   component still moves on XYZ through `MoveIntent`. `spatial_scene --collision` does not use the
   new components.
-  **Not implemented.** Coyote time, jump buffering, variable jump height, double jump, horizontal
-  acceleration, slope tangent projection, stairs, autostep, and moving platforms. Trigger enter/exit
-  is row 23. Triangle meshes and convex hulls are not supported. The `1e-4` band is an absolute
-  tolerance, not a guarantee at every world scale.
+  **Not implemented.** 1D horizontal acceleration, deceleration, running, and air control. 1E, the
+  playable demonstration. Coyote time, jump buffering, variable jump height, double jump, wall jump,
+  stairs, autostep, moving platforms, and rigid-body physics. Those deferred items are not assigned
+  to 1E. Trigger enter/exit is row 23. Triangle meshes and convex hulls are not supported. The
+  `1e-4` band is an absolute tolerance, not a guarantee at every world scale.
   **Depends on.** M7-1A and [ADR-0025](adr/0025-kinematic-collision.md). M7 is not complete.
 * **Not initially.** Rigid-body dynamics, joints, ragdolls, vehicles. The broadphase may be quadratic
   until a later milestone replaces the candidate function.

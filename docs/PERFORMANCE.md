@@ -1107,3 +1107,29 @@ Three processes, back to back. Times are microseconds. A few microseconds of pro
 
 Grounded locomotion under 1B is the floor row. It does not integrate gravity while supported, and it sits in the same few-microsecond band as a free-fall step and a jump takeoff. The quietest grounded row is about 2 microseconds above the bare sweep, as in 1A. Eight bodies, grounded or mixed, cost several times one body. Nothing here was optimized.
 
+## Locomotion-1C slopes
+
+Recorded 2026-10-29 in the afternoon, America/Chicago, on the same Apple M5 and macOS 27.0 (build 26A428), `rustc 1.99.0`. The command, warmup, sample count, and quartile indexes match the 1A section. The 1A and 1B tables above are unchanged. The first seven rows are the same scenarios, remeasured in these three processes so a slope row can be compared with a flat row from the same run. The absolute times sit a little above the 10:40 PM 1B table. The bare sweep moved with them, so that shift is process noise, not a slope cost.
+
+Slope rows add one rotated ramp and keep the 16 boxes at x = 30. Uphill ends at about `(1.049, 1.183, 0)` from a rest near `(-0.250, 0.433, 0)`, a step of about `(1.299, 0.750, 0)`. Downhill is the opposite. Standing stays at the rest point. The 60° row is not grounded: the sweep slides the wish up the face and the body ends near `(-0.106, 0.816, 0)`. Eight bodies share one 30° ramp. The mixed row is three flat walks, three slope walks, and two airborne bodies, so the index holds 26 colliders and the reported end is the first flat body at `(1.500, 0.500, -30)`.
+
+Three processes, back to back. Times are microseconds.
+
+| Row | Process 1 median (q1–q3, min–max) | Process 2 | Process 3 |
+|---|---|---|---|
+| Bare motor, floor | 2.9 (2.9–3.0, 2.8–4.4) | 3.6 (3.6–3.8, 3.5–6.2) | 3.2 (3.1–3.3, 3.0–4.7) |
+| Locomotion, floor | 5.2 (5.1–5.4, 5.0–6.7) | 6.8 (6.7–7.1, 6.5–8.8) | 6.1 (6.0–6.2, 5.9–7.7) |
+| Locomotion, no floor | 5.0 (4.9–5.1, 4.8–7.8) | 6.5 (6.5–6.8, 6.2–9.0) | 5.5 (5.3–5.8, 5.2–12.1) |
+| Locomotion, 8 on a floor | 17.8 (17.6–18.0, 17.5–19.4) | 23.5 (23.3–23.6, 23.1–27.2) | 19.6 (19.5–19.9, 19.3–22.8) |
+| Free fall | 4.6 (4.6–4.7, 4.5–5.0) | 6.0 (6.0–6.1, 5.9–8.3) | 4.9 (4.8–5.0, 4.8–5.2) |
+| Jump takeoff | 5.1 (5.1–5.2, 5.0–5.5) | 6.8 (6.7–6.8, 6.6–7.0) | 5.5 (5.5–5.6, 5.3–5.8) |
+| Mixed, 4 ground + 4 air | 17.3 (17.1–17.5, 16.9–18.8) | 22.6 (22.5–22.8, 22.2–23.1) | 18.7 (18.6–18.8, 18.4–19.4) |
+| Slope 30° uphill | 5.4 (5.4–5.5, 5.2–6.7) | 6.9 (6.8–7.0, 6.7–7.2) | 5.7 (5.6–5.7, 5.6–5.9) |
+| Slope 30° downhill | 5.2 (5.2–5.3, 5.1–5.5) | 7.0 (6.9–7.0, 6.7–7.4) | 5.6 (5.5–5.6, 5.4–5.8) |
+| Slope 30° standing | 5.2 (5.1–5.2, 5.0–5.4) | 7.0 (6.9–7.2, 6.7–26.4) | 5.5 (5.5–5.5, 5.4–5.7) |
+| Steep 60° unsupported | 5.4 (5.4–5.5, 5.2–6.5) | 7.3 (7.2–7.4, 7.0–7.6) | 5.8 (5.7–5.8, 5.6–5.9) |
+| 8 on a 30° slope | 18.1 (18.0–18.2, 17.8–18.8) | 24.4 (22.0–24.7, 21.4–27.8) | 19.5 (19.4–19.6, 19.2–19.9) |
+| Mixed flat, slope, air | 18.4 (18.2–18.5, 18.0–18.8) | 21.5 (21.4–21.7, 21.2–43.4) | 19.7 (19.5–19.9, 19.4–21.5) |
+
+In each process, uphill, downhill, and standing stay within about 0.3 µs of that process's flat floor row. Eight bodies on a slope match eight bodies on a floor. The steep row matches one grounded step. Nothing here was optimized, and the broadphase was not changed.
+

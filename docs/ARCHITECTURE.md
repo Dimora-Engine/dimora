@@ -272,15 +272,19 @@ for the iteration and writes one `MoveIntent`. The sealed system passes `Time::d
 `sync_collision_with_step`. A positive finite value probes support before and after the motors.
 `sync_collision` without a step does not. `CharacterMotion.support` is that post-move probe.
 `CharacterMotion.velocity.y` is jump and fall speed. `velocity.x` and `velocity.z` stay zero in
-1B and are not read. Horizontal motion is still the wish times speed times the fixed step.
-Gravity is world −Y, default −400, integrated with semi-implicit Euler only when the pre-move
-probe is already airborne or the takeoff lock is set. The step that walks off a floor does not
-fall. The next one does. A jump edge copies `Actions::fixed_pressed` and is eligible only on a
-supported pre-move probe. Takeoff assigns 200 and skips gravity for that iteration. A ceiling
-normal with `y < -0.5` on this iteration's result cancels upward speed. `LocomotionEvent::Landed`
-is sent when an airborne body becomes supported after a move that was not rejected. A rejected
-move restores the pre-integration velocity. Slope projection, stairs, coyote time, and jump
-buffering are not implemented.
+1C and are not read. Grounded motion projects the XZ wish onto the support plane and travels
+`speed` along that surface, so the tangent keeps its Y. Adhesion is `stick` along the negated
+support normal, in the same intent. Flat ground is the previous horizontal step plus a downward
+stick. Airborne motion stays horizontal, plus `velocity.y`. A jump takes off along world +Y and
+does not inherit the tangent or the stick. Gravity is world −Y, default −400, integrated with
+semi-implicit Euler only when the pre-move probe is already airborne or the takeoff lock is set.
+The step that walks off a floor does not fall. The next one does. A jump edge copies
+`Actions::fixed_pressed` and is eligible only on a supported pre-move probe. Takeoff assigns 200
+and skips gravity for that iteration. A ceiling normal with `y < -0.5` on this iteration's result
+cancels upward speed. `LocomotionEvent::Landed` is sent when an airborne body becomes supported
+after a move that was not rejected. A rejected move restores the pre-integration velocity. A
+surface steeper than `max_slope`, including an exactly vertical wall at 90°, is not ground. Stairs,
+autostep, moving platforms, coyote time, and jump buffering are not implemented.
 
 `elapsed` and `frame` advance once per `step`, not once per fixed iteration. Extract and render are
 not stages: `Game::extract()` then `WindowRenderer::render` (or `render_to_rgba` offscreen).

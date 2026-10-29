@@ -9,10 +9,11 @@
 //!
 //! `locomotion, no floor` keeps gravity at 0 so that row stays a horizontal airborne step, matching
 //! the Locomotion-1A measurement. Free fall, jump takeoff, and the mixed row are the 1B cases.
+//! Slope rows are the 1C cases. They add one ramp and do not replace the flat rows.
 
 use std::time::Instant;
 
-use engine_math::{Transform, Vec3};
+use engine_math::{Quat, Transform, Vec3};
 use engine_world::{
     sync_collision, sync_collision_with_step, CharacterLocomotion, CharacterMotion, CharacterMotor, Collider, Entity,
     LocomotionIntent, MoveIntent, World,
@@ -29,6 +30,12 @@ enum BenchMotion {
     Fall,
     Jump,
     Mixed,
+    SlopeUp,
+    SlopeDown,
+    SlopeStand,
+    Steep,
+    SlopeCrowd,
+    SlopeMixed,
 }
 
 #[derive(Clone)]
@@ -51,6 +58,12 @@ fn main() {
     time_case("free fall", scene(1, false, BenchMotion::Fall, None));
     time_case("jump takeoff", scene(1, true, BenchMotion::Jump, None));
     time_case("mixed, 4 ground + 4 air", scene(8, true, BenchMotion::Mixed, None));
+    time_case("slope 30° uphill", slope_scene(1, BenchMotion::SlopeUp));
+    time_case("slope 30° downhill", slope_scene(1, BenchMotion::SlopeDown));
+    time_case("slope 30° standing", slope_scene(1, BenchMotion::SlopeStand));
+    time_case("steep 60° unsupported", slope_scene(1, BenchMotion::Steep));
+    time_case("8 on a 30° slope", slope_scene(8, BenchMotion::SlopeCrowd));
+    time_case("mixed flat, slope, air", slope_scene(8, BenchMotion::SlopeMixed));
 }
 
 fn time_case(label: &str, mut world: World) {
@@ -116,8 +129,71 @@ fn rewind(world: &mut World) {
                     let _ = world.insert(*entity, (LocomotionIntent::new(Vec3::X),));
                 }
             }
+            BenchMotion::SlopeUp | BenchMotion::SlopeCrowd => {
+                let _ = world.insert(*entity, (LocomotionIntent::new(Vec3::X),));
+            }
+            BenchMotion::SlopeDown => {
+                let _ = world.insert(*entity, (LocomotionIntent::new(-Vec3::X),));
+            }
+            BenchMotion::SlopeStand => {
+                let _ = world.insert(*entity, (LocomotionIntent::new(Vec3::ZERO),));
+            }
+            BenchMotion::Steep => {
+                let _ = world.insert(*entity, (CharacterMotion::default(), LocomotionIntent::new(Vec3::X)));
+            }
+            BenchMotion::SlopeMixed => {
+                let _ = world.insert(*entity, (CharacterMotion::default(),));
+                if index < 6 {
+                    let _ = world.insert(*entity, (LocomotionIntent::new(Vec3::X),));
+                }
+            }
         }
     }
+}
+
+/// One 30° or 60° ramp, the same 16 distant boxes as the flat fixture, and `bodies` spheres.
+///
+/// `SlopeMixed` uses three spheres on a flat floor, three on the ramp, and two airborne.
+fn slope_scene(bodies: usize, motion: BenchMotion) -> World {
+    let mut world = World::new();
+    for index in 0..16 {
+        world.spawn((Transform::from_xyz(30.0, 0.5, index as f32 * 2.0), Collider::aabb_box(Vec3::new(0.4, 0.4, 0.4))));
+    }
+    let degrees = if motion == BenchMotion::Steep { 60.0 } else { 30.0 };
+    let ramp_z = if motion == BenchMotion::SlopeMixed { 40.0 } else { 0.0 };
+    let normal = spawn_ramp(&mut world, degrees, ramp_z);
+    if motion == BenchMotion::SlopeMixed {
+        world.spawn((Transform::from_xyz(0.0, -0.5, -30.0), Collider::aabb_box(Vec3::new(16.0, 0.5, 8.0))));
+    }
+    let mut entities = Vec::with_capacity(bodies);
+    let mut starts = Vec::with_capacity(bodies);
+    for index in 0..bodies {
+        let start = match motion {
+            BenchMotion::SlopeMixed if index < 3 => Vec3::new(0.0, 0.5, -30.0 + index as f32 * 3.0),
+            BenchMotion::SlopeMixed if index >= 6 => Vec3::new(0.0, 8.0, -30.0 + (index - 6) as f32 * 3.0),
+            _ => normal * 0.5 + Vec3::new(0.0, 0.0, ramp_z + index as f32 * 3.0),
+        };
+        let entity = world.spawn((
+            Transform::from_xyz(start.x, start.y, start.z),
+            Collider::sphere(0.5),
+            CharacterMotor::default(),
+            CharacterLocomotion::default(),
+            CharacterMotion::default(),
+        ));
+        entities.push(entity);
+        starts.push(start);
+    }
+    world.insert_resource(Cast { entities, starts, motion });
+    world
+}
+
+fn spawn_ramp(world: &mut World, degrees: f32, z_offset: f32) -> Vec3 {
+    let rotation = Quat::from_rotation_z(degrees.to_radians());
+    let normal = rotation.rotate(Vec3::Y).normalized();
+    let half = Vec3::new(16.0, 2.0, 24.0);
+    let center = -normal * half.y + Vec3::new(0.0, 0.0, z_offset);
+    world.spawn((Transform::from_position(center).with_rotation(rotation), Collider::aabb_box(half)));
+    normal
 }
 
 /// `bodies` spheres, 16 solids that are not contacts, and an optional floor.
