@@ -1089,3 +1089,21 @@ Three processes, back to back. Times are microseconds. The same row moved by a f
 
 Process 1's floor row was split: Q1 was 4.0 and the median was 8.3. The other rows in that process, and every row in processes 2 and 3, had Q1 within 0.4 of the median except the eight-body row in process 2 (Q1 25.5, median 29.1). In the quietest process the one-body floor probe sat about 2 microseconds above the bare sweep. Eight bodies cost several times one body. Nothing here was optimized. The M7 crowd tables above are unchanged.
 
+## Locomotion-1B gravity and jump
+
+Recorded 2026-10-28 at about 10:40 PM America/Chicago, on the same Apple M5 and macOS 27.0 (build 26A428), `rustc 1.99.0`. The command, warmup, sample count, and quartile indexes match the 1A section. The 1A table above is unchanged. The first four rows are the same scenarios: `locomotion, no floor` still uses gravity 0 so it stays a horizontal airborne step. Free fall starts at y = 8 with no wish and ends one step lower, at y = 7.889. Jump takeoff resets motion and requests a jump, and ends at y = 3.833 (0.5 + 200/60). The mixed row is four grounded walks and four free-falling bodies. Indexed counts stay 18, 17, and 25. The reported end of the mixed row is the first grounded body.
+
+Three processes, back to back. Times are microseconds. A few microseconds of process noise is the same kind of spread as 1A. These are not a frame budget, and the broadphase was not changed.
+
+| Row | Process 1 median (q1–q3, min–max) | Process 2 | Process 3 |
+|---|---|---|---|
+| Bare motor, floor | 2.5 (2.4–2.5, 2.3–3.9) | 2.5 (2.5–2.5, 2.3–4.0) | 2.3 (2.2–2.3, 2.2–4.0) |
+| Locomotion, floor | 4.5 (4.5–4.7, 4.4–21.5) | 4.7 (4.6–4.8, 4.5–5.9) | 4.1 (4.0–4.2, 4.0–5.2) |
+| Locomotion, no floor | 4.2 (4.2–4.3, 4.0–5.4) | 4.4 (4.3–4.5, 4.2–6.0) | 3.9 (3.8–3.9, 3.7–5.0) |
+| Locomotion, 8 on a floor | 14.8 (14.7–14.8, 14.5–16.0) | 15.8 (15.8–16.0, 15.5–17.6) | 14.1 (14.0–14.3, 13.9–29.2) |
+| Free fall | 3.8 (3.7–3.8, 3.7–3.9) | 4.0 (4.0–4.1, 3.9–4.2) | 3.6 (3.6–3.7, 3.5–4.6) |
+| Jump takeoff | 4.2 (4.1–4.2, 4.1–4.6) | 4.5 (4.5–4.6, 4.4–4.8) | 4.0 (3.9–4.0, 3.9–4.1) |
+| Mixed, 4 ground + 4 air | 14.3 (14.3–14.4, 14.1–15.5) | 14.6 (14.5–15.2, 14.4–15.4) | 13.4 (13.2–13.6, 13.0–16.6) |
+
+Grounded locomotion under 1B is the floor row. It does not integrate gravity while supported, and it sits in the same few-microsecond band as a free-fall step and a jump takeoff. The quietest grounded row is about 2 microseconds above the bare sweep, as in 1A. Eight bodies, grounded or mixed, cost several times one body. Nothing here was optimized.
+

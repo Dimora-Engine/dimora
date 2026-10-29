@@ -34,8 +34,8 @@ pub use builtin::register_world_components;
 pub use collision::{
     clear_locomotion_intents, clear_move_intents, pair_interacts, sync_collision, sync_collision_with_step,
     CharacterLocomotion, CharacterMotion, CharacterMotor, Collider, ColliderShape, CollisionDebug, CollisionQuery,
-    CollisionWorld, GroundSupport, LocomotionIntent, LocomotionPhase, MoveIntent, MoveResult, MoveStatus, RayHit,
-    SkipReason, TriggerEvent,
+    CollisionWorld, GroundSupport, LocomotionEvent, LocomotionIntent, LocomotionPhase, MoveIntent, MoveResult,
+    MoveStatus, RayHit, SkipReason, TriggerEvent,
 };
 pub use commands::{CommandError, CommandFailure, CommandWriter};
 pub use dump::DumpError;

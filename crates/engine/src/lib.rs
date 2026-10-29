@@ -84,8 +84,8 @@ pub mod prelude {
         pair_interacts, CharacterLocomotion, CharacterMotion, CharacterMotor, Children, Collider, ColliderShape,
         CollisionDebug, CollisionQuery, CollisionWorld, CommandError, CommandFailure, CommandWriter, ComponentDesc,
         ComponentInfo, ComponentRegistry, DumpError, Entity, FieldDesc, GlobalTransform, GroundSupport, Interpolate,
-        LocomotionIntent, LocomotionPhase, MoveIntent, MoveResult, MoveStatus, Name, Parent, Persistence, RayHit,
-        RegistryError, SceneBuilder, SceneError, SceneInstanceId, SceneMember, SceneOpId, SceneOpStatus, Schedule,
-        ScheduleError, SkipReason, Tags, TriggerEvent, Visibility, World,
+        LocomotionEvent, LocomotionIntent, LocomotionPhase, MoveIntent, MoveResult, MoveStatus, Name, Parent,
+        Persistence, RayHit, RegistryError, SceneBuilder, SceneError, SceneInstanceId, SceneMember, SceneOpId,
+        SceneOpStatus, Schedule, ScheduleError, SkipReason, Tags, TriggerEvent, Visibility, World,
     };
 }

@@ -1,4 +1,4 @@
-//! Release timings for one ground-support step beside a bare motor sweep.
+//! Release timings for one locomotion step beside a bare motor sweep.
 //!
 //! `cargo run --release -p engine-world --example locomotion_bench`
 //!
@@ -6,6 +6,9 @@
 //! next intent is not timed. The timed call is `sync_collision` or `sync_collision_with_step`
 //! only. It is not a frame budget. The floor row's locomotion sweep also includes a 0.08 downward
 //! stick, so its median is not the probe by itself.
+//!
+//! `locomotion, no floor` keeps gravity at 0 so that row stays a horizontal airborne step, matching
+//! the Locomotion-1A measurement. Free fall, jump takeoff, and the mixed row are the 1B cases.
 
 use std::time::Instant;
 
@@ -19,11 +22,20 @@ const WARMUP: usize = 10;
 const SAMPLES: usize = 31;
 const STEP: f32 = 1.0 / 60.0;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BenchMotion {
+    Motor,
+    Walk,
+    Fall,
+    Jump,
+    Mixed,
+}
+
 #[derive(Clone)]
 struct Cast {
     entities: Vec<Entity>,
     starts: Vec<Vec3>,
-    locomotion: bool,
+    motion: BenchMotion,
 }
 
 fn main() {
@@ -32,10 +44,13 @@ fn main() {
         std::process::exit(1);
     }
     println!("locomotion bench (one sync, 10 warmup, 31 samples)");
-    time_case("bare motor, floor", scene(1, true, false));
-    time_case("locomotion, floor", scene(1, true, true));
-    time_case("locomotion, no floor", scene(1, false, true));
-    time_case("locomotion, 8 on a floor", scene(8, true, true));
+    time_case("bare motor, floor", scene(1, true, BenchMotion::Motor, None));
+    time_case("locomotion, floor", scene(1, true, BenchMotion::Walk, None));
+    time_case("locomotion, no floor", scene(1, false, BenchMotion::Walk, Some(0.0)));
+    time_case("locomotion, 8 on a floor", scene(8, true, BenchMotion::Walk, None));
+    time_case("free fall", scene(1, false, BenchMotion::Fall, None));
+    time_case("jump takeoff", scene(1, true, BenchMotion::Jump, None));
+    time_case("mixed, 4 ground + 4 air", scene(8, true, BenchMotion::Mixed, None));
 }
 
 fn time_case(label: &str, mut world: World) {
@@ -70,28 +85,45 @@ fn time_case(label: &str, mut world: World) {
 }
 
 fn run(world: &mut World) {
-    let locomotion = world.resource::<Cast>().locomotion;
-    if locomotion {
-        sync_collision_with_step(world, Some(STEP));
-    } else {
+    let motion = world.resource::<Cast>().motion;
+    if motion == BenchMotion::Motor {
         sync_collision(world);
+    } else {
+        sync_collision_with_step(world, Some(STEP));
     }
 }
 
 fn rewind(world: &mut World) {
     let cast = world.resource::<Cast>().clone();
-    for (entity, start) in cast.entities.iter().zip(cast.starts.iter()) {
+    for (index, (entity, start)) in cast.entities.iter().zip(cast.starts.iter()).enumerate() {
         world.component_mut::<Transform>(*entity).unwrap().position = *start;
-        if cast.locomotion {
-            let _ = world.insert(*entity, (LocomotionIntent::new(Vec3::X),));
-        } else {
-            let _ = world.insert(*entity, (MoveIntent::new(Vec3::new(1.5, 0.0, 0.0)),));
+        match cast.motion {
+            BenchMotion::Motor => {
+                let _ = world.insert(*entity, (MoveIntent::new(Vec3::new(1.5, 0.0, 0.0)),));
+            }
+            BenchMotion::Walk => {
+                let _ = world.insert(*entity, (LocomotionIntent::new(Vec3::X),));
+            }
+            BenchMotion::Fall => {
+                let _ = world.insert(*entity, (CharacterMotion::default(),));
+            }
+            BenchMotion::Jump => {
+                let _ = world.insert(*entity, (CharacterMotion::default(), LocomotionIntent::jumping(Vec3::ZERO)));
+            }
+            BenchMotion::Mixed => {
+                let _ = world.insert(*entity, (CharacterMotion::default(),));
+                if index < cast.entities.len() / 2 {
+                    let _ = world.insert(*entity, (LocomotionIntent::new(Vec3::X),));
+                }
+            }
         }
     }
 }
 
 /// `bodies` spheres, 16 solids that are not contacts, and an optional floor.
-fn scene(bodies: usize, floor: bool, locomotion: bool) -> World {
+///
+/// `gravity` replaces the default only for a locomotion body. `None` keeps −400.
+fn scene(bodies: usize, floor: bool, motion: BenchMotion, gravity: Option<f32>) -> World {
     let mut world = World::new();
     if floor {
         world.spawn((Transform::from_xyz(0.0, -0.5, 0.0), Collider::aabb_box(Vec3::new(40.0, 0.5, 40.0))));
@@ -102,25 +134,30 @@ fn scene(bodies: usize, floor: bool, locomotion: bool) -> World {
     let mut entities = Vec::with_capacity(bodies);
     let mut starts = Vec::with_capacity(bodies);
     for index in 0..bodies {
-        let start = Vec3::new(0.0, 0.5, index as f32 * 3.0);
-        let entity = if locomotion {
+        let elevated = motion == BenchMotion::Fall || (motion == BenchMotion::Mixed && index >= bodies / 2);
+        let start = Vec3::new(0.0, if elevated { 8.0 } else { 0.5 }, index as f32 * 3.0);
+        let entity = if motion == BenchMotion::Motor {
             world.spawn((
                 Transform::from_xyz(start.x, start.y, start.z),
                 Collider::sphere(0.5),
                 CharacterMotor::default(),
-                CharacterLocomotion::default(),
-                CharacterMotion::default(),
             ))
         } else {
+            let mut locomotion = CharacterLocomotion::default();
+            if let Some(gravity) = gravity {
+                locomotion.gravity = gravity;
+            }
             world.spawn((
                 Transform::from_xyz(start.x, start.y, start.z),
                 Collider::sphere(0.5),
                 CharacterMotor::default(),
+                locomotion,
+                CharacterMotion::default(),
             ))
         };
         entities.push(entity);
         starts.push(start);
     }
-    world.insert_resource(Cast { entities, starts, locomotion });
+    world.insert_resource(Cast { entities, starts, motion });
     world
 }

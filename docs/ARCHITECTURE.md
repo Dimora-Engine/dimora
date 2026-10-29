@@ -271,8 +271,16 @@ is removed. An intent written during `update` waits for the next simulating step
 for the iteration and writes one `MoveIntent`. The sealed system passes `Time::delta_secs()` into
 `sync_collision_with_step`. A positive finite value probes support before and after the motors.
 `sync_collision` without a step does not. `CharacterMotion.support` is that post-move probe.
-`Walk` is a committed horizontal move, not the wish. Gravity, jumping, slope projection, and
-stairs are not implemented. A body that leaves a floor stays at that height.
+`CharacterMotion.velocity.y` is jump and fall speed. `velocity.x` and `velocity.z` stay zero in
+1B and are not read. Horizontal motion is still the wish times speed times the fixed step.
+Gravity is world −Y, default −400, integrated with semi-implicit Euler only when the pre-move
+probe is already airborne or the takeoff lock is set. The step that walks off a floor does not
+fall. The next one does. A jump edge copies `Actions::fixed_pressed` and is eligible only on a
+supported pre-move probe. Takeoff assigns 200 and skips gravity for that iteration. A ceiling
+normal with `y < -0.5` on this iteration's result cancels upward speed. `LocomotionEvent::Landed`
+is sent when an airborne body becomes supported after a move that was not rejected. A rejected
+move restores the pre-integration velocity. Slope projection, stairs, coyote time, and jump
+buffering are not implemented.
 
 `elapsed` and `frame` advance once per `step`, not once per fixed iteration. Extract and render are
 not stages: `Game::extract()` then `WindowRenderer::render` (or `render_to_rgba` offscreen).
@@ -658,8 +666,8 @@ criteria. Open decisions stay in [DECISIONS.md](DECISIONS.md).
   the mesh size constant shared with scene construction. Replacing that environment despawns the
   pillar; the next rebuild omits it, and returning attaches a collider to the new entity for the
   following fixed step. The sensor, the slide wall, and the second character are not scene members.
-  The camera is not an input to movement or to the index. Gravity, jumping, and grounded support
-  are not written.
+  The camera is not an input to movement or to the index. That example still writes `MoveIntent`.
+  It does not attach `CharacterLocomotion`.
 * **Sprite-sheet animation** (M8), **a character gameplay layer with an API surface list** (M9), **a UI
   runtime** (M10), **pose-first skeletal animation** (M11) and **3D skinned characters** (M12), within the
   boundaries below.

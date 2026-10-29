@@ -33,10 +33,16 @@ const LOCOMOTION_FIELDS: &[FieldDesc] = &[
     FieldDesc::new("speed", "f32"),
     FieldDesc::new("max_slope", "f32"),
     FieldDesc::new("stick", "f32"),
+    FieldDesc::new("gravity", "f32"),
+    FieldDesc::new("jump_speed", "f32"),
+    FieldDesc::new("terminal_fall", "f32"),
 ];
-const MOTION_FIELDS: &[FieldDesc] =
-    &[FieldDesc::new("support", "GroundSupport"), FieldDesc::new("phase", "LocomotionPhase")];
-const LOCOMOTION_INTENT_FIELDS: &[FieldDesc] = &[FieldDesc::new("wish", "Vec3")];
+const MOTION_FIELDS: &[FieldDesc] = &[
+    FieldDesc::new("support", "GroundSupport"),
+    FieldDesc::new("phase", "LocomotionPhase"),
+    FieldDesc::new("velocity", "Vec3"),
+];
+const LOCOMOTION_INTENT_FIELDS: &[FieldDesc] = &[FieldDesc::new("wish", "Vec3"), FieldDesc::new("jump", "bool")];
 const MOVE_RESULT_FIELDS: &[FieldDesc] = &[
     FieldDesc::new("requested", "Vec3"),
     FieldDesc::new("applied", "Vec3"),
@@ -221,15 +227,18 @@ fn locomotion_values(locomotion: &CharacterLocomotion) -> Vec<String> {
         format!("{:?}", locomotion.speed),
         format!("{:?}", locomotion.max_slope),
         format!("{:?}", locomotion.stick),
+        format!("{:?}", locomotion.gravity),
+        format!("{:?}", locomotion.jump_speed),
+        format!("{:?}", locomotion.terminal_fall),
     ]
 }
 
 fn motion_values(motion: &CharacterMotion) -> Vec<String> {
-    vec![support_text(motion.support), phase_text(motion.phase)]
+    vec![support_text(motion.support), phase_text(motion.phase), vec3(motion.velocity)]
 }
 
 fn locomotion_intent_values(intent: &LocomotionIntent) -> Vec<String> {
-    vec![vec3(intent.wish)]
+    vec![vec3(intent.wish), intent.jump.to_string()]
 }
 
 fn support_text(support: GroundSupport) -> String {
@@ -245,6 +254,8 @@ fn phase_text(phase: LocomotionPhase) -> String {
     match phase {
         LocomotionPhase::Idle => "Idle".to_string(),
         LocomotionPhase::Walk => "Walk".to_string(),
+        LocomotionPhase::Jump => "Jump".to_string(),
+        LocomotionPhase::Fall => "Fall".to_string(),
     }
 }
 

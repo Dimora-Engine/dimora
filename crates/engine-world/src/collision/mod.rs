@@ -14,7 +14,8 @@ mod types;
 
 pub use index::{sync_collision, sync_collision_with_step, CollisionWorld};
 pub use locomotion::{
-    clear_locomotion_intents, CharacterLocomotion, CharacterMotion, GroundSupport, LocomotionIntent, LocomotionPhase,
+    clear_locomotion_intents, CharacterLocomotion, CharacterMotion, GroundSupport, LocomotionEvent, LocomotionIntent,
+    LocomotionPhase,
 };
 pub use motor::clear_move_intents;
 pub use types::{
