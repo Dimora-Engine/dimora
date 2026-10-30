@@ -4,6 +4,16 @@ use std::time::Duration;
 
 use engine::prelude::*;
 
+/// One step still reaches the configured speed. The gameplay default accelerates.
+fn kinematic() -> CharacterLocomotion {
+    CharacterLocomotion {
+        acceleration: 1.0e6,
+        deceleration: 1.0e6,
+        air_acceleration: 1.0e6,
+        ..CharacterLocomotion::default()
+    }
+}
+
 fn game_with_walker() -> (Game, Entity) {
     let mut game = Game::new(GameConfig::default());
     game.world.spawn((Transform::from_xyz(0.0, -0.5, 0.0), Collider::aabb_box(Vec3::new(8.0, 0.5, 8.0))));
@@ -11,7 +21,7 @@ fn game_with_walker() -> (Game, Entity) {
         Transform::from_xyz(0.0, 0.5, 0.0),
         Collider::sphere(0.5),
         CharacterMotor::default(),
-        CharacterLocomotion::default(),
+        kinematic(),
         CharacterMotion::default(),
     ));
     (game, body)

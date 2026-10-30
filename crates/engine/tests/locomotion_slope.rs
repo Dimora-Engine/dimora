@@ -13,6 +13,16 @@ use engine::prelude::*;
 
 const RADIUS: f32 = 0.5;
 
+/// One step still reaches the configured speed. The gameplay default accelerates.
+fn kinematic() -> CharacterLocomotion {
+    CharacterLocomotion {
+        acceleration: 1.0e6,
+        deceleration: 1.0e6,
+        air_acceleration: 1.0e6,
+        ..CharacterLocomotion::default()
+    }
+}
+
 fn fixed_step(game: &Game) -> Duration {
     game.world.resource::<FixedTimestep>().step()
 }
@@ -34,7 +44,7 @@ fn game_on_slope() -> (Game, Entity, Vec3) {
         Transform::from_position(rest),
         Collider::sphere(RADIUS),
         CharacterMotor::default(),
-        CharacterLocomotion::default(),
+        kinematic(),
         CharacterMotion::default(),
     ));
     (game, body, rest)
@@ -91,7 +101,8 @@ fn several_fixed_iterations_climb_the_same_slope() {
     assert_eq!(two_motion.phase, one_frame_motion.phase);
     assert_eq!(two_motion.support, one_frame_motion.support);
     assert_eq!(one_motion.phase, LocomotionPhase::Walk);
-    assert_eq!(one_motion.velocity, Vec3::ZERO);
+    assert_eq!(one_motion.velocity.y, 0.0);
+    assert!((one_motion.velocity.x - 77.9).abs() < 2.0, "{:?}", one_motion.velocity);
     let two_steps = (two_frames - rest).length();
     let one_step = (one - rest).length();
     assert!((two_steps - one_step * 2.0).abs() < 1e-3, "{one_step} {two_steps}");
@@ -147,7 +158,8 @@ fn cameras_do_not_change_slope_movement() {
     assert_eq!(plain.1.phase, viewed.1.phase);
     assert_eq!(plain.1.support, viewed.1.support);
     assert_eq!(plain.1.phase, LocomotionPhase::Walk);
-    assert_eq!(plain.1.velocity, Vec3::ZERO);
+    assert_eq!(plain.1.velocity.y, 0.0);
+    assert!(plain.1.velocity.length() > 1.0, "{:?}", plain.1.velocity);
 }
 
 #[test]
@@ -156,7 +168,7 @@ fn a_jump_from_a_slope_lands_once_through_the_frame() {
     game.world.resource_mut::<Actions>().bind_button("jump", ButtonSource::Key(Key::Space));
     game.add_fixed_system("drive", move |world| {
         let jump = world.resource::<Actions>().fixed_pressed("jump");
-        let _ = world.insert(body, (LocomotionIntent { wish: Vec3::ZERO, jump },));
+        let _ = world.insert(body, (LocomotionIntent { wish: Vec3::ZERO, jump, run: false },));
     });
     let seen = watch(&mut game);
     let step = fixed_step(&game);

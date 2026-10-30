@@ -14,6 +14,16 @@ const DT: f32 = 1.0 / 60.0;
 const RADIUS: f32 = 0.5;
 const REST_Y: f32 = 0.5;
 
+/// One step still reaches the configured speed. The gameplay default accelerates.
+fn kinematic() -> CharacterLocomotion {
+    CharacterLocomotion {
+        acceleration: 1.0e6,
+        deceleration: 1.0e6,
+        air_acceleration: 1.0e6,
+        ..CharacterLocomotion::default()
+    }
+}
+
 fn step(world: &mut World) {
     sync_collision_with_step(world, Some(DT));
 }
@@ -27,7 +37,7 @@ fn walker(world: &mut World, position: Vec3) -> engine_world::Entity {
         Transform::from_position(position),
         Collider::sphere(RADIUS),
         CharacterMotor::default(),
-        CharacterLocomotion::default(),
+        kinematic(),
         CharacterMotion::default(),
     ))
 }
@@ -240,14 +250,14 @@ fn a_disabled_or_invalid_collider_is_unavailable() {
         Transform::from_xyz(0.0, REST_Y, 0.0),
         Collider::sphere(RADIUS).disabled(),
         CharacterMotor::default(),
-        CharacterLocomotion::default(),
+        kinematic(),
         CharacterMotion::default(),
     ));
     let invalid = world.spawn((
         Transform { position: Vec3::new(2.0, REST_Y, 0.0), rotation: engine_math::Quat::IDENTITY, scale: Vec3::ZERO },
         Collider::sphere(RADIUS),
         CharacterMotor::default(),
-        CharacterLocomotion::default(),
+        kinematic(),
         CharacterMotion::default(),
     ));
     step(&mut world);
@@ -293,7 +303,7 @@ fn disabled_locomotion_leaves_move_intent_in_charge() {
         Transform::from_xyz(0.0, REST_Y, 0.0),
         Collider::sphere(RADIUS),
         CharacterMotor::default(),
-        CharacterLocomotion { enabled: false, ..CharacterLocomotion::default() },
+        CharacterLocomotion { enabled: false, ..kinematic() },
         CharacterMotion::default(),
     ));
     world.insert(body, (LocomotionIntent::new(Vec3::X), MoveIntent::new(Vec3::Y))).unwrap();
@@ -362,7 +372,7 @@ fn a_nonfinite_speed_does_not_move_or_corrupt_support() {
     let mut world = World::new();
     let ground = flat_floor(&mut world);
     let body = walker(&mut world, Vec3::new(0.0, REST_Y, 0.0));
-    world.insert(body, (CharacterLocomotion { speed: f32::NAN, ..CharacterLocomotion::default() },)).unwrap();
+    world.insert(body, (CharacterLocomotion { speed: f32::NAN, ..kinematic() },)).unwrap();
     wish(&mut world, body, Vec3::X);
     step(&mut world);
     assert!((position(&world, body).x).abs() < 1e-4);

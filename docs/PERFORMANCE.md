@@ -1161,3 +1161,41 @@ Three processes, back to back. Times are microseconds. Process 1's downhill medi
 
 In processes 2 and 3, the wall rows stay within about 0.3 µs of that process's uphill row. Process 1 agrees once the noisy downhill median is set aside: its wall-hold median is 6.0 against an uphill median of 6.4. Eight grounded bodies are unchanged in shape. Nothing here was optimized, and the broadphase was not changed.
 
+## Locomotion-1D acceleration
+
+Recorded 2026-10-30 in the afternoon, America/Chicago, on the same Apple M5 and macOS 27.0 (build 26A428), `rustc 1.99.0`. The command is `cargo run --release -p engine-world --example locomotion_bench`. Warmup is 10. Each row is 31 samples. q1 is sample 7, the median is sample 15, and q3 is sample 23 after sorting. The 1A, 1B, 1C, and 1C-R tables above are unchanged. These three processes remeasure those rows and add the acceleration rows.
+
+A constant-speed row seeds `velocity` before the timed step, so the walk, slope, and wall sweeps stay the earlier distances. Uphill still ends near `(1.049, 1.183, 0)`. The wall hold stays at `(-0.250, 0.433, 0)`. The diagonal contour still ends at `(-0.250, 0.433, 1.134)`. The 60° row still ends near `(-0.481, 0.167, 0)`. Acceleration from rest ends at `(0.167, 0.500, 0)`, one 600 units/s² step. A seeded walk ends at `(1.500, 0.500, 0)`. A seeded run ends at `(2.333, 0.500, 0)`. Deceleration from 90 with no wish ends at `(1.278, 0.500, 0)`. Running uphill ends near `(1.771, 1.600, 0)` and downhill near `(-2.271, -0.734, 0)`. A run held into the wall stays at the rest point. Airborne steering from rest, with gravity 0, ends at `(0.083, 0.500, 0)`. An airborne coast at 90 ends at `(1.500, 0.500, 0)`. The eight-body acceleration row ends at `(0.167, 0.500, 0)` on its first body.
+
+Three processes, back to back. Times are microseconds. Process 1 sat about twice processes 2 and 3, including the bare motor, so that shift is the machine during that process. Within each process the new rows sit with that process's floor or uphill row.
+
+| Row | Process 1 median (q1–q3, min–max) | Process 2 | Process 3 |
+|---|---|---|---|
+| Bare motor, floor | 6.4 (6.4–6.6, 6.3–11.1) | 3.0 (3.0–3.1, 2.9–4.5) | 3.2 (3.1–3.3, 3.0–6.0) |
+| Locomotion, floor | 11.2 (11.0–11.7, 10.9–17.4) | 5.6 (5.5–5.8, 5.5–7.0) | 6.3 (6.2–6.5, 6.1–8.1) |
+| Locomotion, no floor | 11.4 (11.3–11.5, 11.2–11.7) | 5.2 (5.2–5.4, 5.2–7.0) | 5.8 (5.8–5.9, 5.6–7.7) |
+| Locomotion, 8 on a floor | 39.1 (38.7–42.5, 37.4–49.6) | 19.4 (19.2–19.7, 19.1–21.7) | 19.7 (19.6–19.9, 19.3–21.5) |
+| Free fall | 9.6 (9.5–9.8, 9.3–10.1) | 4.8 (4.8–4.9, 4.7–5.2) | 5.0 (5.0–5.0, 4.9–5.2) |
+| Jump takeoff | 10.6 (10.5–10.9, 9.0–73.5) | 5.4 (5.3–5.4, 5.2–5.5) | 5.6 (5.5–5.7, 5.5–5.8) |
+| Mixed, 4 ground + 4 air | 36.1 (30.4–36.8, 29.6–37.5) | 18.8 (18.7–19.0, 18.4–20.5) | 19.0 (18.9–19.2, 18.8–20.6) |
+| Slope 30° uphill | 9.5 (9.3–11.2, 9.2–13.2) | 5.8 (5.7–5.8, 5.6–6.1) | 5.8 (5.7–5.9, 5.7–7.0) |
+| Slope 30° downhill | 9.3 (9.2–9.4, 9.1–9.7) | 5.8 (5.7–5.8, 5.5–6.1) | 5.8 (5.8–5.8, 5.7–5.9) |
+| Slope 30° standing | 10.9 (10.7–11.0, 9.2–11.2) | 5.7 (5.7–5.8, 5.7–6.0) | 5.7 (5.6–5.7, 5.5–5.8) |
+| Steep 60° unsupported | 9.7 (9.5–9.8, 9.5–11.8) | 5.9 (5.8–6.0, 5.7–6.2) | 6.0 (5.9–6.1, 5.8–6.4) |
+| 8 on a 30° slope | 27.8 (27.5–31.6, 27.3–32.7) | 20.2 (20.1–20.4, 19.8–20.5) | 20.1 (20.0–20.3, 19.8–20.5) |
+| Mixed flat, slope, air | 32.2 (29.1–33.2, 27.8–72.1) | 19.7 (19.5–22.2, 18.6–75.2) | 20.4 (20.2–20.5, 19.9–64.2) |
+| Uphill into a wall | 8.4 (8.3–8.5, 8.2–8.7) | 5.6 (5.6–5.7, 5.5–5.8) | 6.0 (6.0–6.0, 5.9–6.2) |
+| Diagonal along a wall | 8.6 (8.5–8.9, 8.4–24.8) | 5.8 (5.7–5.8, 5.6–5.8) | 6.3 (6.2–6.4, 6.0–35.9) |
+| Acceleration from rest | 8.1 (8.0–8.2, 7.9–8.4) | 5.5 (5.4–5.6, 5.2–38.0) | 5.5 (5.4–5.8, 5.3–28.4) |
+| Constant-speed walk | 8.2 (8.0–8.2, 7.9–8.5) | 5.4 (5.3–5.4, 5.2–5.5) | 5.5 (5.5–5.6, 5.4–5.7) |
+| Constant-speed run | 8.2 (8.1–8.3, 8.0–43.2) | 5.4 (5.3–5.5, 5.2–15.7) | 5.4 (5.2–5.4, 5.1–5.5) |
+| Deceleration to rest | 7.5 (7.5–7.6, 7.4–7.7) | 4.9 (4.8–5.0, 4.7–5.0) | 5.0 (5.0–5.1, 4.9–5.2) |
+| Running uphill | 8.2 (8.1–8.4, 7.9–115.2) | 5.5 (5.4–5.5, 5.3–5.6) | 5.5 (5.5–5.7, 5.3–30.3) |
+| Running downhill | 8.2 (8.1–8.2, 7.9–8.4) | 5.5 (5.4–5.5, 5.3–24.0) | 5.5 (5.5–5.6, 5.4–47.2) |
+| Run held into a wall | 8.5 (8.5–8.7, 8.2–20.2) | 5.6 (5.5–5.7, 5.5–5.8) | 5.7 (5.6–5.8, 5.5–27.8) |
+| Airborne steering | 7.8 (7.8–8.0, 7.6–8.1) | 5.2 (5.2–5.2, 5.0–17.0) | 5.2 (5.2–5.3, 5.1–5.4) |
+| Airborne coast | 7.2 (7.0–7.2, 6.9–59.3) | 4.7 (4.6–4.8, 4.5–24.8) | 4.8 (4.7–4.8, 4.6–5.0) |
+| 8 mixed acceleration | 28.0 (27.8–28.5, 27.0–48.8) | 18.3 (18.1–18.4, 17.9–22.2) | 18.4 (18.3–18.6, 18.0–19.0) |
+
+In processes 2 and 3, acceleration, walk, run, and the slope runs stay within about 0.4 µs of that process's floor or uphill row. The wall hold and the run held into a wall match the uphill-into-a-wall row. Eight accelerating bodies match eight grounded bodies. Process 1 is louder, and its bare sweep moved with it. A few maxima jump well above the quartile. Those samples are not a second cost. Nothing here was optimized, and the broadphase was not changed.
+

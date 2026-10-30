@@ -271,12 +271,17 @@ is removed. An intent written during `update` waits for the next simulating step
 for the iteration and writes one `MoveIntent`. The sealed system passes `Time::delta_secs()` into
 `sync_collision_with_step`. A positive finite value probes support before and after the motors.
 `sync_collision` without a step does not. `CharacterMotion.support` is that post-move probe.
-`CharacterMotion.velocity.y` is jump and fall speed. `velocity.x` and `velocity.z` stay zero in
-1C and are not read. Grounded motion projects the XZ wish onto the support plane and travels
-`speed` along that surface, so the tangent keeps its Y. Adhesion is `stick` along the negated
-support normal, in the same intent. Flat ground is the previous horizontal step plus a downward
-stick. Airborne motion stays horizontal, plus `velocity.y`. A jump takes off along world +Y and
-does not inherit the tangent or the stick. Gravity is world −Y, default −400, integrated with
+`CharacterMotion.velocity.y` is jump and fall speed. `velocity.x` and `velocity.z` are world
+horizontal velocity. On the ground their length is the along-surface speed times the cosine of
+the slope in the travel direction, so a 30° walk at 90 stores about 77.94 and still travels 90
+along the surface. In the air they are the horizontal velocity directly. Steering moves them
+toward `speed` or `run_speed`. It does not copy `MoveResult.applied / dt`. Adhesion is `stick`
+along the negated support normal, in the same intent, and is not stored. Flat ground is that
+horizontal step plus a downward stick. Airborne motion is the stored velocity times the fixed
+step. A jump takes off along world +Y and keeps the horizontal velocity. A held wish may then
+steer it by at most `air_acceleration` times the step. A blocked wall removes only the horizontal
+component that points into an unwalkable contact, and a fully blocked step stores no horizontal
+speed. Disabling locomotion on a positive fixed step clears the whole velocity. Gravity is world −Y, default −400, integrated with
 semi-implicit Euler only when the pre-move probe is already airborne or the takeoff lock is set.
 The step that walks off a floor does not fall. The next one does. A jump edge copies
 `Actions::fixed_pressed` and is eligible only on a supported pre-move probe. Takeoff assigns 200

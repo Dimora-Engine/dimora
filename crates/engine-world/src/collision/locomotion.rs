@@ -13,11 +13,13 @@
 //! `max_slope` is π/2 and `cos(π/2)` is a tiny negative value. Sensors and a one-way query mask
 //! do not count. The motor's mutual layer test does.
 //!
-//! Grounded walking projects the XZ wish onto the plane perpendicular to that normal and travels
-//! `speed` along the surface. The tangent keeps its Y component. Adhesion is `stick` along the
-//! negated normal, in the same intent. Flat ground, whose normal is world +Y, is the previous
-//! horizontal step plus a downward stick. Airborne motion and takeoff stay on world axes: the
-//! wish is horizontal, and the jump is world +Y. Neither inherits the slope tangent or the stick.
+//! Grounded motion stores world horizontal velocity, then projects that velocity onto the support
+//! plane so the distance traveled along the surface is `|velocity.xz| / cos(θ)` for the slope in
+//! the travel direction. Adhesion is `stick` along the negated normal, in the same intent, and is
+//! not part of the stored velocity. Flat ground, whose normal is world +Y, is that horizontal
+//! step plus a downward stick. Airborne motion and takeoff stay on world axes: `velocity.xz` is
+//! already the horizontal velocity, and the jump is `velocity.y` along world +Y. Neither inherits
+//! the slope tangent or the stick. A wish steers that velocity; it is not the displacement.
 //!
 //! That same intent carries a private slide limit into the one motor sweep. Grounded motion may
 //! keep only the direction that lies in both the support plane and a blocking unwalkable wall.
@@ -58,8 +60,12 @@ const LEFT_GROUND: f32 = 1e-4;
 
 /// Persistent locomotion settings for one gameplay body.
 ///
-/// `speed` is world units per second along a walkable surface. In the air it is horizontal XZ
-/// speed. `wish` is a direction, and this speed is what turns it into a displacement.
+/// `speed` is walking speed in world units per second along a walkable surface. In the air the
+/// same number is the horizontal XZ target. `run_speed` is the running target in the same units.
+/// `acceleration` and `deceleration` are ground rates in units per second squared.
+/// `air_acceleration` is the single airborne steering rate in units per second squared. A wish is
+/// a direction. These speeds are the magnitudes that steering approaches. They are not forces.
+///
 /// `max_slope` is the largest angle, in radians, between world +Y and a support normal. A normal
 /// with `y <= 0` is never walkable, including an exactly vertical wall at `max_slope` of π/2.
 /// `stick` is adhesion toward the supporting surface, along the negated support normal, in world
@@ -71,12 +77,23 @@ const LEFT_GROUND: f32 = 1e-4;
 /// speed assigned at takeoff, in units per second. `terminal_fall` is the downward speed limit as
 /// a positive magnitude. A non-positive or non-finite limit does not clamp.
 ///
-/// A non-finite or negative `speed` or `stick` contributes nothing. A `max_slope` outside
-/// `0..=π/2`, or a non-finite one, accepts no support. Those cases do not write a non-finite move.
+/// A non-finite or negative `speed`, `run_speed`, `acceleration`, `deceleration`,
+/// `air_acceleration`, or `stick` contributes nothing. A negative `run_speed` falls back to
+/// `speed`. A `max_slope` outside `0..=π/2`, or a non-finite one, accepts no support. A rate whose
+/// product with the fixed step is non-finite changes no velocity. Those cases do not write a
+/// non-finite move.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CharacterLocomotion {
     pub enabled: bool,
     pub speed: f32,
+    /// Running target, in the same units as [`Self::speed`]. Default 140.
+    pub run_speed: f32,
+    /// Grounded rate toward a faster or still-aligned target, in units per second squared. Default 600.
+    pub acceleration: f32,
+    /// Grounded rate when the target sheds speed, including a stop or a reverse, in units per second squared. Default 800.
+    pub deceleration: f32,
+    /// Airborne steering rate while a wish is held, in units per second squared. Default 300. No wish coasts.
+    pub air_acceleration: f32,
     pub max_slope: f32,
     pub stick: f32,
     pub gravity: f32,
@@ -89,6 +106,10 @@ impl Default for CharacterLocomotion {
         Self {
             enabled: true,
             speed: 90.0,
+            run_speed: 140.0,
+            acceleration: 600.0,
+            deceleration: 800.0,
+            air_acceleration: 300.0,
             max_slope: std::f32::consts::FRAC_PI_4,
             stick: 0.08,
             gravity: -400.0,
@@ -122,30 +143,40 @@ pub enum GroundSupport {
 /// How the body is moving. `Jump` is airborne with upward velocity. `Fall` is airborne after
 /// gravity has been integrated, or after a ceiling stops the rise. `Walk` is committed traversal
 /// along the ground longer than `1e-3` that is not jumping or falling, including the step that
-/// leaves a ledge before gravity starts. On a walkable slope that length is the part of the
-/// committed move lying in the support plane, so adhesion and a recovery along the normal stay
-/// `Idle`, walking uphill is not `Jump`, and walking downhill is not `Fall`. Airborne motion with
-/// no vertical velocity still uses the horizontal XZ length. Holding a wish into a wall and a
-/// deep overlap that is not support stay `Idle`.
+/// leaves a ledge before gravity starts. `Run` is that same committed traversal at or above the
+/// midpoint of `speed` and `run_speed`, and only when `run_speed` is greater than `speed`. Once
+/// running, the phase stays `Run` while the committed step is still more than 1 unit per second
+/// faster than `speed`. On a walkable slope
+/// the length is the part of the committed move lying in the support plane, so adhesion and a
+/// recovery along the normal stay `Idle`, walking uphill is not `Jump`, and walking downhill is
+/// not `Fall`. Holding a wish into a wall, including a held run, stays `Idle` when the committed
+/// move does not travel. The step that leaves a ledge, before gravity starts, has no vertical
+/// velocity. It uses the horizontal XZ length and can be `Walk` or `Run`. Gravity-driven airborne
+/// motion is `Fall` and is not `Run`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum LocomotionPhase {
     #[default]
     Idle,
     Walk,
+    Run,
     Jump,
     Fall,
 }
 
-/// Runtime support, phase, and vertical momentum.
+/// Runtime support, phase, and velocity.
 ///
 /// `velocity.y` is the jump and fall speed in world units per second. Positive is up. It is the
-/// value gravity and takeoff write. It is not `MoveResult.applied / dt`.
+/// value gravity and takeoff write. It is not the slope tangent's Y, and it is not
+/// `MoveResult.applied / dt`.
 ///
-/// `velocity.x` and `velocity.z` are reserved for a later acceleration checkpoint. This checkpoint
-/// leaves them at zero and does not read them. Grounded motion is the wish projected onto the
-/// support plane, times `speed`, times the fixed step. Its Y component is slope travel, not
-/// `velocity.y`. Airborne motion is still the horizontal wish times `speed` times the fixed step,
-/// plus `velocity.y`. Neither is `MoveResult.applied / dt`. The support stick is not stored here.
+/// `velocity.x` and `velocity.z` are world horizontal velocity in units per second. On flat ground
+/// their length is the along-surface speed. On a slope their length is that along-surface speed
+/// times the cosine of the slope in the direction of travel, so a 30° walk at 90 units per second
+/// stores about 77.94 horizontally and the body still travels 90 along the surface. In the air the
+/// same components are the horizontal velocity directly. Takeoff copies them unchanged. Steering
+/// then moves them toward the walk or run target. The support stick is not stored here. A blocked
+/// wall removes the horizontal component that points into an unwalkable contact. It does not
+/// replace this vector with `MoveResult.applied / dt`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CharacterMotion {
     pub support: GroundSupport,
@@ -174,20 +205,29 @@ impl CharacterMotion {
 /// `jump` is consumed this iteration. It is not a held boost, and it is not remembered while the
 /// body is airborne. A fixed system copies the input latch into this flag. The latch, not this
 /// component, is what survives a frame with no fixed iteration.
+///
+/// `run` selects `run_speed` instead of `speed` for this iteration. It is not a keyboard binding.
+/// [`Self::new`], [`Self::jumping`], and [`Self::running`] set it. A struct literal has to name it.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LocomotionIntent {
     pub wish: Vec3,
     pub jump: bool,
+    pub run: bool,
 }
 
 impl LocomotionIntent {
     pub fn new(wish: Vec3) -> Self {
-        Self { wish, jump: false }
+        Self { wish, jump: false, run: false }
     }
 
     /// A wish that also requests takeoff on this iteration.
     pub fn jumping(wish: Vec3) -> Self {
-        Self { wish, jump: true }
+        Self { wish, jump: true, run: false }
+    }
+
+    /// A wish that requests the running target. It does not jump.
+    pub fn running(wish: Vec3) -> Self {
+        Self { wish, jump: false, run: true }
     }
 }
 
@@ -221,6 +261,8 @@ struct LocomotionNotes {
     /// Gravity was integrated this iteration, so an airborne body with zero vertical speed is falling.
     fell: Vec<Entity>,
     before: Vec<(Entity, Vec3)>,
+    /// Fixed step used to turn committed distance into a speed for [`LocomotionPhase::Run`].
+    step_secs: f32,
 }
 
 /// How one locomotion sweep may redirect the unconsumed remainder after a blocking hit.
@@ -273,6 +315,14 @@ pub(super) fn prepare_locomotion(world: &mut World, step_secs: f32) {
 
     for (entity, locomotion, motor) in bodies {
         if !locomotion.enabled {
+            // A disabled iteration forgets simulated velocity. Re-enabling later starts from rest
+            // instead of replaying the speed from before the script took the body.
+            if let Ok(mut motion) = world.component::<CharacterMotion>(entity).map(|motion| *motion) {
+                if motion.velocity != Vec3::ZERO {
+                    motion.velocity = Vec3::ZERO;
+                    let _ = world.insert(entity, (motion,));
+                }
+            }
             continue;
         }
         if world.component::<MoveIntent>(entity).is_ok() {
@@ -298,10 +348,10 @@ pub(super) fn prepare_locomotion(world: &mut World, step_secs: f32) {
             let collision = world.resource::<CollisionWorld>();
             probe(&collision, entity, &motor, &locomotion)
         };
-        let (wish, jump) = world
+        let (wish, jump, run) = world
             .component::<LocomotionIntent>(entity)
-            .map(|intent| (horizontal_wish(intent.wish), intent.jump))
-            .unwrap_or((Vec3::ZERO, false));
+            .map(|intent| (horizontal_wish(intent.wish), intent.jump, intent.run))
+            .unwrap_or((Vec3::ZERO, false, false));
         let _ = world.remove::<LocomotionIntent>(entity);
 
         let rising = launched.contains(&entity);
@@ -323,12 +373,18 @@ pub(super) fn prepare_locomotion(world: &mut World, step_secs: f32) {
             Vertical::Air => notes.fell.push(entity),
             Vertical::Ground | Vertical::Skip => {}
         }
+        let rising_move = matches!(vertical, Vertical::Jump | Vertical::Air) || rising;
+        if !buried {
+            let support_normal = match pre {
+                GroundSupport::Supported { normal, .. } => Some(normal),
+                _ => None,
+            };
+            steer(&mut motion, &locomotion, wish, run, step_secs, support_normal, rising_move);
+        }
         if world.insert(entity, (motion,)).is_err() {
             continue;
         }
-        let rising_move = matches!(vertical, Vertical::Jump | Vertical::Air) || rising;
-        let Some(delta) =
-            (!buried).then(|| displacement(&locomotion, &motion, wish, step_secs, &pre, rising_move)).flatten()
+        let Some(delta) = (!buried).then(|| displacement(&locomotion, &motion, step_secs, &pre, rising_move)).flatten()
         else {
             continue;
         };
@@ -341,6 +397,7 @@ pub(super) fn prepare_locomotion(world: &mut World, step_secs: f32) {
 
     notes.conflicts = conflicts_now;
     notes.missing_motion = missing_now;
+    notes.step_secs = step_secs;
     world.insert_resource(notes);
     world.insert_resource(SlideLimits { entries: slide_limits });
 }
@@ -416,13 +473,25 @@ pub(super) fn settle_locomotion(world: &mut World) {
         if matches!(support, GroundSupport::Supported { .. }) {
             motion.velocity.y = 0.0;
         }
+        if let Some(result) = result.as_ref() {
+            settle_horizontal(&mut motion, result, locomotion);
+        }
         let landed = matches!(support, GroundSupport::Supported { .. })
             && (matches!(previous, GroundSupport::Airborne) || was_air.contains(entity));
         if landed {
             world.send(LocomotionEvent::Landed { entity: *entity });
         }
         let falling = fell.contains(entity) || (ceiling && matches!(support, GroundSupport::Airborne));
-        motion.phase = phase_after_move(&support, motion.velocity, result.as_ref(), falling);
+        let previous_phase = motion.phase;
+        motion.phase = phase_after_move(
+            &support,
+            motion.velocity,
+            result.as_ref(),
+            falling,
+            locomotion,
+            previous_phase,
+            notes.step_secs,
+        );
         motion.support = support;
         if !suppressing {
             launched.retain(|id| id != entity);
@@ -505,7 +574,6 @@ fn integrate(
 fn displacement(
     locomotion: &CharacterLocomotion,
     motion: &CharacterMotion,
-    wish: Vec3,
     step_secs: f32,
     pre: &GroundSupport,
     airborne_motion: bool,
@@ -513,15 +581,14 @@ fn displacement(
     if matches!(pre, GroundSupport::Unavailable) {
         return None;
     }
-    let speed = finite_nonneg(locomotion.speed).unwrap_or(0.0);
     let delta = if let GroundSupport::Supported { normal, .. } = pre {
         if airborne_motion {
-            airborne_delta(wish, motion.velocity.y, speed, step_secs)
+            velocity_delta(motion.velocity, step_secs)
         } else {
-            surface_travel(wish, *normal, speed, step_secs) + adhesion(*normal, locomotion.stick)
+            grounded_delta(motion.velocity, *normal, step_secs) + adhesion(*normal, locomotion.stick)
         }
     } else {
-        airborne_delta(wish, motion.velocity.y, speed, step_secs)
+        velocity_delta(motion.velocity, step_secs)
     };
     if !point_finite(delta) || delta.length_squared() == 0.0 {
         None
@@ -535,6 +602,9 @@ fn phase_after_move(
     velocity: Vec3,
     result: Option<&MoveResult>,
     fell: bool,
+    locomotion: &CharacterLocomotion,
+    previous: LocomotionPhase,
+    step_secs: f32,
 ) -> LocomotionPhase {
     if matches!(support, GroundSupport::Airborne) {
         if velocity.y > 0.0 {
@@ -550,11 +620,22 @@ fn phase_after_move(
     if result.status == MoveStatus::Rejected {
         return LocomotionPhase::Idle;
     }
-    if ground_traversal(support, result.applied) > WALK_EPSILON {
-        LocomotionPhase::Walk
-    } else {
-        LocomotionPhase::Idle
+    let travel = ground_traversal(support, result.applied);
+    if travel <= WALK_EPSILON {
+        return LocomotionPhase::Idle;
     }
+    let walk = finite_nonneg(locomotion.speed).unwrap_or(0.0);
+    let run = finite_nonneg(locomotion.run_speed).unwrap_or(walk);
+    if run > walk && step_secs.is_finite() && step_secs > 0.0 {
+        let enter = (walk + run) * 0.5 * step_secs;
+        let keep = walk * step_secs;
+        // Stay in Run only while the committed step is still faster than walking. Reaching the
+        // walk target, including a float tie, becomes Walk.
+        if travel >= enter || (previous == LocomotionPhase::Run && travel > keep + step_secs) {
+            return LocomotionPhase::Run;
+        }
+    }
+    LocomotionPhase::Walk
 }
 
 /// Along-surface distance of a committed move. Adhesion and a normal recovery contribute nothing.
@@ -575,10 +656,196 @@ fn horizontal_length(applied: Vec3) -> f32 {
     Vec3::new(applied.x, 0.0, applied.z).length()
 }
 
-/// World-axis airborne step. The wish stays horizontal. Vertical motion is `velocity.y`, including
-/// a jump, and there is no slope tangent and no adhesion.
-fn airborne_delta(wish: Vec3, vertical_speed: f32, speed: f32, step_secs: f32) -> Vec3 {
-    Vec3::new(wish.x * speed * step_secs, vertical_speed * step_secs, wish.z * speed * step_secs)
+/// World-axis step from the stored velocity. Grounded callers use [`grounded_delta`] instead, so
+/// this Y is only jump and gravity.
+fn velocity_delta(velocity: Vec3, step_secs: f32) -> Vec3 {
+    if !point_finite(velocity) || !step_secs.is_finite() {
+        return Vec3::ZERO;
+    }
+    let delta = velocity * step_secs;
+    if point_finite(delta) {
+        delta
+    } else {
+        Vec3::ZERO
+    }
+}
+
+/// Horizontal velocity projected onto the support plane.
+///
+/// `|velocity.xz|` is the world horizontal speed. Dividing by the unit tangent's horizontal
+/// length recovers the along-surface speed, then [`surface_travel`] walks that far. The slope's
+/// rise stays in the displacement. It is not written to `velocity.y`.
+fn grounded_delta(velocity: Vec3, normal: Vec3, step_secs: f32) -> Vec3 {
+    let horizontal = Vec3::new(velocity.x, 0.0, velocity.z);
+    if !point_finite(horizontal) || !step_secs.is_finite() {
+        return Vec3::ZERO;
+    }
+    let Some(direction) = horizontal.try_normalize() else {
+        return Vec3::ZERO;
+    };
+    let share = horizontal_share(direction, normal);
+    let along = if share > engine_math::EPSILON { horizontal.length() / share } else { horizontal.length() };
+    if !along.is_finite() {
+        return Vec3::ZERO;
+    }
+    surface_travel(direction, normal, along, step_secs)
+}
+
+/// Move `current` toward `target` by at most `max_delta`. A short remainder snaps to the target,
+/// so the result does not overshoot or oscillate.
+fn approach(current: Vec3, target: Vec3, max_delta: f32) -> Vec3 {
+    if !point_finite(current) || !point_finite(target) || !max_delta.is_finite() || max_delta < 0.0 {
+        return if point_finite(current) { current } else { Vec3::ZERO };
+    }
+    let delta = target - current;
+    let len = delta.length();
+    if !len.is_finite() {
+        return current;
+    }
+    if len <= max_delta || len <= engine_math::EPSILON {
+        target
+    } else {
+        current + delta * (max_delta / len)
+    }
+}
+
+/// Grounded rate. Deceleration is used when the target's projection on the current velocity is
+/// shorter than the current speed: stopping, dropping from run to walk, reversing, or turning
+/// past a right angle. Acceleration is used from rest and while the forward speed still has to rise.
+fn ground_rate(current: Vec3, target: Vec3, acceleration: f32, deceleration: f32) -> f32 {
+    let speed2 = current.length_squared();
+    if !speed2.is_finite() {
+        return 0.0;
+    }
+    if speed2 <= engine_math::EPSILON * engine_math::EPSILON || current.dot(target) >= speed2 {
+        acceleration
+    } else {
+        deceleration
+    }
+}
+
+/// World horizontal target. `wish` is already horizontal and at most length 1. On the ground the
+/// length is `speed * |wish| * cos(θ)` so the along-surface speed is `speed * |wish|`. In the air
+/// `support` is `None` and the length is the horizontal target itself.
+fn horizontal_target(wish: Vec3, speed: f32, support: Option<Vec3>) -> Vec3 {
+    if !speed.is_finite() || speed < 0.0 || !point_finite(wish) {
+        return Vec3::ZERO;
+    }
+    let scale = wish.length();
+    if !scale.is_finite() || scale <= engine_math::EPSILON {
+        return Vec3::ZERO;
+    }
+    let direction = wish / scale;
+    let share = match support {
+        Some(normal) => horizontal_share(direction, normal),
+        None => 1.0,
+    };
+    let velocity = direction * (scale * speed * share);
+    if point_finite(velocity) {
+        velocity
+    } else {
+        Vec3::ZERO
+    }
+}
+
+/// Horizontal length of the unit tangent for `horizontal_dir` on `normal`. Flat ground is 1.
+fn horizontal_share(horizontal_dir: Vec3, normal: Vec3) -> f32 {
+    let Some(normal) = normal.try_normalize().filter(|normal| normal.y > 0.0 && point_finite(*normal)) else {
+        return 1.0;
+    };
+    let Some(unit) = (horizontal_dir - normal * horizontal_dir.dot(normal)).try_normalize() else {
+        return 1.0;
+    };
+    let share = Vec3::new(unit.x, 0.0, unit.z).length();
+    if share.is_finite() && share > engine_math::EPSILON {
+        share
+    } else {
+        1.0
+    }
+}
+
+/// Steer `velocity.xz` toward the walk or run target. Airborne motion with no wish coasts.
+fn steer(
+    motion: &mut CharacterMotion,
+    locomotion: &CharacterLocomotion,
+    wish: Vec3,
+    run: bool,
+    step_secs: f32,
+    support: Option<Vec3>,
+    airborne: bool,
+) {
+    let current = Vec3::new(motion.velocity.x, 0.0, motion.velocity.z);
+    if !point_finite(current) {
+        motion.velocity.x = 0.0;
+        motion.velocity.z = 0.0;
+        return;
+    }
+    if airborne && wish.length_squared() <= engine_math::EPSILON * engine_math::EPSILON {
+        return;
+    }
+    let walk = finite_nonneg(locomotion.speed).unwrap_or(0.0);
+    let target_speed = if run { finite_nonneg(locomotion.run_speed).unwrap_or(walk) } else { walk };
+    let target = horizontal_target(wish, target_speed, if airborne { None } else { support });
+    let rate = if airborne {
+        finite_nonneg(locomotion.air_acceleration).unwrap_or(0.0)
+    } else {
+        let acceleration = finite_nonneg(locomotion.acceleration).unwrap_or(0.0);
+        let deceleration = finite_nonneg(locomotion.deceleration).unwrap_or(0.0);
+        ground_rate(current, target, acceleration, deceleration)
+    };
+    let max_delta = rate * step_secs;
+    let next = approach(current, target, max_delta);
+    motion.velocity.x = next.x;
+    motion.velocity.z = next.z;
+}
+
+/// Remove horizontal speed that points into an unwalkable contact.
+///
+/// A fully blocked step with no horizontal travel also drops the stored horizontal velocity, so a
+/// corner cannot keep a launch for the frame the wall disappears. A free direction is kept at its
+/// steered magnitude. This does not copy `applied / dt`, so adhesion and a slope's rise stay out
+/// of the stored velocity.
+fn settle_horizontal(motion: &mut CharacterMotion, result: &MoveResult, locomotion: &CharacterLocomotion) {
+    let mut horizontal = Vec3::new(motion.velocity.x, 0.0, motion.velocity.z);
+    if !point_finite(horizontal) {
+        motion.velocity.x = 0.0;
+        motion.velocity.z = 0.0;
+        return;
+    }
+    if let Some(min_cosine) = slope_cosine(locomotion.max_slope) {
+        horizontal = clip_horizontal(horizontal, &result.normals, min_cosine);
+        if let Some(normal) = result.recovery_normal {
+            horizontal = clip_horizontal(horizontal, &[normal], min_cosine);
+        }
+    }
+    if result.status == MoveStatus::Blocked && horizontal_length(result.applied) <= WALK_EPSILON {
+        horizontal = Vec3::ZERO;
+    }
+    if !horizontal.x.is_finite() || !horizontal.z.is_finite() {
+        horizontal = Vec3::ZERO;
+    }
+    motion.velocity.x = horizontal.x;
+    motion.velocity.z = horizontal.z;
+}
+
+fn clip_horizontal(mut horizontal: Vec3, normals: &[Vec3], min_cosine: f32) -> Vec3 {
+    for normal in normals {
+        let Some(normal) = normal.try_normalize() else {
+            continue;
+        };
+        if walkable_normal(normal, min_cosine) {
+            continue;
+        }
+        let wall = Vec3::new(normal.x, 0.0, normal.z);
+        let Some(wall) = wall.try_normalize() else {
+            continue;
+        };
+        let into = horizontal.dot(wall);
+        if into < 0.0 {
+            horizontal -= wall * into;
+        }
+    }
+    horizontal
 }
 
 /// Projects `wish` onto the plane of `normal` and travels `|wish| * speed * step` along it.
@@ -838,6 +1105,48 @@ mod tests {
         let pull = adhesion(SLOPE_30, 0.08);
         close(pull, -SLOPE_30.normalized() * 0.08);
         assert!(pull.x > 0.0 && pull.z.abs() < 1e-6, "adhesion stays in the normal plane {pull:?}");
+    }
+
+    #[test]
+    fn a_30_degree_walk_stores_horizontal_speed_and_still_travels_the_surface() {
+        let target = horizontal_target(Vec3::X, SPEED, Some(SLOPE_30));
+        assert!((target.x - 77.942).abs() < 0.05, "{target:?}");
+        assert!(target.y.abs() < 1e-4 && target.z.abs() < 1e-4, "{target:?}");
+        let step = grounded_delta(target, SLOPE_30, STEP);
+        close(step, Vec3::new(1.299, 0.750, 0.0));
+        assert!((step.length() - 1.5).abs() < 1e-3, "{step:?}");
+        // Leaving the slope keeps the horizontal component. It does not adopt the along-surface 90.
+        let taken_off = velocity_delta(Vec3::new(target.x, 200.0, target.z), STEP);
+        assert!((taken_off.x - target.x * STEP).abs() < 1e-4, "{taken_off:?}");
+        assert!((taken_off.y - 200.0 * STEP).abs() < 1e-4, "{taken_off:?}");
+    }
+
+    #[test]
+    fn approach_reaches_the_target_without_overshoot_and_reverses_through_zero() {
+        let step = approach(Vec3::ZERO, Vec3::X * 90.0, 10.0);
+        close(step, Vec3::new(10.0, 0.0, 0.0));
+        let snapped = approach(Vec3::X * 85.0, Vec3::X * 90.0, 10.0);
+        close(snapped, Vec3::X * 90.0);
+        let reversing = approach(Vec3::X * 90.0, Vec3::X * -90.0, 10.0);
+        close(reversing, Vec3::new(80.0, 0.0, 0.0));
+        assert!(ground_rate(Vec3::ZERO, Vec3::X * 90.0, 600.0, 800.0) == 600.0);
+        assert!(ground_rate(Vec3::X * 140.0, Vec3::X * 90.0, 600.0, 800.0) == 800.0);
+        assert!(ground_rate(Vec3::X * 90.0, Vec3::X * -90.0, 600.0, 800.0) == 800.0);
+        assert!(ground_rate(Vec3::X * 40.0, Vec3::X * 90.0, 600.0, 800.0) == 600.0);
+        let coast = horizontal_target(Vec3::ZERO, SPEED, None);
+        assert_eq!(coast, Vec3::ZERO);
+        let partial = horizontal_target(Vec3::X * 0.5, SPEED, None);
+        close(partial, Vec3::new(45.0, 0.0, 0.0));
+    }
+
+    #[test]
+    fn a_blocked_wall_drops_only_the_into_wall_component() {
+        let kept = clip_horizontal(Vec3::new(70.0, 0.0, 40.0), &[-Vec3::X], 0.707);
+        close(kept, Vec3::new(0.0, 0.0, 40.0));
+        let corner = clip_horizontal(kept, &[-Vec3::Z], 0.707);
+        close(corner, Vec3::ZERO);
+        let slope = clip_horizontal(Vec3::new(77.9, 0.0, 0.0), &[SLOPE_30], 0.707);
+        close(slope, Vec3::new(77.9, 0.0, 0.0));
     }
 
     #[test]

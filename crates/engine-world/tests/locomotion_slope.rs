@@ -27,7 +27,7 @@ fn walker(world: &mut World, position: Vec3) -> Entity {
         Transform::from_position(position),
         Collider::sphere(RADIUS),
         CharacterMotor::default(),
-        CharacterLocomotion::default(),
+        kinematic(),
         CharacterMotion::default(),
     ))
 }
@@ -47,6 +47,16 @@ fn wish(world: &mut World, entity: Entity, direction: Vec3) {
 fn landings(world: &mut World) -> Vec<LocomotionEvent> {
     world.promote_events();
     world.events::<LocomotionEvent>()
+}
+
+/// One step still reaches the configured speed. The gameplay default accelerates.
+fn kinematic() -> CharacterLocomotion {
+    CharacterLocomotion {
+        acceleration: 1.0e6,
+        deceleration: 1.0e6,
+        air_acceleration: 1.0e6,
+        ..CharacterLocomotion::default()
+    }
 }
 
 fn near(actual: f32, expected: f32, tol: f32) {
@@ -108,7 +118,9 @@ fn uphill_and_downhill_on_a_30_degree_slope_follow_the_tangent() {
     let adhesion = -normal.normalized() * 0.08;
     near_vec(requested - adhesion, Vec3::new(1.299, 0.750, 0.0), 2e-2);
     assert_eq!(motion(&up, body).phase, LocomotionPhase::Walk);
-    assert_eq!(motion(&up, body).velocity, Vec3::ZERO);
+    assert_eq!(motion(&up, body).velocity.y, 0.0);
+    near(motion(&up, body).velocity.x, 77.942, 0.05);
+    assert!(motion(&up, body).velocity.z.abs() < 1e-3);
     assert!(supported_by(&up, body, slope.entity));
 
     let mut down = World::new();
@@ -121,7 +133,8 @@ fn uphill_and_downhill_on_a_30_degree_slope_follow_the_tangent() {
     near(moved.length(), ALONG, 2e-2);
     assert!(moved.y < -0.5, "downhill loses Y {moved:?}");
     assert_eq!(motion(&down, body).phase, LocomotionPhase::Walk);
-    assert_eq!(motion(&down, body).velocity, Vec3::ZERO, "downhill walking does not store a fall");
+    assert_eq!(motion(&down, body).velocity.y, 0.0, "downhill walking does not store a fall");
+    near(motion(&down, body).velocity.x, -77.942, 0.05);
     assert!(supported_by(&down, body, slope.entity));
     let plane = position(&down, body).dot(slope.normal) - RADIUS;
     assert!(plane.abs() < 0.02, "downhill stays on the surface, gap {plane}");
@@ -209,7 +222,8 @@ fn slope_angles_are_accepted_only_inside_the_limit() {
             step(&mut world);
             let moved = position(&world, body) - start;
             near(moved.length(), ALONG, 0.05);
-            assert_eq!(motion(&world, body).velocity, Vec3::ZERO, "{degrees}° stored a fall");
+            assert_eq!(motion(&world, body).velocity.y, 0.0, "{degrees}° stored a fall");
+            assert!(motion(&world, body).velocity.x.is_finite() && motion(&world, body).velocity.z.is_finite());
         } else {
             assert_eq!(motion(&world, body).support, GroundSupport::Airborne, "{degrees}°");
             assert!(motion(&world, body).velocity.y < 0.0, "{degrees}° kept gravity");
@@ -223,12 +237,7 @@ fn a_vertical_wall_is_not_ground_even_at_ninety_degrees() {
     let mut world = World::new();
     world.spawn((Transform::from_xyz(-0.5, 2.0, 0.0), Collider::aabb_box(Vec3::new(0.5, 4.0, 4.0))));
     let body = walker(&mut world, Vec3::new(RADIUS, 2.0, 0.0));
-    world
-        .insert(
-            body,
-            (CharacterLocomotion { max_slope: std::f32::consts::FRAC_PI_2, ..CharacterLocomotion::default() },),
-        )
-        .unwrap();
+    world.insert(body, (CharacterLocomotion { max_slope: std::f32::consts::FRAC_PI_2, ..kinematic() },)).unwrap();
     let start = position(&world, body);
     step(&mut world);
     assert_eq!(motion(&world, body).support, GroundSupport::Airborne);
@@ -249,12 +258,7 @@ fn a_near_vertical_slope_is_walkable_only_inside_ninety_degrees() {
     let mut accepted = World::new();
     let slope = ramp(&mut accepted, 89.0, 0.0, Vec3::new(30.0, 1.0, 10.0));
     let body = walker(&mut accepted, on_ramp(&slope));
-    accepted
-        .insert(
-            body,
-            (CharacterLocomotion { max_slope: std::f32::consts::FRAC_PI_2, ..CharacterLocomotion::default() },),
-        )
-        .unwrap();
+    accepted.insert(body, (CharacterLocomotion { max_slope: std::f32::consts::FRAC_PI_2, ..kinematic() },)).unwrap();
     step(&mut accepted);
     assert!(supported_by(&accepted, body, slope.entity));
     assert_eq!(motion(&accepted, body).velocity, Vec3::ZERO);
@@ -312,7 +316,8 @@ fn flat_ground_transitions_onto_a_slope_and_back() {
     wish(&mut back, body, Vec3::X);
     step(&mut back);
     near(position(&back, body).y, rest, 0.05);
-    assert_eq!(motion(&back, body).velocity, Vec3::ZERO);
+    assert_eq!(motion(&back, body).velocity.y, 0.0);
+    near(motion(&back, body).velocity.x, 90.0, 1.0);
     assert_eq!(motion(&back, body).phase, LocomotionPhase::Walk);
 }
 
@@ -325,7 +330,7 @@ fn a_crest_rises_then_descends_without_leaving_the_ground() {
     // continues the old tangent past a 20° crest and misses the far face. A shorter step stays
     // inside the window and walks over.
     let body = walker(&mut world, left.normal * RADIUS + left.rotation.rotate(-Vec3::X) * 2.5);
-    world.insert(body, (CharacterLocomotion { speed: 15.0, ..CharacterLocomotion::default() },)).unwrap();
+    world.insert(body, (CharacterLocomotion { speed: 15.0, ..kinematic() },)).unwrap();
     let start_y = position(&world, body).y;
     let mut peak = start_y;
     let mut grounded = 0;
@@ -346,7 +351,8 @@ fn a_crest_rises_then_descends_without_leaving_the_ground() {
     assert!(position(&world, body).x > 0.5, "{:?}", position(&world, body));
     assert_eq!(grounded, 28, "left the ground");
     assert!(supported_by(&world, body, left.entity) || supported_by(&world, body, right.entity));
-    assert_eq!(motion(&world, body).velocity, Vec3::ZERO);
+    assert_eq!(motion(&world, body).velocity.y, 0.0);
+    assert!(motion(&world, body).velocity.x > 1.0, "{:?}", motion(&world, body).velocity);
 }
 
 /// Top face ends at the origin and runs downhill along local −X (`uphill_at_origin`) or local +X.
@@ -613,9 +619,7 @@ fn max_slope_and_enabled_can_change_at_runtime() {
     let body = walker(&mut world, on_ramp(&slope));
     step(&mut world);
     assert!(supported_by(&world, body, slope.entity));
-    world
-        .insert(body, (CharacterLocomotion { max_slope: 15.0_f32.to_radians(), ..CharacterLocomotion::default() },))
-        .unwrap();
+    world.insert(body, (CharacterLocomotion { max_slope: 15.0_f32.to_radians(), ..kinematic() },)).unwrap();
     wish(&mut world, body, Vec3::X);
     let before = position(&world, body);
     step(&mut world);
@@ -627,10 +631,7 @@ fn max_slope_and_enabled_can_change_at_runtime() {
     world
         .insert(
             body,
-            (
-                CharacterLocomotion { max_slope: 50.0_f32.to_radians(), ..CharacterLocomotion::default() },
-                CharacterMotion::default(),
-            ),
+            (CharacterLocomotion { max_slope: 50.0_f32.to_radians(), ..kinematic() }, CharacterMotion::default()),
         )
         .unwrap();
     step(&mut world);
@@ -640,7 +641,7 @@ fn max_slope_and_enabled_can_change_at_runtime() {
     step(&mut world);
     let walked = position(&world, body);
     assert!((walked - before).length() > 1.0);
-    world.insert(body, (CharacterLocomotion { enabled: false, ..CharacterLocomotion::default() },)).unwrap();
+    world.insert(body, (CharacterLocomotion { enabled: false, ..kinematic() },)).unwrap();
     world.insert(body, (MoveIntent::new(Vec3::Z), LocomotionIntent::new(Vec3::X))).unwrap();
     step(&mut world);
     let shifted = position(&world, body);
@@ -653,7 +654,7 @@ fn max_slope_and_enabled_can_change_at_runtime() {
 fn the_same_slope_traversal_replays_in_two_worlds() {
     fn trace() -> Vec<(Vec3, CharacterMotion)> {
         let mut world = World::new();
-        let slope = ramp(&mut world, 30.0, 0.35, Vec3::new(70.0, 2.0, 30.0));
+        let slope = ramp(&mut world, 30.0, 0.35, Vec3::new(250.0, 2.0, 250.0));
         let body = walker(&mut world, on_ramp(&slope));
         let mut out = Vec::new();
         step(&mut world);
@@ -684,9 +685,8 @@ fn the_same_slope_traversal_replays_in_two_worlds() {
         assert_eq!(landings(&mut world), vec![LocomotionEvent::Landed { entity: body }]);
         let last = out.last().unwrap();
         assert_eq!(last.1.phase, LocomotionPhase::Walk);
-        assert_eq!(last.1.velocity.x, 0.0);
-        assert_eq!(last.1.velocity.z, 0.0);
-        assert!(last.1.velocity.y == 0.0);
+        assert_eq!(last.1.velocity.y, 0.0);
+        assert!(Vec3::new(last.1.velocity.x, 0.0, last.1.velocity.z).length() > 1.0, "{:?}", last.1.velocity);
         out
     }
 

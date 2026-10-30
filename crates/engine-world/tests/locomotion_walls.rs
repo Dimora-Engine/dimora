@@ -31,7 +31,7 @@ fn capsule(world: &mut World, position: Vec3) -> Entity {
         Transform::from_position(position),
         Collider::capsule(RADIUS, HALF),
         CharacterMotor::default(),
-        CharacterLocomotion::default(),
+        kinematic(),
         CharacterMotion::default(),
     ))
 }
@@ -51,6 +51,16 @@ fn wish(world: &mut World, entity: Entity, direction: Vec3) {
 fn landings(world: &mut World) -> Vec<LocomotionEvent> {
     world.promote_events();
     world.events::<LocomotionEvent>()
+}
+
+/// One step still reaches the configured speed. The gameplay default accelerates.
+fn kinematic() -> CharacterLocomotion {
+    CharacterLocomotion {
+        acceleration: 1.0e6,
+        deceleration: 1.0e6,
+        air_acceleration: 1.0e6,
+        ..CharacterLocomotion::default()
+    }
 }
 
 fn near(actual: f32, expected: f32, tol: f32) {
@@ -162,7 +172,9 @@ fn diagonal_input_slides_along_the_slope_wall_intersection() {
     assert!(moved.z > 0.8, "did not follow the contour {moved:?}");
     assert!(moved.x.abs() < 0.05, "into-wall X remained {moved:?}");
     assert!(moved.y.abs() < 0.05, "contour picked up Y {moved:?}");
-    assert_eq!(motion(&world, body).velocity, Vec3::ZERO);
+    assert_eq!(motion(&world, body).velocity.y, 0.0);
+    assert!(motion(&world, body).velocity.x.abs() < 1.0, "{:?}", motion(&world, body).velocity);
+    assert!(motion(&world, body).velocity.z > 40.0, "{:?}", motion(&world, body).velocity);
     assert_eq!(motion(&world, body).phase, LocomotionPhase::Walk);
     assert!(plane_gap(&slope, position(&world, body)).abs() < 0.05);
 
@@ -238,7 +250,9 @@ fn downhill_motion_beside_a_wall_keeps_the_downhill_tangent() {
     assert!(moved.z.abs() < 0.05, "the side wall pushed Z {moved:?}");
     assert!(supported_by(&world, body, slope.entity));
     assert_eq!(motion(&world, body).phase, LocomotionPhase::Walk);
-    assert_eq!(motion(&world, body).velocity, Vec3::ZERO);
+    assert_eq!(motion(&world, body).velocity.y, 0.0);
+    assert!(motion(&world, body).velocity.x < -50.0, "{:?}", motion(&world, body).velocity);
+    assert!(motion(&world, body).velocity.z.abs() < 1.0, "{:?}", motion(&world, body).velocity);
 }
 
 #[test]
@@ -454,7 +468,7 @@ fn a_raw_motor_still_slides_up_a_steep_face() {
         Transform::from_position(face.normal * 0.5),
         Collider::sphere(0.5),
         CharacterMotor::default(),
-        CharacterLocomotion::default(),
+        kinematic(),
         CharacterMotion::default(),
     ));
     wish(&mut locomotion, body, Vec3::X);
@@ -516,7 +530,7 @@ fn ride_crest(speed: f32, dt: f32, degrees: f32, with_far_side: bool) -> Crest {
     let normal = rotation.rotate(Vec3::Y).normalized();
     let start = normal * RADIUS + Vec3::Y * HALF + rotation.rotate(-Vec3::X) * 2.5;
     let body = capsule(&mut world, start);
-    world.insert(body, (CharacterLocomotion { speed, ..CharacterLocomotion::default() },)).unwrap();
+    world.insert(body, (CharacterLocomotion { speed, ..kinematic() },)).unwrap();
     let start_y = position(&world, body).y;
     let mut peak_y = start_y;
     let mut grounded = 0;
@@ -556,7 +570,7 @@ fn continuous_slope_travel_stays_grounded_at_several_speeds() {
         let mut world = World::new();
         let slope = ramp(&mut world, 30.0, 0.0, Vec3::new(80.0, 2.0, 16.0));
         let body = capsule(&mut world, on_ramp(&slope));
-        world.insert(body, (CharacterLocomotion { speed, ..CharacterLocomotion::default() },)).unwrap();
+        world.insert(body, (CharacterLocomotion { speed, ..kinematic() },)).unwrap();
         let mut previous = position(&world, body).y;
         for _ in 0..8 {
             wish(&mut world, body, Vec3::X);

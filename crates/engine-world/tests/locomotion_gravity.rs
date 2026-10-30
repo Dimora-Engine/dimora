@@ -38,7 +38,7 @@ fn walker(world: &mut World, position: Vec3) -> Entity {
         Transform::from_position(position),
         Collider::sphere(RADIUS),
         CharacterMotor::default(),
-        CharacterLocomotion::default(),
+        kinematic(),
         CharacterMotion::default(),
     ))
 }
@@ -49,6 +49,16 @@ fn position(world: &World, entity: Entity) -> Vec3 {
 
 fn motion(world: &World, entity: Entity) -> CharacterMotion {
     *world.component::<CharacterMotion>(entity).unwrap()
+}
+
+/// One step still reaches the configured speed. The gameplay default accelerates.
+fn kinematic() -> CharacterLocomotion {
+    CharacterLocomotion {
+        acceleration: 1.0e6,
+        deceleration: 1.0e6,
+        air_acceleration: 1.0e6,
+        ..CharacterLocomotion::default()
+    }
 }
 
 fn near(actual: f32, expected: f32, tol: f32) {
@@ -142,7 +152,7 @@ fn gravity_accumulates_once_per_iteration_and_not_on_a_skipped_step() {
 fn terminal_fall_speed_clamps_and_a_non_positive_limit_does_not() {
     let mut clamped = World::new();
     let body = walker(&mut clamped, Vec3::new(0.0, 30.0, 0.0));
-    clamped.insert(body, (CharacterLocomotion { terminal_fall: 10.0, ..CharacterLocomotion::default() },)).unwrap();
+    clamped.insert(body, (CharacterLocomotion { terminal_fall: 10.0, ..kinematic() },)).unwrap();
     for _ in 0..5 {
         step(&mut clamped);
     }
@@ -153,7 +163,7 @@ fn terminal_fall_speed_clamps_and_a_non_positive_limit_does_not() {
 
     let mut open = World::new();
     let body = walker(&mut open, Vec3::new(0.0, 40.0, 0.0));
-    open.insert(body, (CharacterLocomotion { terminal_fall: 0.0, ..CharacterLocomotion::default() },)).unwrap();
+    open.insert(body, (CharacterLocomotion { terminal_fall: 0.0, ..kinematic() },)).unwrap();
     for _ in 0..130 {
         step(&mut open);
     }
@@ -247,7 +257,7 @@ fn a_short_jump_inside_the_probe_window_stays_airborne_until_it_stops_rising() {
     let mut world = World::new();
     flat_floor(&mut world);
     let body = walker(&mut world, Vec3::new(0.0, REST_Y, 0.0));
-    world.insert(body, (CharacterLocomotion { jump_speed: 1.0, ..CharacterLocomotion::default() },)).unwrap();
+    world.insert(body, (CharacterLocomotion { jump_speed: 1.0, ..kinematic() },)).unwrap();
     step(&mut world);
     world.insert(body, (LocomotionIntent::jumping(Vec3::ZERO),)).unwrap();
     step(&mut world);
@@ -375,7 +385,7 @@ fn horizontal_wish_still_moves_an_airborne_body() {
     near(end.x, 90.0 * DT, 1e-3);
     near(end.y, 6.0 + drop, 1e-3);
     near(motion(&world, body).velocity.y, velocity, 1e-3);
-    assert_eq!(motion(&world, body).velocity.x, 0.0);
+    near(motion(&world, body).velocity.x, 90.0, 1e-3);
     assert_eq!(motion(&world, body).velocity.z, 0.0);
     assert_eq!(motion(&world, body).phase, LocomotionPhase::Fall);
 }
@@ -462,7 +472,7 @@ fn an_unwalkable_floor_and_a_mask_mismatch_do_not_land() {
     let mut steep = World::new();
     flat_floor(&mut steep);
     let body = walker(&mut steep, Vec3::new(0.0, 4.0, 0.0));
-    steep.insert(body, (CharacterLocomotion { max_slope: -0.1, ..CharacterLocomotion::default() },)).unwrap();
+    steep.insert(body, (CharacterLocomotion { max_slope: -0.1, ..kinematic() },)).unwrap();
     for _ in 0..10 {
         step(&mut steep);
     }
@@ -534,7 +544,7 @@ fn invalid_gravity_and_jump_settings_do_not_corrupt_the_body() {
     for gravity in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, 400.0, 0.0] {
         let mut world = World::new();
         let body = walker(&mut world, Vec3::new(0.0, 5.0, 0.0));
-        world.insert(body, (CharacterLocomotion { gravity, ..CharacterLocomotion::default() },)).unwrap();
+        world.insert(body, (CharacterLocomotion { gravity, ..kinematic() },)).unwrap();
         for _ in 0..3 {
             step(&mut world);
         }
@@ -546,7 +556,7 @@ fn invalid_gravity_and_jump_settings_do_not_corrupt_the_body() {
         let mut world = World::new();
         flat_floor(&mut world);
         let body = walker(&mut world, Vec3::new(0.0, REST_Y, 0.0));
-        world.insert(body, (CharacterLocomotion { jump_speed, ..CharacterLocomotion::default() },)).unwrap();
+        world.insert(body, (CharacterLocomotion { jump_speed, ..kinematic() },)).unwrap();
         world.insert(body, (LocomotionIntent::jumping(Vec3::ZERO),)).unwrap();
         step(&mut world);
         near(position(&world, body).y, REST_Y, 1e-3);
@@ -571,7 +581,7 @@ fn enabled_locomotion_falls_instead_of_honouring_a_competing_move_intent() {
         Transform::from_xyz(0.0, 4.0, 0.0),
         Collider::sphere(RADIUS),
         CharacterMotor::default(),
-        CharacterLocomotion { enabled: false, ..CharacterLocomotion::default() },
+        CharacterLocomotion { enabled: false, ..kinematic() },
         CharacterMotion::default(),
     ));
     disabled.insert(body, (MoveIntent::new(Vec3::Y),)).unwrap();
@@ -622,7 +632,8 @@ fn two_bodies_fall_alike_and_a_grounded_neighbour_stays_put() {
 fn the_same_jump_fall_landing_and_walk_replays_in_two_worlds() {
     fn trace() -> Vec<(Vec3, CharacterMotion)> {
         let mut world = World::new();
-        flat_floor(&mut world);
+        // Airborne Z keeps its speed after the wish ends, so the floor has to cover that coast.
+        floor(&mut world, Vec3::new(0.0, -0.5, 40.0), Vec3::new(8.0, 0.5, 80.0));
         let body = walker(&mut world, Vec3::new(0.0, REST_Y, 0.0));
         let mut out = Vec::new();
         step(&mut world);
@@ -651,7 +662,8 @@ fn the_same_jump_fall_landing_and_walk_replays_in_two_worlds() {
         let last = out.last().unwrap();
         assert!(last.0.x > 1.0, "{:?}", last.0);
         assert_eq!(last.1.phase, LocomotionPhase::Walk);
-        assert_eq!(last.1.velocity.x, 0.0);
+        near(last.1.velocity.x, 90.0, 1e-2);
+        assert_eq!(last.1.velocity.y, 0.0);
         assert_eq!(last.1.velocity.z, 0.0);
         out
     }

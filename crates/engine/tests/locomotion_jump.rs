@@ -17,6 +17,16 @@ const JUMP: f32 = 200.0;
 #[derive(Clone, Copy)]
 struct Wish(Vec3);
 
+/// One step still reaches the configured speed. The gameplay default accelerates.
+fn kinematic() -> CharacterLocomotion {
+    CharacterLocomotion {
+        acceleration: 1.0e6,
+        deceleration: 1.0e6,
+        air_acceleration: 1.0e6,
+        ..CharacterLocomotion::default()
+    }
+}
+
 fn fixed_step(game: &Game) -> Duration {
     game.world.resource::<FixedTimestep>().step()
 }
@@ -32,7 +42,7 @@ fn game_with_walker(height: f32) -> (Game, Entity) {
         Transform::from_xyz(0.0, height, 0.0),
         Collider::sphere(0.5),
         CharacterMotor::default(),
-        CharacterLocomotion::default(),
+        kinematic(),
         CharacterMotion::default(),
     ));
     game.world.resource_mut::<Actions>().bind_button("jump", ButtonSource::Key(Key::Space));
@@ -40,7 +50,7 @@ fn game_with_walker(height: f32) -> (Game, Entity) {
     game.add_fixed_system("drive", move |world| {
         let wish = world.resource::<Wish>().0;
         let jump = world.resource::<Actions>().fixed_pressed("jump");
-        let _ = world.insert(body, (LocomotionIntent { wish, jump },));
+        let _ = world.insert(body, (LocomotionIntent { wish, jump, run: false },));
     });
     (game, body)
 }
@@ -226,7 +236,7 @@ fn a_landing_on_the_first_iteration_stays_visible_to_update_and_animate() {
 #[test]
 fn one_frame_can_cross_the_jump_apex() {
     let (mut game, body) = game_with_walker(0.5);
-    game.world.insert(body, (CharacterLocomotion { jump_speed: 40.0, ..CharacterLocomotion::default() },)).unwrap();
+    game.world.insert(body, (CharacterLocomotion { jump_speed: 40.0, ..kinematic() },)).unwrap();
     game.step(fixed_step(&game));
     let start = position(&game, body).y;
     press_jump(&mut game);

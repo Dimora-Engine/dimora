@@ -12,6 +12,12 @@
 //! Slope rows are the 1C cases. They add one ramp and do not replace the flat rows.
 //! Wall rows are the 1C correction: uphill input into a vertical wall, and a diagonal slide
 //! along that wall. They do not replace the slope rows.
+//!
+//! 1D rows keep those names and add acceleration from rest, a constant-speed walk and run, a
+//! deceleration step, running on a slope, a run held into a wall, airborne steering, an airborne
+//! coast, and an eight-body mix. A constant-speed row, including the remeasured walk, slope, and
+//! wall rows, seeds `velocity` before the timed step so the sweep distance matches the earlier
+//! tables. Acceleration from rest is a separate row.
 
 use std::time::Instant;
 
@@ -40,6 +46,16 @@ enum BenchMotion {
     SlopeMixed,
     WallHold,
     WallDiagonal,
+    WalkCruise,
+    Accel,
+    RunCruise,
+    Decel,
+    RunUp,
+    RunDown,
+    RunWall,
+    AirSteer,
+    AirCoast,
+    MomentumCrowd,
 }
 
 #[derive(Clone)]
@@ -70,6 +86,16 @@ fn main() {
     time_case("mixed flat, slope, air", slope_scene(8, BenchMotion::SlopeMixed));
     time_case("uphill into a wall", slope_scene(1, BenchMotion::WallHold));
     time_case("diagonal along a wall", slope_scene(1, BenchMotion::WallDiagonal));
+    time_case("acceleration from rest", scene(1, true, BenchMotion::Accel, None));
+    time_case("constant-speed walk", scene(1, true, BenchMotion::WalkCruise, None));
+    time_case("constant-speed run", scene(1, true, BenchMotion::RunCruise, None));
+    time_case("deceleration to rest", scene(1, true, BenchMotion::Decel, None));
+    time_case("running uphill", slope_scene(1, BenchMotion::RunUp));
+    time_case("running downhill", slope_scene(1, BenchMotion::RunDown));
+    time_case("run held into a wall", slope_scene(1, BenchMotion::RunWall));
+    time_case("airborne steering", scene(1, false, BenchMotion::AirSteer, Some(0.0)));
+    time_case("airborne coast", scene(1, false, BenchMotion::AirCoast, Some(0.0)));
+    time_case("8 mixed acceleration", scene(8, true, BenchMotion::MomentumCrowd, None));
 }
 
 fn time_case(label: &str, mut world: World) {
@@ -121,7 +147,9 @@ fn rewind(world: &mut World) {
                 let _ = world.insert(*entity, (MoveIntent::new(Vec3::new(1.5, 0.0, 0.0)),));
             }
             BenchMotion::Walk => {
-                let _ = world.insert(*entity, (LocomotionIntent::new(Vec3::X),));
+                // The 1C floor row is a full walking step. Seeding the cruise speed keeps every
+                // sample at that distance. Acceleration from rest is a separate row.
+                let _ = world.insert(*entity, (cruise(90.0, 0.0), LocomotionIntent::new(Vec3::X)));
             }
             BenchMotion::Fall => {
                 let _ = world.insert(*entity, (CharacterMotion::default(),));
@@ -132,32 +160,74 @@ fn rewind(world: &mut World) {
             BenchMotion::Mixed => {
                 let _ = world.insert(*entity, (CharacterMotion::default(),));
                 if index < cast.entities.len() / 2 {
-                    let _ = world.insert(*entity, (LocomotionIntent::new(Vec3::X),));
+                    let _ = world.insert(*entity, (cruise(90.0, 0.0), LocomotionIntent::new(Vec3::X)));
                 }
             }
             BenchMotion::SlopeUp | BenchMotion::SlopeCrowd => {
-                let _ = world.insert(*entity, (LocomotionIntent::new(Vec3::X),));
+                let _ = world.insert(*entity, (cruise(77.942, 0.0), LocomotionIntent::new(Vec3::X)));
             }
             BenchMotion::SlopeDown => {
-                let _ = world.insert(*entity, (LocomotionIntent::new(-Vec3::X),));
+                let _ = world.insert(*entity, (cruise(-77.942, 0.0), LocomotionIntent::new(-Vec3::X)));
             }
             BenchMotion::SlopeStand => {
-                let _ = world.insert(*entity, (LocomotionIntent::new(Vec3::ZERO),));
+                let _ = world.insert(*entity, (CharacterMotion::default(), LocomotionIntent::new(Vec3::ZERO)));
             }
             BenchMotion::Steep => {
                 let _ = world.insert(*entity, (CharacterMotion::default(), LocomotionIntent::new(Vec3::X)));
             }
             BenchMotion::SlopeMixed => {
                 let _ = world.insert(*entity, (CharacterMotion::default(),));
-                if index < 6 {
-                    let _ = world.insert(*entity, (LocomotionIntent::new(Vec3::X),));
+                if index < 3 {
+                    let _ = world.insert(*entity, (cruise(90.0, 0.0), LocomotionIntent::new(Vec3::X)));
+                } else if index < 6 {
+                    let _ = world.insert(*entity, (cruise(77.942, 0.0), LocomotionIntent::new(Vec3::X)));
                 }
             }
             BenchMotion::WallHold => {
-                let _ = world.insert(*entity, (LocomotionIntent::new(Vec3::X),));
+                let _ = world.insert(*entity, (cruise(77.942, 0.0), LocomotionIntent::new(Vec3::X)));
             }
             BenchMotion::WallDiagonal => {
-                let _ = world.insert(*entity, (LocomotionIntent::new(Vec3::new(1.0, 0.0, 1.0)),));
+                // Cruise target of a unit diagonal on the 30° slope, before the wall clips +X.
+                // The committed contour is the 1C-R step, about 1.134 on Z.
+                let _ =
+                    world.insert(*entity, (cruise_xz(60.133, 60.133), LocomotionIntent::new(Vec3::new(1.0, 0.0, 1.0))));
+            }
+            BenchMotion::Accel => {
+                let _ = world.insert(*entity, (CharacterMotion::default(), LocomotionIntent::new(Vec3::X)));
+            }
+            BenchMotion::WalkCruise => {
+                let _ = world.insert(*entity, (cruise(90.0, 0.0), LocomotionIntent::new(Vec3::X)));
+            }
+            BenchMotion::RunCruise => {
+                let _ = world.insert(*entity, (cruise(140.0, 0.0), LocomotionIntent::running(Vec3::X)));
+            }
+            BenchMotion::Decel => {
+                let _ = world.insert(*entity, (cruise(90.0, 0.0),));
+            }
+            BenchMotion::RunUp => {
+                let _ = world.insert(*entity, (cruise(121.24, 0.0), LocomotionIntent::running(Vec3::X)));
+            }
+            BenchMotion::RunDown => {
+                let _ = world.insert(*entity, (cruise(-121.24, 0.0), LocomotionIntent::running(-Vec3::X)));
+            }
+            BenchMotion::RunWall => {
+                let _ = world.insert(*entity, (cruise(121.24, 0.0), LocomotionIntent::running(Vec3::X)));
+            }
+            BenchMotion::AirSteer => {
+                let _ = world.insert(*entity, (CharacterMotion::default(), LocomotionIntent::new(Vec3::X)));
+            }
+            BenchMotion::AirCoast => {
+                let _ = world.insert(*entity, (cruise(90.0, 0.0),));
+            }
+            BenchMotion::MomentumCrowd => {
+                let _ = world.insert(*entity, (CharacterMotion::default(),));
+                if index >= 6 {
+                    let _ = world.insert(*entity, (cruise(40.0, -80.0),));
+                } else if index % 2 == 0 {
+                    let _ = world.insert(*entity, (LocomotionIntent::running(Vec3::X),));
+                } else {
+                    let _ = world.insert(*entity, (LocomotionIntent::new(Vec3::Z),));
+                }
             }
         }
     }
@@ -172,7 +242,7 @@ fn slope_scene(bodies: usize, motion: BenchMotion) -> World {
         world.spawn((Transform::from_xyz(30.0, 0.5, index as f32 * 2.0), Collider::aabb_box(Vec3::new(0.4, 0.4, 0.4))));
     }
     let degrees = if motion == BenchMotion::Steep { 60.0 } else { 30.0 };
-    let blocked = matches!(motion, BenchMotion::WallHold | BenchMotion::WallDiagonal);
+    let blocked = matches!(motion, BenchMotion::WallHold | BenchMotion::WallDiagonal | BenchMotion::RunWall);
     let ramp_z = if motion == BenchMotion::SlopeMixed { 40.0 } else { 0.0 };
     let normal = spawn_ramp(&mut world, degrees, ramp_z);
     if blocked {
@@ -206,6 +276,14 @@ fn slope_scene(bodies: usize, motion: BenchMotion) -> World {
     world
 }
 
+fn cruise(x: f32, y: f32) -> CharacterMotion {
+    CharacterMotion { velocity: Vec3::new(x, y, 0.0), ..CharacterMotion::default() }
+}
+
+fn cruise_xz(x: f32, z: f32) -> CharacterMotion {
+    CharacterMotion { velocity: Vec3::new(x, 0.0, z), ..CharacterMotion::default() }
+}
+
 fn spawn_ramp(world: &mut World, degrees: f32, z_offset: f32) -> Vec3 {
     let rotation = Quat::from_rotation_z(degrees.to_radians());
     let normal = rotation.rotate(Vec3::Y).normalized();
@@ -229,7 +307,9 @@ fn scene(bodies: usize, floor: bool, motion: BenchMotion, gravity: Option<f32>) 
     let mut entities = Vec::with_capacity(bodies);
     let mut starts = Vec::with_capacity(bodies);
     for index in 0..bodies {
-        let elevated = motion == BenchMotion::Fall || (motion == BenchMotion::Mixed && index >= bodies / 2);
+        let elevated = motion == BenchMotion::Fall
+            || (motion == BenchMotion::Mixed && index >= bodies / 2)
+            || (motion == BenchMotion::MomentumCrowd && index >= 6);
         let start = Vec3::new(0.0, if elevated { 8.0 } else { 0.5 }, index as f32 * 3.0);
         let entity = if motion == BenchMotion::Motor {
             world.spawn((
