@@ -19,6 +19,13 @@
 //! horizontal step plus a downward stick. Airborne motion and takeoff stay on world axes: the
 //! wish is horizontal, and the jump is world +Y. Neither inherits the slope tangent or the stick.
 //!
+//! That same intent carries a private slide limit into the one motor sweep. Grounded motion may
+//! keep only the direction that lies in both the support plane and a blocking unwalkable wall.
+//! A walkable contact, including the support itself, still uses the motor's usual plane slide, so
+//! a slope transition is not treated as a wall. Airborne motion may slide a wall's level contour
+//! and may slide the vertical velocity along the wall. The horizontal wish does not add climb on
+//! an unwalkable face. A motor move with no locomotion limit is unchanged.
+//!
 //! `Unknown` becomes `Supported` or `Airborne` on the first positive fixed step. Spawning already
 //! inside the support window is that classification, not a landing. Gravity is world −Y. It is
 //! integrated only when this iteration's pre-move probe is already `Airborne` (or the takeoff lock
@@ -216,6 +223,25 @@ struct LocomotionNotes {
     before: Vec<(Entity, Vec3)>,
 }
 
+/// How one locomotion sweep may redirect the unconsumed remainder after a blocking hit.
+///
+/// This is not a motor setting and it is not saved. [`prepare_locomotion`] attaches it to the
+/// move it submits. [`super::motor::resolve_motors`] consumes it. A [`MoveIntent`] written by
+/// anything else has no limit, so the sweep's public slide is unchanged.
+#[derive(Clone, Copy, Debug)]
+pub(super) enum SlideLimit {
+    /// Stay in `normal` and do not climb out of an unwalkable blocker.
+    Ground { normal: Vec3, min_cosine: f32 },
+    /// Horizontal input slides on the wall's level contour. Vertical velocity still uses the wall.
+    Air,
+}
+
+/// Slide limits for the moves [`prepare_locomotion`] just submitted, in entity order.
+#[derive(Clone, Debug, Default)]
+pub(super) struct SlideLimits {
+    pub entries: Vec<(Entity, SlideLimit)>,
+}
+
 /// `Some` only for a finite duration strictly above zero. Zero, negative, and non-finite values
 /// are `None`: collision still runs, and locomotion does not.
 pub(super) fn usable_step(step_secs: Option<f32>) -> Option<f32> {
@@ -239,6 +265,7 @@ pub(super) fn prepare_locomotion(world: &mut World, step_secs: f32) {
     let launched = notes.launched.clone();
     let mut conflicts_now = Vec::new();
     let mut missing_now = Vec::new();
+    let mut slide_limits = Vec::new();
     notes.submitted.clear();
     notes.was_air.clear();
     notes.fell.clear();
@@ -308,12 +335,25 @@ pub(super) fn prepare_locomotion(world: &mut World, step_secs: f32) {
         if world.insert(entity, (MoveIntent::new(delta),)).is_err() {
             continue;
         }
+        slide_limits.push((entity, slide_limit(&pre, rising_move, &locomotion)));
         notes.submitted.push(entity);
     }
 
     notes.conflicts = conflicts_now;
     notes.missing_motion = missing_now;
     world.insert_resource(notes);
+    world.insert_resource(SlideLimits { entries: slide_limits });
+}
+
+/// Grounded surface motion keeps its support plane. A jump, a fall, and any other airborne
+/// submission keep the level-contour limit so a horizontal wish cannot be turned into climb.
+fn slide_limit(pre: &GroundSupport, rising_move: bool, locomotion: &CharacterLocomotion) -> SlideLimit {
+    if let (GroundSupport::Supported { normal, .. }, false) = (pre, rising_move) {
+        if let Some(min_cosine) = slope_cosine(locomotion.max_slope) {
+            return SlideLimit::Ground { normal: *normal, min_cosine };
+        }
+    }
+    SlideLimit::Air
 }
 
 /// Stores the support at the pose the motor committed, settles vertical speed, and sends
@@ -701,7 +741,7 @@ const SLOPE_COSINE_SLOP: f32 = 1e-4;
 /// A unit normal is walkable when it faces strictly upward and its Y meets `min_cosine`.
 ///
 /// A slope at the configured angle is walkable. `y == 0` is not, even when `min_cosine` is 0.
-fn walkable_normal(normal: Vec3, min_cosine: f32) -> bool {
+pub(super) fn walkable_normal(normal: Vec3, min_cosine: f32) -> bool {
     normal.y.is_finite() && normal.y > 0.0 && normal.y + SLOPE_COSINE_SLOP >= min_cosine
 }
 

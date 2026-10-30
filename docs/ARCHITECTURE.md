@@ -283,7 +283,12 @@ The step that walks off a floor does not fall. The next one does. A jump edge co
 and skips gravity for that iteration. A ceiling normal with `y < -0.5` on this iteration's result
 cancels upward speed. `LocomotionEvent::Landed` is sent when an airborne body becomes supported
 after a move that was not rejected. A rejected move restores the pre-integration velocity. A
-surface steeper than `max_slope`, including an exactly vertical wall at 90°, is not ground. Stairs,
+surface steeper than `max_slope`, including an exactly vertical wall at 90°, is not ground. A
+locomotion move also carries a private slide limit into that same sweep. Grounded motion against
+an unwalkable wall keeps only the crease of the support plane and the wall, so an uphill wish
+blocked by a vertical wall does not leave its Y behind. Airborne horizontal input slides on the
+wall's level contour, while vertical velocity still slides on the wall. A motor with no locomotion
+limit keeps the unrestricted slide. Stairs,
 autostep, moving platforms, coyote time, and jump buffering are not implemented.
 
 `elapsed` and `frame` advance once per `step`, not once per fixed iteration. Extract and render are

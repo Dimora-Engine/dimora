@@ -10,6 +10,8 @@
 //! `locomotion, no floor` keeps gravity at 0 so that row stays a horizontal airborne step, matching
 //! the Locomotion-1A measurement. Free fall, jump takeoff, and the mixed row are the 1B cases.
 //! Slope rows are the 1C cases. They add one ramp and do not replace the flat rows.
+//! Wall rows are the 1C correction: uphill input into a vertical wall, and a diagonal slide
+//! along that wall. They do not replace the slope rows.
 
 use std::time::Instant;
 
@@ -36,6 +38,8 @@ enum BenchMotion {
     Steep,
     SlopeCrowd,
     SlopeMixed,
+    WallHold,
+    WallDiagonal,
 }
 
 #[derive(Clone)]
@@ -64,6 +68,8 @@ fn main() {
     time_case("steep 60° unsupported", slope_scene(1, BenchMotion::Steep));
     time_case("8 on a 30° slope", slope_scene(8, BenchMotion::SlopeCrowd));
     time_case("mixed flat, slope, air", slope_scene(8, BenchMotion::SlopeMixed));
+    time_case("uphill into a wall", slope_scene(1, BenchMotion::WallHold));
+    time_case("diagonal along a wall", slope_scene(1, BenchMotion::WallDiagonal));
 }
 
 fn time_case(label: &str, mut world: World) {
@@ -147,6 +153,12 @@ fn rewind(world: &mut World) {
                     let _ = world.insert(*entity, (LocomotionIntent::new(Vec3::X),));
                 }
             }
+            BenchMotion::WallHold => {
+                let _ = world.insert(*entity, (LocomotionIntent::new(Vec3::X),));
+            }
+            BenchMotion::WallDiagonal => {
+                let _ = world.insert(*entity, (LocomotionIntent::new(Vec3::new(1.0, 0.0, 1.0)),));
+            }
         }
     }
 }
@@ -160,8 +172,15 @@ fn slope_scene(bodies: usize, motion: BenchMotion) -> World {
         world.spawn((Transform::from_xyz(30.0, 0.5, index as f32 * 2.0), Collider::aabb_box(Vec3::new(0.4, 0.4, 0.4))));
     }
     let degrees = if motion == BenchMotion::Steep { 60.0 } else { 30.0 };
+    let blocked = matches!(motion, BenchMotion::WallHold | BenchMotion::WallDiagonal);
     let ramp_z = if motion == BenchMotion::SlopeMixed { 40.0 } else { 0.0 };
     let normal = spawn_ramp(&mut world, degrees, ramp_z);
+    if blocked {
+        let rest = normal * 0.5;
+        let face = rest.x + 0.5;
+        world
+            .spawn((Transform::from_xyz(face + 0.4, rest.y + 1.0, 0.0), Collider::aabb_box(Vec3::new(0.4, 3.0, 12.0))));
+    }
     if motion == BenchMotion::SlopeMixed {
         world.spawn((Transform::from_xyz(0.0, -0.5, -30.0), Collider::aabb_box(Vec3::new(16.0, 0.5, 8.0))));
     }

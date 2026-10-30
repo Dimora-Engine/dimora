@@ -75,7 +75,7 @@ without it.
 | 22 | Character gameplay layer | Absent | The demo's own system drives the animation player | M9 |
 | **Gameplay** | | | | |
 | 23 | Collision and spatial queries | Partial | Sphere, box, and capsule; fixed-step `CollisionWorld`; overlap, ray, and `TriggerEvent` enter/exit. Movement is row 24 | M7 |
-| 24 | Physics and movement | Partial | Kinematic sweep on `CharacterMotor`. Locomotion-1A is ground support. Locomotion-1B adds gravity, jump, fall, and landing. Locomotion-1C walks walkable slopes. No stairs or platforms | M7 |
+| 24 | Physics and movement | Partial | Kinematic sweep on `CharacterMotor`. Locomotion-1A is ground support. Locomotion-1B adds gravity, jump, fall, and landing. Locomotion-1C walks walkable slopes. 1C-R keeps grounded motion on a wall's crease and stops airborne horizontal input from climbing an unwalkable face. No stairs or platforms | M7 |
 | 25 | Audio | Absent | | M16 |
 | **UI** | | | | |
 | 26 | UI runtime (screen and world space) | Absent | No fonts, layout, widgets, overlay pass | M10 |
@@ -612,8 +612,12 @@ Missing from the original category list and now tracked: **save games** (34), **
   defaults to −400 along world −Y and uses semi-implicit Euler when the pre-move probe is already
   airborne. Jump speed defaults to 200 along world +Y. Terminal fall speed defaults to 800. A
   competing `MoveIntent` is discarded. `Walk` is committed motion along the ground and is not a
-  jump, a fall, or adhesion by itself. `Jump` and `Fall` are airborne phases. A missing locomotion
-  component still moves on XYZ through `MoveIntent`. `spatial_scene --collision` does not use the
+  jump, a fall, or adhesion by itself. `Jump` and `Fall` are airborne phases. 1C-R attaches a
+  private slide limit to that one intent. An unwalkable wall keeps grounded motion on
+  `normalize(support × wall)`. Airborne horizontal input keeps the wall's level contour, and the
+  vertical velocity still slides on the wall, so a steep face does not grant climb. A missing locomotion
+  component still moves on XYZ through `MoveIntent`, including the unrestricted steep slide.
+  `spatial_scene --collision` does not use the
   new components.
   **Not implemented.** 1D horizontal acceleration, deceleration, running, and air control. 1E, the
   playable demonstration. Coyote time, jump buffering, variable jump height, double jump, wall jump,

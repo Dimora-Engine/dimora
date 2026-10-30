@@ -1133,3 +1133,31 @@ Three processes, back to back. Times are microseconds.
 
 In each process, uphill, downhill, and standing stay within about 0.3 µs of that process's flat floor row. Eight bodies on a slope match eight bodies on a floor. The steep row matches one grounded step. Nothing here was optimized, and the broadphase was not changed.
 
+## Locomotion-1C wall constraints
+
+Recorded 2026-10-30 in the morning, America/Chicago, on the same Apple M5 and macOS 27.0 (build 26A428), `rustc 1.99.0`. The command is `cargo run --release -p engine-world --example locomotion_bench`. Warmup is 10. Each row is 31 samples. q1 is sample 7, the median is sample 15, and q3 is sample 23 after sorting. The 1A, 1B, and 1C tables above are unchanged. These three processes remeasure those rows and add the two wall rows.
+
+The correction does not add a candidate scan. On a hit, a locomotion move may replace the single-plane remainder with a cross product. Uphill, downhill, and standing still end at the 1C positions. The 60° row is still airborne, and it no longer slides up the face: from a rest near `(-0.433, 0.250, 0)` it ends near `(-0.481, 0.167, 0)`. The wall rows add one vertical box. Uphill input into that wall stays at `(-0.250, 0.433, 0)`. Diagonal input ends at `(-0.250, 0.433, 1.134)`, the contour component, with no Y. The index holds 19 colliders for those rows.
+
+Three processes, back to back. Times are microseconds. Process 1's downhill median sits above its own q1 because a few samples were slow. Its q1, and the other two processes, stay with the uphill row.
+
+| Row | Process 1 median (q1–q3, min–max) | Process 2 | Process 3 |
+|---|---|---|---|
+| Bare motor, floor | 5.8 (5.8–6.0, 3.4–22.7) | 3.1 (3.1–3.2, 3.0–4.7) | 2.2 (2.2–2.3, 2.1–22.4) |
+| Locomotion, floor | 6.2 (6.2–6.4, 6.0–16.8) | 5.7 (5.6–5.8, 5.5–7.2) | 4.2 (4.1–4.3, 4.0–5.4) |
+| Locomotion, no floor | 6.0 (5.9–6.1, 5.7–13.1) | 5.3 (5.3–5.4, 5.2–7.0) | 4.0 (4.0–5.9, 3.8–26.9) |
+| Locomotion, 8 on a floor | 23.0 (21.8–32.7, 21.3–59.1) | 19.6 (19.4–19.9, 19.3–45.2) | 14.3 (14.1–15.1, 13.9–17.0) |
+| Free fall | 5.5 (5.5–5.6, 5.3–41.2) | 4.9 (4.9–5.0, 4.8–5.2) | 3.6 (3.5–3.8, 3.5–4.7) |
+| Jump takeoff | 6.2 (6.1–6.3, 6.0–20.1) | 5.4 (5.4–5.5, 5.3–5.8) | 3.9 (3.9–4.0, 3.8–4.8) |
+| Mixed, 4 ground + 4 air | 21.3 (21.2–21.4, 21.0–21.9) | 17.3 (17.2–17.4, 17.2–18.0) | 13.6 (13.5–14.2, 13.0–17.0) |
+| Slope 30° uphill | 6.4 (6.3–6.5, 6.2–29.8) | 5.4 (5.3–5.4, 5.2–7.9) | 4.2 (4.2–4.5, 4.1–5.3) |
+| Slope 30° downhill | 11.5 (6.6–11.7, 6.0–24.5) | 5.3 (5.3–5.4, 5.2–5.5) | 4.3 (4.2–5.2, 4.0–5.3) |
+| Slope 30° standing | 5.8 (5.8–5.9, 5.6–38.0) | 5.2 (5.2–5.3, 5.1–5.6) | 4.0 (4.0–4.1, 3.9–4.2) |
+| Steep 60° unsupported | 6.0 (5.9–6.2, 5.8–22.7) | 5.5 (5.4–5.5, 5.3–27.3) | 4.2 (4.2–4.3, 4.0–5.5) |
+| 8 on a 30° slope | 20.3 (20.1–21.2, 19.8–37.5) | 18.8 (18.6–18.9, 18.5–19.1) | 14.2 (14.1–14.5, 13.9–18.1) |
+| Mixed flat, slope, air | 20.2 (20.0–20.8, 19.9–40.9) | 18.8 (18.6–18.9, 18.4–19.3) | 14.6 (14.5–16.3, 14.3–26.9) |
+| Uphill into a wall | 6.0 (6.0–6.2, 5.8–13.8) | 5.5 (5.5–5.6, 5.4–6.0) | 4.3 (4.2–4.4, 4.1–5.4) |
+| Diagonal along a wall | 6.4 (6.2–11.9, 6.0–45.1) | 5.7 (5.6–5.8, 5.5–5.8) | 4.4 (4.4–4.5, 4.3–4.7) |
+
+In processes 2 and 3, the wall rows stay within about 0.3 µs of that process's uphill row. Process 1 agrees once the noisy downhill median is set aside: its wall-hold median is 6.0 against an uphill median of 6.4. Eight grounded bodies are unchanged in shape. Nothing here was optimized, and the broadphase was not changed.
+

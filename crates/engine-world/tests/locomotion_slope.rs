@@ -390,9 +390,8 @@ fn uphill_into_a_wall_does_not_climb_or_become_a_jump() {
     let start = on_ramp(&slope);
     let body = walker(&mut world, start);
     world.spawn((Transform::from_xyz(start.x + 1.2, start.y + 2.0, 0.0), Collider::aabb_box(Vec3::new(0.4, 3.0, 6.0))));
-    // The motor keeps the tangent's Y when a vertical wall blocks the X component. That leftover
-    // separates the body from the slope; gravity brings it back. The body bounces. It does not
-    // climb the wall, and the wall never becomes ground.
+    // The wall removes the into-wall part of the uphill tangent. The body stays on the slope.
+    // It does not climb the wall, and the wall never becomes ground.
     let mut highest = start.y;
     let mut returned = 0;
     for _ in 0..20 {
@@ -438,9 +437,10 @@ fn a_steep_slope_keeps_gravity_and_the_motor_may_slide() {
     near(motion(&world, body).velocity.y, GRAVITY * DT, 1e-3);
     assert_eq!(motion(&world, body).velocity.x, 0.0);
     assert!(landings(&mut world).is_empty());
-    // The sweep removes the into-face part of a horizontal wish. That leftover can point up the
-    // steep face. It is not grounding and it is not a tangent walk.
-    assert!(applied.y > 0.0, "expected the motor slide to carry Y, got {applied:?}");
+    // Horizontal input does not keep the uphill part of a single-plane slide. Gravity's downward
+    // component may still slide along the face. A raw motor, with no locomotion limit, is unchanged.
+    assert!(applied.y < 0.0, "horizontal input climbed the unwalkable face {applied:?}");
+    assert!(applied.x < 0.05, "the wish still pushed up the face {applied:?}");
 
     let mut rest = World::new();
     let slope = ramp(&mut rest, 60.0, 0.0, Vec3::new(40.0, 2.0, 16.0));
