@@ -75,7 +75,7 @@ without it.
 | 22 | Character gameplay layer | Absent | The demo's own system drives the animation player | M9 |
 | **Gameplay** | | | | |
 | 23 | Collision and spatial queries | Partial | Sphere, box, and capsule; fixed-step `CollisionWorld`; overlap, ray, and `TriggerEvent` enter/exit. Movement is row 24 | M7 |
-| 24 | Physics and movement | Partial | Kinematic sweep on `CharacterMotor`. Locomotion-1A is ground support. Locomotion-1B adds gravity, jump, fall, and landing. Locomotion-1C walks walkable slopes. 1C-R keeps grounded motion on a wall's crease and stops airborne horizontal input from climbing an unwalkable face. 1D accelerates, runs, and steers horizontal velocity, including in the air. No stairs or platforms | M7 |
+| 24 | Physics and movement | Partial | Kinematic sweep on `CharacterMotor`. Locomotion-1A is ground support. Locomotion-1B adds gravity, jump, fall, and landing. Locomotion-1C walks walkable slopes. 1C-R keeps grounded motion on a wall's crease and stops airborne horizontal input from climbing an unwalkable face. 1D accelerates, runs, and steers horizontal velocity, including in the air. 1D-R stores the tangent's actual XZ. No stairs or platforms | M7 |
 | 25 | Audio | Absent | | M16 |
 | **UI** | | | | |
 | 26 | UI runtime (screen and world space) | Absent | No fonts, layout, widgets, overlay pass | M10 |
@@ -607,10 +607,13 @@ Missing from the original category list and now tracked: **save games** (34), **
   `LocomotionIntent`, and `LocomotionEvent::Landed`. An enabled component owns the displacement.
   Support is the closest-feature probe on the existing index, before and after the motor, with a
   reach of `skin + stick`. A walkable normal faces strictly upward and meets `max_slope`, so a
-  vertical wall is not ground at a 90° limit. `velocity.xz` is world horizontal velocity. On a
-  slope its length is the along-surface speed times `cos(θ)`, and the tangent step divides by
-  that share, so walking and running speeds stay distances along the surface. Flat ground stores
-  the horizontal speed directly. Adhesion follows the negated normal and is not stored. Gravity
+  vertical wall is not ground at a 90° limit. `velocity.xz` is world horizontal velocity: the
+  tangent's actual XZ, so walking and running speeds stay distances along the surface. Directly
+  up a slope that length is the along-surface speed times `cos(θ)`. Along a contour it is the
+  along-surface speed. A diagonal stores the tangent's own heading. The grounded step keeps that
+  XZ and takes Y from the support plane. Flat ground stores the horizontal speed directly.
+  Acceleration limits the horizontal vector, not along-surface speed. Adhesion follows the
+  negated normal and is not stored. Gravity
   defaults to −400 along world −Y and uses semi-implicit Euler when the pre-move probe is already
   airborne. Jump speed defaults to 200 along world +Y. Terminal fall speed defaults to 800.
   Walk defaults to 90, run to 140, ground acceleration to 600, ground deceleration to 800, and

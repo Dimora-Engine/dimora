@@ -2,9 +2,10 @@
 //!
 //! Walk is 90 units per second along the surface. Run is 140. Ground acceleration is 600 units
 //! per second squared, ground deceleration is 800, and air steering is 300. One fixed step is
-//! 1/60 s, so a grounded step changes horizontal speed by at most 10 while speeding up and about
-//! 13.333 while slowing down. `velocity.xz` is world horizontal speed. On a 30° slope the cruise
-//! walk stores about 77.94, and the body still travels 90 along the surface.
+//! 1/60 s, so a grounded step changes world-horizontal speed by at most 10 while speeding up and
+//! about 13.333 while slowing down. That rate is not along-surface acceleration. On a 30° slope a
+//! gradient walk stores about 77.94, a contour walk stores 90, and an equal diagonal stores about
+//! `(51.03, 68.03)`. The body still travels 90 along the surface.
 
 use engine_math::{Quat, Transform, Vec3};
 use engine_world::{
@@ -339,6 +340,102 @@ fn a_30_degree_slope_keeps_along_surface_speed_while_accelerating() {
     assert!(horizontal(motion(&yawed, body).velocity) <= 140.5, "{:?}", motion(&yawed, body).velocity);
     assert_ne!(motion(&yawed, body).phase, LocomotionPhase::Jump);
     assert_ne!(motion(&yawed, body).phase, LocomotionPhase::Fall);
+}
+
+#[test]
+fn slope_direction_stores_the_tangent_and_acceleration_stays_horizontal() {
+    fn instant() -> CharacterLocomotion {
+        CharacterLocomotion {
+            acceleration: 1.0e6,
+            deceleration: 1.0e6,
+            air_acceleration: 1.0e6,
+            ..CharacterLocomotion::default()
+        }
+    }
+    fn ride(wish: Vec3, run: bool, yaw: f32) -> (Vec3, Vec3) {
+        let mut world = World::new();
+        let slope = ramp(&mut world, 30.0, yaw);
+        let body = body_at(&mut world, on_ramp(&slope));
+        world.insert(body, (instant(),)).unwrap();
+        drive(&mut world, body, Vec3::ZERO, false, false);
+        let start = position(&world, body);
+        drive(&mut world, body, wish, run, false);
+        (motion(&world, body).velocity, position(&world, body) - start)
+    }
+
+    let (uphill, moved) = ride(Vec3::X, false, 0.0);
+    near(uphill.x, 77.942, 0.05);
+    assert!(uphill.y.abs() < 1e-3 && uphill.z.abs() < 0.02, "{uphill:?}");
+    near(moved.length(), 1.5, 0.03);
+    near(moved.x, uphill.x * DT, 0.03);
+
+    let (downhill, moved) = ride(-Vec3::X, false, 0.0);
+    near(downhill.x, -77.942, 0.05);
+    assert!(moved.y < -0.5, "{moved:?}");
+
+    let (contour, moved) = ride(Vec3::Z, false, 0.0);
+    near(contour.z, 90.0, 0.05);
+    assert!(contour.x.abs() < 0.02, "{contour:?}");
+    near(moved.z, 1.5, 0.03);
+    assert!(moved.x.abs() < 0.03 && moved.y.abs() < 0.03, "{moved:?}");
+
+    let (diagonal, moved) = ride(Vec3::new(1.0, 0.0, 1.0), false, 0.0);
+    near(diagonal.x, 51.025, 0.08);
+    near(diagonal.z, 68.034, 0.08);
+    near(horizontal(diagonal), 85.042, 0.1);
+    near(moved.length(), 1.5, 0.04);
+    near(moved.x, diagonal.x * DT, 0.04);
+    near(moved.z, diagonal.z * DT, 0.04);
+    let wish = Vec3::new(1.0, 0.0, 1.0).normalized();
+    let stored = Vec3::new(diagonal.x, 0.0, diagonal.z).normalized();
+    assert!((stored - wish).length() > 0.05, "stored the wish {stored:?}");
+
+    let (running, moved) = ride(Vec3::Z, true, 0.0);
+    near(running.z, 140.0, 0.1);
+    near(moved.length(), 140.0 * DT, 0.05);
+
+    let (yawed, _) = ride(-Vec3::Z, false, std::f32::consts::FRAC_PI_2);
+    near(yawed.z, -77.942, 0.1);
+    assert!(yawed.x.abs() < 0.1, "{yawed:?}");
+
+    let mut reversing = World::new();
+    let slope = ramp(&mut reversing, 30.0, 0.0);
+    let body = body_at(&mut reversing, on_ramp(&slope));
+    reversing.insert(body, (instant(),)).unwrap();
+    drive(&mut reversing, body, Vec3::X, false, false);
+    reversing.insert(body, (CharacterLocomotion::default(),)).unwrap();
+    drive(&mut reversing, body, -Vec3::X, false, false);
+    let speed = motion(&reversing, body).velocity.x;
+    near(speed, 77.942 - DECEL_STEP, 0.2);
+    assert!(speed > 0.0, "the reverse snapped through zero at {speed}");
+
+    let mut up = World::new();
+    let slope = ramp(&mut up, 30.0, 0.0);
+    let body = body_at(&mut up, on_ramp(&slope));
+    drive(&mut up, body, Vec3::ZERO, false, false);
+    drive(&mut up, body, Vec3::X, false, false);
+    near(motion(&up, body).velocity.x, ACCEL_STEP, 0.05);
+
+    let mut side = World::new();
+    let slope = ramp(&mut side, 30.0, 0.0);
+    let body = body_at(&mut side, on_ramp(&slope));
+    drive(&mut side, body, Vec3::ZERO, false, false);
+    drive(&mut side, body, Vec3::Z, false, false);
+    near(motion(&side, body).velocity.z, ACCEL_STEP, 0.05);
+    assert!(motion(&side, body).velocity.x.abs() < 0.05);
+
+    let mut jump = World::new();
+    let slope = ramp(&mut jump, 30.0, std::f32::consts::FRAC_PI_2);
+    let body = body_at(&mut jump, on_ramp(&slope));
+    jump.insert(body, (instant(),)).unwrap();
+    drive(&mut jump, body, -Vec3::Z, false, false);
+    let before = motion(&jump, body).velocity;
+    drive(&mut jump, body, Vec3::ZERO, false, true);
+    let after = motion(&jump, body).velocity;
+    near(after.x, before.x, 0.05);
+    near(after.z, before.z, 0.05);
+    near(after.y, 200.0, 0.05);
+    assert_eq!(motion(&jump, body).phase, LocomotionPhase::Jump);
 }
 
 #[test]

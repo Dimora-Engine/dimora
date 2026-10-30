@@ -187,10 +187,10 @@ fn rewind(world: &mut World) {
                 let _ = world.insert(*entity, (cruise(77.942, 0.0), LocomotionIntent::new(Vec3::X)));
             }
             BenchMotion::WallDiagonal => {
-                // Cruise target of a unit diagonal on the 30° slope, before the wall clips +X.
+                // Actual tangent XZ of a unit diagonal on the 30° slope, before the wall clips +X.
                 // The committed contour is the 1C-R step, about 1.134 on Z.
                 let _ =
-                    world.insert(*entity, (cruise_xz(60.133, 60.133), LocomotionIntent::new(Vec3::new(1.0, 0.0, 1.0))));
+                    world.insert(*entity, (cruise_xz(51.025, 68.034), LocomotionIntent::new(Vec3::new(1.0, 0.0, 1.0))));
             }
             BenchMotion::Accel => {
                 let _ = world.insert(*entity, (CharacterMotion::default(), LocomotionIntent::new(Vec3::X)));

@@ -13,13 +13,17 @@
 //! `max_slope` is π/2 and `cos(π/2)` is a tiny negative value. Sensors and a one-way query mask
 //! do not count. The motor's mutual layer test does.
 //!
-//! Grounded motion stores world horizontal velocity, then projects that velocity onto the support
-//! plane so the distance traveled along the surface is `|velocity.xz| / cos(θ)` for the slope in
-//! the travel direction. Adhesion is `stick` along the negated normal, in the same intent, and is
-//! not part of the stored velocity. Flat ground, whose normal is world +Y, is that horizontal
-//! step plus a downward stick. Airborne motion and takeoff stay on world axes: `velocity.xz` is
-//! already the horizontal velocity, and the jump is `velocity.y` along world +Y. Neither inherits
-//! the slope tangent or the stick. A wish steers that velocity; it is not the displacement.
+//! Grounded motion stores the horizontal part of the tangent velocity. The along-surface speed is
+//! the configured walk or run speed. Directly up a slope that horizontal length is the surface
+//! speed times `cos(θ)`. Along a level contour it is the surface speed itself. A diagonal is
+//! neither: its stored XZ is the tangent's own horizontal part, not the wish scaled by one cosine.
+//! The grounded step keeps that XZ and takes Y from the support plane, so `velocity.xz * dt` is
+//! the horizontal displacement. Adhesion is `stick` along the negated normal, in the same intent,
+//! and is not part of the stored velocity. Flat ground, whose normal is world +Y, is that
+//! horizontal step plus a downward stick. Airborne motion and takeoff stay on world axes:
+//! `velocity.xz` is already the horizontal velocity, and the jump is `velocity.y` along world +Y.
+//! Neither inherits the slope tangent or the stick. A wish steers that velocity; it is not the
+//! displacement.
 //!
 //! That same intent carries a private slide limit into the one motor sweep. Grounded motion may
 //! keep only the direction that lies in both the support plane and a blocking unwalkable wall.
@@ -62,8 +66,9 @@ const LEFT_GROUND: f32 = 1e-4;
 ///
 /// `speed` is walking speed in world units per second along a walkable surface. In the air the
 /// same number is the horizontal XZ target. `run_speed` is the running target in the same units.
-/// `acceleration` and `deceleration` are ground rates in units per second squared.
-/// `air_acceleration` is the single airborne steering rate in units per second squared. A wish is
+/// `acceleration` and `deceleration` are ground rates in world-horizontal units per second squared.
+/// They limit how fast `velocity.xz` changes. They are not along-surface acceleration.
+/// `air_acceleration` is the single airborne steering rate in the same horizontal units. A wish is
 /// a direction. These speeds are the magnitudes that steering approaches. They are not forces.
 ///
 /// `max_slope` is the largest angle, in radians, between world +Y and a support normal. A normal
@@ -88,11 +93,11 @@ pub struct CharacterLocomotion {
     pub speed: f32,
     /// Running target, in the same units as [`Self::speed`]. Default 140.
     pub run_speed: f32,
-    /// Grounded rate toward a faster or still-aligned target, in units per second squared. Default 600.
+    /// Grounded world-horizontal rate toward a faster or still-aligned target, in units per second squared. Default 600.
     pub acceleration: f32,
-    /// Grounded rate when the target sheds speed, including a stop or a reverse, in units per second squared. Default 800.
+    /// Grounded world-horizontal rate when the target sheds speed, including a stop or a reverse, in units per second squared. Default 800.
     pub deceleration: f32,
-    /// Airborne steering rate while a wish is held, in units per second squared. Default 300. No wish coasts.
+    /// Airborne world-horizontal steering rate while a wish is held, in units per second squared. Default 300. No wish coasts.
     pub air_acceleration: f32,
     pub max_slope: f32,
     pub stick: f32,
@@ -170,13 +175,15 @@ pub enum LocomotionPhase {
 /// `MoveResult.applied / dt`.
 ///
 /// `velocity.x` and `velocity.z` are world horizontal velocity in units per second. On flat ground
-/// their length is the along-surface speed. On a slope their length is that along-surface speed
-/// times the cosine of the slope in the direction of travel, so a 30° walk at 90 units per second
-/// stores about 77.94 horizontally and the body still travels 90 along the surface. In the air the
-/// same components are the horizontal velocity directly. Takeoff copies them unchanged. Steering
-/// then moves them toward the walk or run target. The support stick is not stored here. A blocked
-/// wall removes the horizontal component that points into an unwalkable contact. It does not
-/// replace this vector with `MoveResult.applied / dt`.
+/// their length is the along-surface speed. On a slope they are the horizontal part of the tangent
+/// velocity, not the wish scaled by one cosine. Directly up a 30° slope at 90 the stored length is
+/// about 77.94. Along the contour it is 90. An equal XZ diagonal stores about `(51.03, 68.03)`,
+/// length about 85.04, and the body still travels 90 along the surface. In the air the same
+/// components are the horizontal velocity directly. Takeoff with no wish copies them unchanged.
+/// Steering then moves them toward the walk or run target by at most one rate times the fixed
+/// step, in this horizontal plane. That rate is not an along-surface acceleration. The support
+/// stick is not stored here. A blocked wall removes the horizontal component that points into an
+/// unwalkable contact. It does not replace this vector with `MoveResult.applied / dt`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CharacterMotion {
     pub support: GroundSupport,
@@ -670,25 +677,29 @@ fn velocity_delta(velocity: Vec3, step_secs: f32) -> Vec3 {
     }
 }
 
-/// Horizontal velocity projected onto the support plane.
+/// World step whose horizontal part is `velocity.xz * dt`.
 ///
-/// `|velocity.xz|` is the world horizontal speed. Dividing by the unit tangent's horizontal
-/// length recovers the along-surface speed, then [`surface_travel`] walks that far. The slope's
-/// rise stays in the displacement. It is not written to `velocity.y`.
+/// Y comes from the support plane, `-(vx * nx + vz * nz) / ny`, so the step lies in that plane
+/// and the stored horizontal velocity is not rotated back onto the wish. The rise is not written
+/// to `velocity.y`. A flat normal leaves Y at 0.
 fn grounded_delta(velocity: Vec3, normal: Vec3, step_secs: f32) -> Vec3 {
     let horizontal = Vec3::new(velocity.x, 0.0, velocity.z);
-    if !point_finite(horizontal) || !step_secs.is_finite() {
+    if !point_finite(horizontal)
+        || !step_secs.is_finite()
+        || horizontal.length_squared() <= engine_math::EPSILON * engine_math::EPSILON
+    {
         return Vec3::ZERO;
     }
-    let Some(direction) = horizontal.try_normalize() else {
+    let Some(normal) = normal.try_normalize().filter(|normal| normal.y > 0.0 && point_finite(*normal)) else {
         return Vec3::ZERO;
     };
-    let share = horizontal_share(direction, normal);
-    let along = if share > engine_math::EPSILON { horizontal.length() / share } else { horizontal.length() };
-    if !along.is_finite() {
-        return Vec3::ZERO;
+    let rise = -(horizontal.x * normal.x + horizontal.z * normal.z) / normal.y;
+    let step = Vec3::new(horizontal.x, rise, horizontal.z) * step_secs;
+    if point_finite(step) {
+        step
+    } else {
+        Vec3::ZERO
     }
-    surface_travel(direction, normal, along, step_secs)
 }
 
 /// Move `current` toward `target` by at most `max_delta`. A short remainder snaps to the target,
@@ -724,9 +735,12 @@ fn ground_rate(current: Vec3, target: Vec3, acceleration: f32, deceleration: f32
     }
 }
 
-/// World horizontal target. `wish` is already horizontal and at most length 1. On the ground the
-/// length is `speed * |wish| * cos(θ)` so the along-surface speed is `speed * |wish|`. In the air
-/// `support` is `None` and the length is the horizontal target itself.
+/// World horizontal target. `wish` is already horizontal and at most length 1.
+///
+/// In the air, `support` is `None` and the result is the wish times `speed`. On the ground the
+/// result is the XZ part of the tangent whose length along the surface is `|wish| * speed`.
+/// Gradient travel stores `speed * cos(θ)`. Contour travel stores `speed`. A diagonal stores the
+/// tangent's own horizontal heading.
 fn horizontal_target(wish: Vec3, speed: f32, support: Option<Vec3>) -> Vec3 {
     if !speed.is_finite() || speed < 0.0 || !point_finite(wish) {
         return Vec3::ZERO;
@@ -736,31 +750,25 @@ fn horizontal_target(wish: Vec3, speed: f32, support: Option<Vec3>) -> Vec3 {
         return Vec3::ZERO;
     }
     let direction = wish / scale;
-    let share = match support {
-        Some(normal) => horizontal_share(direction, normal),
-        None => 1.0,
+    let along = scale * speed;
+    if !along.is_finite() {
+        return Vec3::ZERO;
+    }
+    let Some(normal) =
+        support.and_then(|normal| normal.try_normalize()).filter(|normal| normal.y > 0.0 && point_finite(*normal))
+    else {
+        let velocity = direction * along;
+        return if point_finite(velocity) { velocity } else { Vec3::ZERO };
     };
-    let velocity = direction * (scale * speed * share);
-    if point_finite(velocity) {
-        velocity
+    let Some(unit) = (direction - normal * direction.dot(normal)).try_normalize() else {
+        return Vec3::ZERO;
+    };
+    let tangent = unit * along;
+    let horizontal = Vec3::new(tangent.x, 0.0, tangent.z);
+    if point_finite(horizontal) {
+        horizontal
     } else {
         Vec3::ZERO
-    }
-}
-
-/// Horizontal length of the unit tangent for `horizontal_dir` on `normal`. Flat ground is 1.
-fn horizontal_share(horizontal_dir: Vec3, normal: Vec3) -> f32 {
-    let Some(normal) = normal.try_normalize().filter(|normal| normal.y > 0.0 && point_finite(*normal)) else {
-        return 1.0;
-    };
-    let Some(unit) = (horizontal_dir - normal * horizontal_dir.dot(normal)).try_normalize() else {
-        return 1.0;
-    };
-    let share = Vec3::new(unit.x, 0.0, unit.z).length();
-    if share.is_finite() && share > engine_math::EPSILON {
-        share
-    } else {
-        1.0
     }
 }
 
@@ -848,11 +856,15 @@ fn clip_horizontal(mut horizontal: Vec3, normals: &[Vec3], min_cosine: f32) -> V
     horizontal
 }
 
-/// Projects `wish` onto the plane of `normal` and travels `|wish| * speed * step` along it.
+/// Geometric along-surface step used by the tangent tests.
 ///
-/// `wish` is already horizontal and no longer than 1. A flat normal `(0, 1, 0)` therefore returns
-/// the wish scaled by speed and time. The tangent is normalized only when its length is finite and
-/// above [`engine_math::EPSILON`]. A zero, non-finite, or downward normal contributes nothing.
+/// Production movement stores the tangent's horizontal part in [`horizontal_target`] and
+/// reconstructs the rise in [`grounded_delta`]. This helper stays so those tests can name the
+/// tangent itself. `wish` is already horizontal and no longer than 1. A flat normal `(0, 1, 0)`
+/// therefore returns the wish scaled by speed and time. The tangent is normalized only when its
+/// length is finite and above [`engine_math::EPSILON`]. A zero, non-finite, or downward normal
+/// contributes nothing.
+#[cfg(test)]
 fn surface_travel(wish: Vec3, normal: Vec3, speed: f32, step_secs: f32) -> Vec3 {
     if !point_finite(wish) || !point_finite(normal) || !speed.is_finite() || !step_secs.is_finite() {
         return Vec3::ZERO;
@@ -1108,16 +1120,52 @@ mod tests {
     }
 
     #[test]
-    fn a_30_degree_walk_stores_horizontal_speed_and_still_travels_the_surface() {
-        let target = horizontal_target(Vec3::X, SPEED, Some(SLOPE_30));
-        assert!((target.x - 77.942).abs() < 0.05, "{target:?}");
-        assert!(target.y.abs() < 1e-4 && target.z.abs() < 1e-4, "{target:?}");
-        let step = grounded_delta(target, SLOPE_30, STEP);
-        close(step, Vec3::new(1.299, 0.750, 0.0));
-        assert!((step.length() - 1.5).abs() < 1e-3, "{step:?}");
-        // Leaving the slope keeps the horizontal component. It does not adopt the along-surface 90.
-        let taken_off = velocity_delta(Vec3::new(target.x, 200.0, target.z), STEP);
-        assert!((taken_off.x - target.x * STEP).abs() < 1e-4, "{taken_off:?}");
+    fn a_30_degree_walk_stores_the_tangents_horizontal_velocity() {
+        let uphill = horizontal_target(Vec3::X, SPEED, Some(SLOPE_30));
+        close(uphill, Vec3::new(77.9423, 0.0, 0.0));
+        let uphill_step = grounded_delta(uphill, SLOPE_30, STEP);
+        close(uphill_step, Vec3::new(1.2990, 0.7500, 0.0));
+        assert!((uphill_step.length() - 1.5).abs() < 1e-3, "{uphill_step:?}");
+        close(Vec3::new(uphill_step.x, 0.0, uphill_step.z), uphill * STEP);
+
+        let downhill = horizontal_target(-Vec3::X, SPEED, Some(SLOPE_30));
+        close(downhill, Vec3::new(-77.9423, 0.0, 0.0));
+        close(grounded_delta(downhill, SLOPE_30, STEP), Vec3::new(-1.2990, -0.7500, 0.0));
+
+        let contour = horizontal_target(Vec3::Z, SPEED, Some(SLOPE_30));
+        close(contour, Vec3::new(0.0, 0.0, 90.0));
+        close(grounded_delta(contour, SLOPE_30, STEP), Vec3::new(0.0, 0.0, 1.5));
+
+        let diagonal = horizontal_target(Vec3::new(1.0, 0.0, 1.0).normalized(), SPEED, Some(SLOPE_30));
+        close(diagonal, Vec3::new(51.0252, 0.0, 68.0336));
+        assert!((diagonal.length() - 85.042).abs() < 0.01, "{diagonal:?}");
+        let diagonal_step = grounded_delta(diagonal, SLOPE_30, STEP);
+        close(Vec3::new(diagonal_step.x, 0.0, diagonal_step.z), diagonal * STEP);
+        assert!((diagonal_step.length() - 1.5).abs() < 1e-3, "{diagonal_step:?}");
+        let wish = Vec3::new(1.0, 0.0, 1.0).normalized();
+        let stored_dir = Vec3::new(diagonal.x, 0.0, diagonal.z).normalized();
+        assert!((stored_dir - wish).length() > 0.05, "diagonal storage followed the wish {stored_dir:?}");
+
+        let yaw = Quat::from_rotation_y(std::f32::consts::FRAC_PI_2);
+        let yawed = yaw.rotate(SLOPE_30);
+        let turned = horizontal_target(Vec3::new(0.0, 0.0, -1.0), SPEED, Some(yawed));
+        close(turned, yaw.rotate(Vec3::new(77.9423, 0.0, 0.0)));
+
+        let reversed = horizontal_target(-Vec3::new(1.0, 0.0, 1.0).normalized(), SPEED, Some(SLOPE_30));
+        close(reversed, -diagonal);
+
+        let flat = horizontal_target(Vec3::X, SPEED, Some(Vec3::Y));
+        close(flat, Vec3::X * SPEED);
+        close(grounded_delta(flat, Vec3::Y, STEP), Vec3::new(1.5, 0.0, 0.0));
+
+        // The rate limits the horizontal vector, so one step from rest is 10 on both headings.
+        let uphill_gain = approach(Vec3::ZERO, uphill, 600.0 * STEP);
+        let contour_gain = approach(Vec3::ZERO, contour, 600.0 * STEP);
+        close(uphill_gain, Vec3::new(10.0, 0.0, 0.0));
+        close(contour_gain, Vec3::new(0.0, 0.0, 10.0));
+
+        let taken_off = velocity_delta(Vec3::new(uphill.x, 200.0, uphill.z), STEP);
+        assert!((taken_off.x - uphill.x * STEP).abs() < 1e-4, "{taken_off:?}");
         assert!((taken_off.y - 200.0 * STEP).abs() < 1e-4, "{taken_off:?}");
     }
 

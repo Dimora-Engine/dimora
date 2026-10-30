@@ -1199,3 +1199,5 @@ Three processes, back to back. Times are microseconds. Process 1 sat about twice
 
 In processes 2 and 3, acceleration, walk, run, and the slope runs stay within about 0.4 µs of that process's floor or uphill row. The wall hold and the run held into a wall match the uphill-into-a-wall row. Eight accelerating bodies match eight grounded bodies. Process 1 is louder, and its bare sweep moved with it. A few maxima jump well above the quartile. Those samples are not a second cost. Nothing here was optimized, and the broadphase was not changed.
 
+1D-R changes the diagonal-wall seed from the wish-scaled cruise `(60.133, 60.133)` to the tangent's actual XZ `(51.025, 68.034)`. The table above was recorded with the earlier seed. Both seeds request the same contour step, about 1.134 on Z, because the wall removes +X. This note does not replace the table.
+

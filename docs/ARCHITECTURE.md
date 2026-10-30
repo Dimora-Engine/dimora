@@ -272,10 +272,12 @@ for the iteration and writes one `MoveIntent`. The sealed system passes `Time::d
 `sync_collision_with_step`. A positive finite value probes support before and after the motors.
 `sync_collision` without a step does not. `CharacterMotion.support` is that post-move probe.
 `CharacterMotion.velocity.y` is jump and fall speed. `velocity.x` and `velocity.z` are world
-horizontal velocity. On the ground their length is the along-surface speed times the cosine of
-the slope in the travel direction, so a 30° walk at 90 stores about 77.94 and still travels 90
-along the surface. In the air they are the horizontal velocity directly. Steering moves them
-toward `speed` or `run_speed`. It does not copy `MoveResult.applied / dt`. Adhesion is `stick`
+horizontal velocity: the XZ part of the tangent whose length along the surface is the selected
+speed. A 30° walk at 90 stores about 77.94 directly up the gradient, 90 along the contour, and
+about `(51.03, 68.03)` on an equal diagonal, and still travels 90 along the surface. The grounded
+step's XZ is that velocity times the fixed step. Its Y comes from the support plane and is not
+stored. In the air the same components are the horizontal velocity directly. Steering moves them
+toward `speed` or `run_speed` by a world-horizontal rate. It does not copy `MoveResult.applied / dt`. Adhesion is `stick`
 along the negated support normal, in the same intent, and is not stored. Flat ground is that
 horizontal step plus a downward stick. Airborne motion is the stored velocity times the fixed
 step. A jump takes off along world +Y and keeps the horizontal velocity. A held wish may then
