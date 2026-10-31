@@ -265,9 +265,39 @@ pass-through sends `Entered` then `Exited` for that pair before the next pair. A
 more than once in the iteration still produces that one outcome. A direct `Transform` write has
 no segments, so it only changes the endpoint sets. The events stay pending until the promote
 after the fixed loop. Trigger code does not read the camera or a sprite or mesh child. After the
-fixed loop, including a loop of zero iterations, every leftover `MoveIntent` is removed. An intent
-written during `update` waits for the next simulating step. Gravity, jumping, and a grounded flag
-are not implemented.
+fixed loop, including a loop of zero iterations, every leftover `MoveIntent` and `LocomotionIntent`
+is removed. An intent written during `update` waits for the next simulating step. An enabled
+`CharacterLocomotion` ([ADR-0026](adr/0026-character-locomotion.md)) owns that body's displacement
+for the iteration and writes one `MoveIntent`. The sealed system passes `Time::delta_secs()` into
+`sync_collision_with_step`. A positive finite value probes support before and after the motors.
+`sync_collision` without a step does not. `CharacterMotion.support` is that post-move probe.
+`CharacterMotion.velocity.y` is jump and fall speed. `velocity.x` and `velocity.z` are world
+horizontal velocity: the XZ part of the tangent whose length along the surface is the selected
+speed. A 30° walk at 90 stores about 77.94 directly up the gradient, 90 along the contour, and
+about `(51.03, 68.03)` on an equal diagonal, and still travels 90 along the surface. The grounded
+step's XZ is that velocity times the fixed step. Its Y comes from the support plane and is not
+stored. In the air the same components are the horizontal velocity directly. Steering moves them
+toward `speed` or `run_speed` by a world-horizontal rate. It does not copy `MoveResult.applied / dt`. Adhesion is `stick`
+along the negated support normal, in the same intent, and is not stored. Flat ground is that
+horizontal step plus a downward stick. Airborne motion is the stored velocity times the fixed
+step. A jump takes off along world +Y and keeps the horizontal velocity. A held wish may then
+steer it by at most `air_acceleration` times the step. A blocked wall removes only the horizontal
+component that points into an unwalkable contact, and a fully blocked step stores no horizontal
+speed. Disabling locomotion on a positive fixed step clears the whole velocity. Gravity is world −Y, default −400, integrated with
+semi-implicit Euler only when the pre-move probe is already airborne or the takeoff lock is set.
+The step that walks off a floor does not fall. The next one does. A jump edge copies
+`Actions::fixed_pressed` and is eligible only on a supported pre-move probe. Takeoff assigns 200
+and skips gravity for that iteration. A ceiling normal with `y < -0.5` on this iteration's result
+cancels upward speed. `LocomotionEvent::Landed` is sent when an airborne body becomes supported
+after a move that was not rejected. A rejected move restores the pre-integration velocity. A
+surface steeper than `max_slope`, including an exactly vertical wall at 90°, is not ground. A
+locomotion move also carries a private slide limit into that same sweep. Grounded motion against
+an unwalkable wall keeps only the crease of the support plane and the wall, so an uphill wish
+blocked by a vertical wall does not leave its Y behind. Airborne horizontal input slides on the
+wall's level contour, while vertical velocity still slides on the wall. A motor with no locomotion
+limit keeps the unrestricted slide. A sharp crest can leave the ground at a run and land once.
+`stick` stays 0.08. Stairs,
+autostep, moving platforms, coyote time, and jump buffering are not implemented.
 
 `elapsed` and `frame` advance once per `step`, not once per fixed iteration. Extract and render are
 not stages: `Game::extract()` then `WindowRenderer::render` (or `render_to_rgba` offscreen).
@@ -653,8 +683,11 @@ criteria. Open decisions stay in [DECISIONS.md](DECISIONS.md).
   the mesh size constant shared with scene construction. Replacing that environment despawns the
   pillar; the next rebuild omits it, and returning attaches a collider to the new entity for the
   following fixed step. The sensor, the slide wall, and the second character are not scene members.
-  The camera is not an input to movement or to the index. Gravity, jumping, and grounded support
-  are not written.
+  The camera is not an input to movement or to the index. That example still writes `MoveIntent`.
+  It does not attach `CharacterLocomotion`. `spatial_scene --locomotion` is a different opt-in
+  course. Its root has the locomotion components, and a fixed system writes `LocomotionIntent`
+  instead of integrating a second velocity. The sprite or mesh stays a non-colliding child.
+  The default scene does not build that course.
 * **Sprite-sheet animation** (M8), **a character gameplay layer with an API surface list** (M9), **a UI
   runtime** (M10), **pose-first skeletal animation** (M11) and **3D skinned characters** (M12), within the
   boundaries below.

@@ -8,6 +8,7 @@ use crate::Transform;
 use crate::World;
 
 use super::convert::{prepare, Prepared};
+use super::locomotion::{prepare_locomotion, settle_locomotion, usable_step};
 use super::query::wire_segments;
 use super::types::{point_finite, Collider, ColliderShape, CollisionQuery, RayHit, SkipReason};
 
@@ -110,7 +111,22 @@ impl CollisionWorld {
 /// Inserts an empty [`CollisionWorld`] when the resource is missing. Disabled colliders are absent
 /// and are not reported as skips. A newly invalid collider is logged once; the same skip on a later
 /// sync is not logged again.
+///
+/// This does not advance locomotion. Call [`sync_collision_with_step`] with a positive duration
+/// when a fixed iteration should run the ground-support pass.
 pub fn sync_collision(world: &mut World) {
+    sync_collision_with_step(world, None);
+}
+
+/// Same rebuild and sweep as [`sync_collision`], plus locomotion when `step_secs` is finite and
+/// greater than zero.
+///
+/// Order: propagate, rebuild, prepare locomotion, resolve motors, settle locomotion, triggers.
+/// `None`, zero, a negative value, and a non-finite value skip prepare and settle. The index is
+/// rebuilt once. Motors and triggers are unchanged for a body that has no enabled
+/// [`super::CharacterLocomotion`].
+pub fn sync_collision_with_step(world: &mut World, step_secs: Option<f32>) {
+    let step = usable_step(step_secs);
     propagate_transforms(world);
     if !world.has_resource::<CollisionWorld>() {
         world.insert_resource(CollisionWorld::default());
@@ -144,7 +160,13 @@ pub fn sync_collision(world: &mut World) {
     collision.skipped = skipped;
     collision.generation = collision.generation.saturating_add(1);
     drop(collision);
+    if let Some(step) = step {
+        prepare_locomotion(world, step);
+    }
     let hits = super::motor::resolve_motors(world);
+    if step.is_some() {
+        settle_locomotion(world);
+    }
     super::trigger::commit(world, hits);
 }
 

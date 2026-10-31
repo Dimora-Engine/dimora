@@ -51,7 +51,7 @@
 //!
 //! Headless: `cargo run --release -p spatial_scene -- --screenshot out.png [--camera NAME | --ortho]
 //! [--environment a|b] [--cam x,y,z] [--yaw deg] [--pitch deg] [--size WxH]
-//! [--orientation billboard|upright|fixed] [--frames N] [--collision]`
+//! [--orientation billboard|upright|fixed] [--frames N] [--collision | --locomotion] [--body sprite|mesh]`
 //!
 //! `--collision` is off unless that flag is present. A screenshot of the default scene does not
 //! pass it. In collision mode, Tab still replaces the environment. Environment A's pillar collider
@@ -68,7 +68,8 @@
 use engine::prelude::*;
 use spatial_scene::art;
 use spatial_scene::cameras;
-use spatial_scene::scene::{self, Scene, FIGURE_SIZE};
+use spatial_scene::locomotion;
+use spatial_scene::scene::{self, BodyVisual, Scene, FIGURE_SIZE};
 use std::time::Duration;
 
 const MOVE_SPEED: f32 = 240.0;
@@ -85,16 +86,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let config = cameras::config_from_args(value("--camera").as_deref(), flag("--ortho"))?;
     let collision = flag("--collision");
-
+    let locomotion_mode = flag("--locomotion");
+    if collision && locomotion_mode {
+        return Err("pass either --collision or --locomotion, not both".into());
+    }
     let mut game = Game::new(GameConfig::default().with_title("Dimora - spatial_scene").with_size(width, height));
     art::register(&mut game.assets());
-    let mut scene = scene::build_world(&mut game.world, config);
-    match value("--environment").as_deref().unwrap_or("a") {
-        "a" => {}
-        "b" => scene::replace_environment(&mut game.world, &mut scene, scene::Environment::B)
-            .map_err(|error| format!("environment B: {error}"))?,
-        other => {
-            return Err(format!("unknown environment `{other}`; known: a, b").into());
+    let mut scene = if locomotion_mode {
+        let body = match value("--body").as_deref() {
+            None | Some("sprite") => BodyVisual::Sprite,
+            Some("mesh") => BodyVisual::Mesh,
+            Some(other) => return Err(format!("unknown --body `{other}`; known: sprite, mesh").into()),
+        };
+        println!("{}", locomotion::control_guide());
+        locomotion::build_course(&mut game.world, config, body)
+    } else if value("--body").is_some() {
+        return Err("--body is only used with --locomotion".into());
+    } else {
+        scene::build_world(&mut game.world, config)
+    };
+    if !locomotion_mode {
+        match value("--environment").as_deref().unwrap_or("a") {
+            "a" => {}
+            "b" => scene::replace_environment(&mut game.world, &mut scene, scene::Environment::B)
+                .map_err(|error| format!("environment B: {error}"))?,
+            other => {
+                return Err(format!("unknown environment `{other}`; known: a, b").into());
+            }
         }
     }
 
@@ -119,9 +137,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     game.world.insert_resource(scene);
     bind_controls(&mut game);
-    if collision {
+    if locomotion_mode {
         bind_walk(&mut game);
-        scene::install_collision(&mut game.world, scene::BodyVisual::Sprite);
+        bind_locomotion(&mut game);
+        game.add_fixed_system("locomotion_motion", locomotion::locomotion_motion);
+        game.add_system("locomotion_feedback", locomotion::locomotion_feedback);
+    } else if collision {
+        bind_walk(&mut game);
+        scene::install_collision(&mut game.world, BodyVisual::Sprite);
         game.add_fixed_system("collision_motion", scene::collision_motion);
         game.add_system("collision_feedback", scene::collision_feedback);
     }
@@ -129,10 +152,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     game.add_system("controls", controls_system);
     game.add_system("camera", scene::camera_system);
     game.add_system("motion", scene::motion_system);
-    game.add_system("switch_environment", scene::request_environment_switch);
+    if !locomotion_mode {
+        game.add_system("switch_environment", scene::request_environment_switch);
+        game.add_to_stage(Stage::PostUpdate, "apply_environment", scene::apply_environment_switch)
+            .expect("post_update accepts the switch result");
+    }
     game.add_system("hud", hud_system);
-    game.add_to_stage(Stage::PostUpdate, "apply_environment", scene::apply_environment_switch)
-        .expect("post_update accepts the switch result");
 
     match value("--screenshot") {
         Some(path) => {
@@ -191,6 +216,12 @@ fn bind_walk(game: &mut Game) {
     let mut actions = game.world.resource_mut::<Actions>();
     actions.bind_axis(scene::WALK_X_ACTION, ButtonSource::Key(Key::J), ButtonSource::Key(Key::L));
     actions.bind_axis(scene::WALK_Z_ACTION, ButtonSource::Key(Key::K), ButtonSource::Key(Key::I));
+}
+
+fn bind_locomotion(game: &mut Game) {
+    let mut actions = game.world.resource_mut::<Actions>();
+    actions.bind_button(locomotion::RUN_ACTION, ButtonSource::Key(Key::H));
+    actions.bind_button(locomotion::JUMP_ACTION, ButtonSource::Key(Key::N));
 }
 
 fn controls_system(world: &mut World) {
@@ -263,13 +294,14 @@ fn hud_system(world: &mut World) {
         return;
     }
     scene.title_timer = 0.25;
-    let (rig, camera, orientation, name, environment, collision, walker) = (
+    let (rig, camera, orientation, name, environment, collision, locomotion_mode, walker) = (
         scene.rig,
         scene.camera,
         scene.figure_orientation,
         scene.config_name(),
         scene.environment,
         scene.collision,
+        scene.locomotion,
         scene.walker,
     );
     let figures = scene.figures.clone();
@@ -295,7 +327,13 @@ fn hud_system(world: &mut World) {
         .collect();
     let stats = *world.resource::<RenderStats>();
     let diagnostics = *world.resource::<Diagnostics>();
-    let collision_note = if collision {
+    let collision_note = if locomotion_mode {
+        let pos = world.component::<Transform>(walker).map(|transform| transform.position).unwrap_or(Vec3::ZERO);
+        let motion = world.component::<CharacterMotion>(walker).ok().map(|motion| *motion);
+        let phase = motion.map(|motion| format!("{:?}", motion.phase)).unwrap_or_else(|| "none".to_string());
+        let speed = motion.map(|motion| Vec3::new(motion.velocity.x, 0.0, motion.velocity.z).length()).unwrap_or(0.0);
+        format!(" | locomotion {phase} {speed:.0} u/s at ({:.1}, {:.1}, {:.1})", pos.x, pos.y, pos.z)
+    } else if collision {
         let pos = world.component::<Transform>(walker).map(|transform| transform.position).unwrap_or(Vec3::ZERO);
         let status = world
             .component::<MoveResult>(walker)

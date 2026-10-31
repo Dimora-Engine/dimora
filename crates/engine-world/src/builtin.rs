@@ -2,7 +2,10 @@
 //!
 //! Field names are declared here on purpose. Changing a struct does not change this list.
 
-use crate::collision::{CharacterMotor, Collider, ColliderShape, MoveIntent, MoveResult, MoveStatus};
+use crate::collision::{
+    CharacterLocomotion, CharacterMotion, CharacterMotor, Collider, ColliderShape, GroundSupport, LocomotionIntent,
+    LocomotionPhase, MoveIntent, MoveResult, MoveStatus,
+};
 use crate::hierarchy::{Children, GlobalTransform, Parent};
 use crate::interpolate::Interpolate;
 use crate::lookup::Tags;
@@ -25,6 +28,26 @@ const INTERPOLATE_FIELDS: &[FieldDesc] = &[FieldDesc::new("previous", "Option<Tr
 const MOTOR_FIELDS: &[FieldDesc] =
     &[FieldDesc::new("skin", "f32"), FieldDesc::new("max_slides", "u8"), FieldDesc::new("locked_axes", "BVec3")];
 const MOVE_INTENT_FIELDS: &[FieldDesc] = &[FieldDesc::new("translation", "Vec3")];
+const LOCOMOTION_FIELDS: &[FieldDesc] = &[
+    FieldDesc::new("enabled", "bool"),
+    FieldDesc::new("speed", "f32"),
+    FieldDesc::new("run_speed", "f32"),
+    FieldDesc::new("acceleration", "f32"),
+    FieldDesc::new("deceleration", "f32"),
+    FieldDesc::new("air_acceleration", "f32"),
+    FieldDesc::new("max_slope", "f32"),
+    FieldDesc::new("stick", "f32"),
+    FieldDesc::new("gravity", "f32"),
+    FieldDesc::new("jump_speed", "f32"),
+    FieldDesc::new("terminal_fall", "f32"),
+];
+const MOTION_FIELDS: &[FieldDesc] = &[
+    FieldDesc::new("support", "GroundSupport"),
+    FieldDesc::new("phase", "LocomotionPhase"),
+    FieldDesc::new("velocity", "Vec3"),
+];
+const LOCOMOTION_INTENT_FIELDS: &[FieldDesc] =
+    &[FieldDesc::new("wish", "Vec3"), FieldDesc::new("jump", "bool"), FieldDesc::new("run", "bool")];
 const MOVE_RESULT_FIELDS: &[FieldDesc] = &[
     FieldDesc::new("requested", "Vec3"),
     FieldDesc::new("applied", "Vec3"),
@@ -117,6 +140,24 @@ pub fn register_world_components(registry: &mut ComponentRegistry) -> Result<(),
         Persistence::Runtime,
         Some(result_values),
     ))?;
+    registry.register_idempotent(ComponentDesc::new(
+        "CharacterLocomotion",
+        LOCOMOTION_FIELDS,
+        Persistence::Persist,
+        Some(locomotion_values),
+    ))?;
+    registry.register_idempotent(ComponentDesc::new(
+        "CharacterMotion",
+        MOTION_FIELDS,
+        Persistence::Runtime,
+        Some(motion_values),
+    ))?;
+    registry.register_idempotent(ComponentDesc::new(
+        "LocomotionIntent",
+        LOCOMOTION_INTENT_FIELDS,
+        Persistence::Runtime,
+        Some(locomotion_intent_values),
+    ))?;
     Ok(())
 }
 
@@ -183,6 +224,49 @@ fn motor_values(motor: &CharacterMotor) -> Vec<String> {
 
 fn intent_values(intent: &MoveIntent) -> Vec<String> {
     vec![vec3(intent.translation)]
+}
+
+fn locomotion_values(locomotion: &CharacterLocomotion) -> Vec<String> {
+    vec![
+        locomotion.enabled.to_string(),
+        format!("{:?}", locomotion.speed),
+        format!("{:?}", locomotion.run_speed),
+        format!("{:?}", locomotion.acceleration),
+        format!("{:?}", locomotion.deceleration),
+        format!("{:?}", locomotion.air_acceleration),
+        format!("{:?}", locomotion.max_slope),
+        format!("{:?}", locomotion.stick),
+        format!("{:?}", locomotion.gravity),
+        format!("{:?}", locomotion.jump_speed),
+        format!("{:?}", locomotion.terminal_fall),
+    ]
+}
+
+fn motion_values(motion: &CharacterMotion) -> Vec<String> {
+    vec![support_text(motion.support), phase_text(motion.phase), vec3(motion.velocity)]
+}
+
+fn locomotion_intent_values(intent: &LocomotionIntent) -> Vec<String> {
+    vec![vec3(intent.wish), intent.jump.to_string(), intent.run.to_string()]
+}
+
+fn support_text(support: GroundSupport) -> String {
+    match support {
+        GroundSupport::Unknown => "Unknown".to_string(),
+        GroundSupport::Airborne => "Airborne".to_string(),
+        GroundSupport::Unavailable => "Unavailable".to_string(),
+        GroundSupport::Supported { entity, normal } => format!("Supported({entity:?}, {})", vec3(normal)),
+    }
+}
+
+fn phase_text(phase: LocomotionPhase) -> String {
+    match phase {
+        LocomotionPhase::Idle => "Idle".to_string(),
+        LocomotionPhase::Walk => "Walk".to_string(),
+        LocomotionPhase::Run => "Run".to_string(),
+        LocomotionPhase::Jump => "Jump".to_string(),
+        LocomotionPhase::Fall => "Fall".to_string(),
+    }
 }
 
 fn result_values(result: &MoveResult) -> Vec<String> {

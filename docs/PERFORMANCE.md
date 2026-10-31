@@ -1072,3 +1072,148 @@ The first process is again the cold outlier, except `dense`, which stayed near 1
 
 The second process spread was small 12.3 (12.2–14.5), mixed 55.2 (54.6–58.6), crowd 114.5 (113.6–120.0), and dense 144.3 (143.2–162.8). The stage time matches the steady `sync_collision` time on these worlds. It is a different measurement, not a second copy of the table above.
 
+## Locomotion-1A ground probe
+
+Recorded 2026-10-28 at about 5:33 PM America/Chicago, on the same Apple M5 and macOS 27.0 (build 26A428), `rustc 1.99.0`. The binary is `cargo run --release -p engine-world --example locomotion_bench`. Warmup is 10 calls. Each row is 31 samples. The median is sample 16 after sorting. Q1 and Q3 are samples 8 and 24. The rewind that restores positions and writes the next intent is not timed. The GPU is not involved.
+
+The fixture is one or eight spheres of radius 0.5, skin 0.01, plus 16 solid boxes at x = 30 that are not contacts. The floor rows add one box whose top is y = 0. A bare motor receives `MoveIntent` `(1.5, 0, 0)` and is timed with `sync_collision`. A locomotion row receives `LocomotionIntent` wish `+X` and is timed with `sync_collision_with_step(1/60)`. That wish becomes the same 1.5 horizontal displacement, and a supported body also submits a 0.08 downward stick. The floor locomotion median is therefore the probe plus that stick, not the probe alone. Each body ends the sample at x = 1.500, y = 0.500. Indexed counts are 18 with the floor, 17 without it, and 25 for eight bodies on the floor.
+
+Three processes, back to back. Times are microseconds. The same row moved by a few microseconds between processes, so these are not a stable overhead and not a frame budget.
+
+| Row | Process 1 median (min–max) | Process 2 | Process 3 |
+|---|---|---|---|
+| Bare motor, floor | 2.2 (2.2–6.2) | 5.0 (4.8–11.2) | 3.1 (2.9–5.7) |
+| Locomotion, floor | 8.3 (3.8–11.2) | 8.5 (8.2–11.1) | 5.3 (5.1–7.0) |
+| Locomotion, no floor | 8.0 (7.8–10.8) | 8.0 (7.8–10.2) | 4.9 (4.8–6.3) |
+| Locomotion, 8 on a floor | 13.1 (12.9–30.0) | 29.1 (25.2–29.8) | 18.0 (17.8–19.6) |
+
+Process 1's floor row was split: Q1 was 4.0 and the median was 8.3. The other rows in that process, and every row in processes 2 and 3, had Q1 within 0.4 of the median except the eight-body row in process 2 (Q1 25.5, median 29.1). In the quietest process the one-body floor probe sat about 2 microseconds above the bare sweep. Eight bodies cost several times one body. Nothing here was optimized. The M7 crowd tables above are unchanged.
+
+## Locomotion-1B gravity and jump
+
+Recorded 2026-10-28 at about 10:40 PM America/Chicago, on the same Apple M5 and macOS 27.0 (build 26A428), `rustc 1.99.0`. The command, warmup, sample count, and quartile indexes match the 1A section. The 1A table above is unchanged. The first four rows are the same scenarios: `locomotion, no floor` still uses gravity 0 so it stays a horizontal airborne step. Free fall starts at y = 8 with no wish and ends one step lower, at y = 7.889. Jump takeoff resets motion and requests a jump, and ends at y = 3.833 (0.5 + 200/60). The mixed row is four grounded walks and four free-falling bodies. Indexed counts stay 18, 17, and 25. The reported end of the mixed row is the first grounded body.
+
+Three processes, back to back. Times are microseconds. A few microseconds of process noise is the same kind of spread as 1A. These are not a frame budget, and the broadphase was not changed.
+
+| Row | Process 1 median (q1–q3, min–max) | Process 2 | Process 3 |
+|---|---|---|---|
+| Bare motor, floor | 2.5 (2.4–2.5, 2.3–3.9) | 2.5 (2.5–2.5, 2.3–4.0) | 2.3 (2.2–2.3, 2.2–4.0) |
+| Locomotion, floor | 4.5 (4.5–4.7, 4.4–21.5) | 4.7 (4.6–4.8, 4.5–5.9) | 4.1 (4.0–4.2, 4.0–5.2) |
+| Locomotion, no floor | 4.2 (4.2–4.3, 4.0–5.4) | 4.4 (4.3–4.5, 4.2–6.0) | 3.9 (3.8–3.9, 3.7–5.0) |
+| Locomotion, 8 on a floor | 14.8 (14.7–14.8, 14.5–16.0) | 15.8 (15.8–16.0, 15.5–17.6) | 14.1 (14.0–14.3, 13.9–29.2) |
+| Free fall | 3.8 (3.7–3.8, 3.7–3.9) | 4.0 (4.0–4.1, 3.9–4.2) | 3.6 (3.6–3.7, 3.5–4.6) |
+| Jump takeoff | 4.2 (4.1–4.2, 4.1–4.6) | 4.5 (4.5–4.6, 4.4–4.8) | 4.0 (3.9–4.0, 3.9–4.1) |
+| Mixed, 4 ground + 4 air | 14.3 (14.3–14.4, 14.1–15.5) | 14.6 (14.5–15.2, 14.4–15.4) | 13.4 (13.2–13.6, 13.0–16.6) |
+
+Grounded locomotion under 1B is the floor row. It does not integrate gravity while supported, and it sits in the same few-microsecond band as a free-fall step and a jump takeoff. The quietest grounded row is about 2 microseconds above the bare sweep, as in 1A. Eight bodies, grounded or mixed, cost several times one body. Nothing here was optimized.
+
+## Locomotion-1C slopes
+
+Recorded 2026-10-29 in the afternoon, America/Chicago, on the same Apple M5 and macOS 27.0 (build 26A428), `rustc 1.99.0`. The command, warmup, sample count, and quartile indexes match the 1A section. The 1A and 1B tables above are unchanged. The first seven rows are the same scenarios, remeasured in these three processes so a slope row can be compared with a flat row from the same run. The absolute times sit a little above the 10:40 PM 1B table. The bare sweep moved with them, so that shift is process noise, not a slope cost.
+
+Slope rows add one rotated ramp and keep the 16 boxes at x = 30. Uphill ends at about `(1.049, 1.183, 0)` from a rest near `(-0.250, 0.433, 0)`, a step of about `(1.299, 0.750, 0)`. Downhill is the opposite. Standing stays at the rest point. The 60° row is not grounded: the sweep slides the wish up the face and the body ends near `(-0.106, 0.816, 0)`. Eight bodies share one 30° ramp. The mixed row is three flat walks, three slope walks, and two airborne bodies, so the index holds 26 colliders and the reported end is the first flat body at `(1.500, 0.500, -30)`.
+
+Three processes, back to back. Times are microseconds.
+
+| Row | Process 1 median (q1–q3, min–max) | Process 2 | Process 3 |
+|---|---|---|---|
+| Bare motor, floor | 2.9 (2.9–3.0, 2.8–4.4) | 3.6 (3.6–3.8, 3.5–6.2) | 3.2 (3.1–3.3, 3.0–4.7) |
+| Locomotion, floor | 5.2 (5.1–5.4, 5.0–6.7) | 6.8 (6.7–7.1, 6.5–8.8) | 6.1 (6.0–6.2, 5.9–7.7) |
+| Locomotion, no floor | 5.0 (4.9–5.1, 4.8–7.8) | 6.5 (6.5–6.8, 6.2–9.0) | 5.5 (5.3–5.8, 5.2–12.1) |
+| Locomotion, 8 on a floor | 17.8 (17.6–18.0, 17.5–19.4) | 23.5 (23.3–23.6, 23.1–27.2) | 19.6 (19.5–19.9, 19.3–22.8) |
+| Free fall | 4.6 (4.6–4.7, 4.5–5.0) | 6.0 (6.0–6.1, 5.9–8.3) | 4.9 (4.8–5.0, 4.8–5.2) |
+| Jump takeoff | 5.1 (5.1–5.2, 5.0–5.5) | 6.8 (6.7–6.8, 6.6–7.0) | 5.5 (5.5–5.6, 5.3–5.8) |
+| Mixed, 4 ground + 4 air | 17.3 (17.1–17.5, 16.9–18.8) | 22.6 (22.5–22.8, 22.2–23.1) | 18.7 (18.6–18.8, 18.4–19.4) |
+| Slope 30° uphill | 5.4 (5.4–5.5, 5.2–6.7) | 6.9 (6.8–7.0, 6.7–7.2) | 5.7 (5.6–5.7, 5.6–5.9) |
+| Slope 30° downhill | 5.2 (5.2–5.3, 5.1–5.5) | 7.0 (6.9–7.0, 6.7–7.4) | 5.6 (5.5–5.6, 5.4–5.8) |
+| Slope 30° standing | 5.2 (5.1–5.2, 5.0–5.4) | 7.0 (6.9–7.2, 6.7–26.4) | 5.5 (5.5–5.5, 5.4–5.7) |
+| Steep 60° unsupported | 5.4 (5.4–5.5, 5.2–6.5) | 7.3 (7.2–7.4, 7.0–7.6) | 5.8 (5.7–5.8, 5.6–5.9) |
+| 8 on a 30° slope | 18.1 (18.0–18.2, 17.8–18.8) | 24.4 (22.0–24.7, 21.4–27.8) | 19.5 (19.4–19.6, 19.2–19.9) |
+| Mixed flat, slope, air | 18.4 (18.2–18.5, 18.0–18.8) | 21.5 (21.4–21.7, 21.2–43.4) | 19.7 (19.5–19.9, 19.4–21.5) |
+
+In each process, uphill, downhill, and standing stay within about 0.3 µs of that process's flat floor row. Eight bodies on a slope match eight bodies on a floor. The steep row matches one grounded step. Nothing here was optimized, and the broadphase was not changed.
+
+## Locomotion-1C wall constraints
+
+Recorded 2026-10-30 in the morning, America/Chicago, on the same Apple M5 and macOS 27.0 (build 26A428), `rustc 1.99.0`. The command is `cargo run --release -p engine-world --example locomotion_bench`. Warmup is 10. Each row is 31 samples. q1 is sample 7, the median is sample 15, and q3 is sample 23 after sorting. The 1A, 1B, and 1C tables above are unchanged. These three processes remeasure those rows and add the two wall rows.
+
+The correction does not add a candidate scan. On a hit, a locomotion move may replace the single-plane remainder with a cross product. Uphill, downhill, and standing still end at the 1C positions. The 60° row is still airborne, and it no longer slides up the face: from a rest near `(-0.433, 0.250, 0)` it ends near `(-0.481, 0.167, 0)`. The wall rows add one vertical box. Uphill input into that wall stays at `(-0.250, 0.433, 0)`. Diagonal input ends at `(-0.250, 0.433, 1.134)`, the contour component, with no Y. The index holds 19 colliders for those rows.
+
+Three processes, back to back. Times are microseconds. Process 1's downhill median sits above its own q1 because a few samples were slow. Its q1, and the other two processes, stay with the uphill row.
+
+| Row | Process 1 median (q1–q3, min–max) | Process 2 | Process 3 |
+|---|---|---|---|
+| Bare motor, floor | 5.8 (5.8–6.0, 3.4–22.7) | 3.1 (3.1–3.2, 3.0–4.7) | 2.2 (2.2–2.3, 2.1–22.4) |
+| Locomotion, floor | 6.2 (6.2–6.4, 6.0–16.8) | 5.7 (5.6–5.8, 5.5–7.2) | 4.2 (4.1–4.3, 4.0–5.4) |
+| Locomotion, no floor | 6.0 (5.9–6.1, 5.7–13.1) | 5.3 (5.3–5.4, 5.2–7.0) | 4.0 (4.0–5.9, 3.8–26.9) |
+| Locomotion, 8 on a floor | 23.0 (21.8–32.7, 21.3–59.1) | 19.6 (19.4–19.9, 19.3–45.2) | 14.3 (14.1–15.1, 13.9–17.0) |
+| Free fall | 5.5 (5.5–5.6, 5.3–41.2) | 4.9 (4.9–5.0, 4.8–5.2) | 3.6 (3.5–3.8, 3.5–4.7) |
+| Jump takeoff | 6.2 (6.1–6.3, 6.0–20.1) | 5.4 (5.4–5.5, 5.3–5.8) | 3.9 (3.9–4.0, 3.8–4.8) |
+| Mixed, 4 ground + 4 air | 21.3 (21.2–21.4, 21.0–21.9) | 17.3 (17.2–17.4, 17.2–18.0) | 13.6 (13.5–14.2, 13.0–17.0) |
+| Slope 30° uphill | 6.4 (6.3–6.5, 6.2–29.8) | 5.4 (5.3–5.4, 5.2–7.9) | 4.2 (4.2–4.5, 4.1–5.3) |
+| Slope 30° downhill | 11.5 (6.6–11.7, 6.0–24.5) | 5.3 (5.3–5.4, 5.2–5.5) | 4.3 (4.2–5.2, 4.0–5.3) |
+| Slope 30° standing | 5.8 (5.8–5.9, 5.6–38.0) | 5.2 (5.2–5.3, 5.1–5.6) | 4.0 (4.0–4.1, 3.9–4.2) |
+| Steep 60° unsupported | 6.0 (5.9–6.2, 5.8–22.7) | 5.5 (5.4–5.5, 5.3–27.3) | 4.2 (4.2–4.3, 4.0–5.5) |
+| 8 on a 30° slope | 20.3 (20.1–21.2, 19.8–37.5) | 18.8 (18.6–18.9, 18.5–19.1) | 14.2 (14.1–14.5, 13.9–18.1) |
+| Mixed flat, slope, air | 20.2 (20.0–20.8, 19.9–40.9) | 18.8 (18.6–18.9, 18.4–19.3) | 14.6 (14.5–16.3, 14.3–26.9) |
+| Uphill into a wall | 6.0 (6.0–6.2, 5.8–13.8) | 5.5 (5.5–5.6, 5.4–6.0) | 4.3 (4.2–4.4, 4.1–5.4) |
+| Diagonal along a wall | 6.4 (6.2–11.9, 6.0–45.1) | 5.7 (5.6–5.8, 5.5–5.8) | 4.4 (4.4–4.5, 4.3–4.7) |
+
+In processes 2 and 3, the wall rows stay within about 0.3 µs of that process's uphill row. Process 1 agrees once the noisy downhill median is set aside: its wall-hold median is 6.0 against an uphill median of 6.4. Eight grounded bodies are unchanged in shape. Nothing here was optimized, and the broadphase was not changed.
+
+## Locomotion-1D acceleration
+
+Recorded 2026-10-30 in the afternoon, America/Chicago, on the same Apple M5 and macOS 27.0 (build 26A428), `rustc 1.99.0`. The command is `cargo run --release -p engine-world --example locomotion_bench`. Warmup is 10. Each row is 31 samples. q1 is sample 7, the median is sample 15, and q3 is sample 23 after sorting. The 1A, 1B, 1C, and 1C-R tables above are unchanged. These three processes remeasure those rows and add the acceleration rows.
+
+A constant-speed row seeds `velocity` before the timed step, so the walk, slope, and wall sweeps stay the earlier distances. Uphill still ends near `(1.049, 1.183, 0)`. The wall hold stays at `(-0.250, 0.433, 0)`. The diagonal contour still ends at `(-0.250, 0.433, 1.134)`. The 60° row still ends near `(-0.481, 0.167, 0)`. Acceleration from rest ends at `(0.167, 0.500, 0)`, one 600 units/s² step. A seeded walk ends at `(1.500, 0.500, 0)`. A seeded run ends at `(2.333, 0.500, 0)`. Deceleration from 90 with no wish ends at `(1.278, 0.500, 0)`. Running uphill ends near `(1.771, 1.600, 0)` and downhill near `(-2.271, -0.734, 0)`. A run held into the wall stays at the rest point. Airborne steering from rest, with gravity 0, ends at `(0.083, 0.500, 0)`. An airborne coast at 90 ends at `(1.500, 0.500, 0)`. The eight-body acceleration row ends at `(0.167, 0.500, 0)` on its first body.
+
+Three processes, back to back. Times are microseconds. Process 1 sat about twice processes 2 and 3, including the bare motor, so that shift is the machine during that process. Within each process the new rows sit with that process's floor or uphill row.
+
+| Row | Process 1 median (q1–q3, min–max) | Process 2 | Process 3 |
+|---|---|---|---|
+| Bare motor, floor | 6.4 (6.4–6.6, 6.3–11.1) | 3.0 (3.0–3.1, 2.9–4.5) | 3.2 (3.1–3.3, 3.0–6.0) |
+| Locomotion, floor | 11.2 (11.0–11.7, 10.9–17.4) | 5.6 (5.5–5.8, 5.5–7.0) | 6.3 (6.2–6.5, 6.1–8.1) |
+| Locomotion, no floor | 11.4 (11.3–11.5, 11.2–11.7) | 5.2 (5.2–5.4, 5.2–7.0) | 5.8 (5.8–5.9, 5.6–7.7) |
+| Locomotion, 8 on a floor | 39.1 (38.7–42.5, 37.4–49.6) | 19.4 (19.2–19.7, 19.1–21.7) | 19.7 (19.6–19.9, 19.3–21.5) |
+| Free fall | 9.6 (9.5–9.8, 9.3–10.1) | 4.8 (4.8–4.9, 4.7–5.2) | 5.0 (5.0–5.0, 4.9–5.2) |
+| Jump takeoff | 10.6 (10.5–10.9, 9.0–73.5) | 5.4 (5.3–5.4, 5.2–5.5) | 5.6 (5.5–5.7, 5.5–5.8) |
+| Mixed, 4 ground + 4 air | 36.1 (30.4–36.8, 29.6–37.5) | 18.8 (18.7–19.0, 18.4–20.5) | 19.0 (18.9–19.2, 18.8–20.6) |
+| Slope 30° uphill | 9.5 (9.3–11.2, 9.2–13.2) | 5.8 (5.7–5.8, 5.6–6.1) | 5.8 (5.7–5.9, 5.7–7.0) |
+| Slope 30° downhill | 9.3 (9.2–9.4, 9.1–9.7) | 5.8 (5.7–5.8, 5.5–6.1) | 5.8 (5.8–5.8, 5.7–5.9) |
+| Slope 30° standing | 10.9 (10.7–11.0, 9.2–11.2) | 5.7 (5.7–5.8, 5.7–6.0) | 5.7 (5.6–5.7, 5.5–5.8) |
+| Steep 60° unsupported | 9.7 (9.5–9.8, 9.5–11.8) | 5.9 (5.8–6.0, 5.7–6.2) | 6.0 (5.9–6.1, 5.8–6.4) |
+| 8 on a 30° slope | 27.8 (27.5–31.6, 27.3–32.7) | 20.2 (20.1–20.4, 19.8–20.5) | 20.1 (20.0–20.3, 19.8–20.5) |
+| Mixed flat, slope, air | 32.2 (29.1–33.2, 27.8–72.1) | 19.7 (19.5–22.2, 18.6–75.2) | 20.4 (20.2–20.5, 19.9–64.2) |
+| Uphill into a wall | 8.4 (8.3–8.5, 8.2–8.7) | 5.6 (5.6–5.7, 5.5–5.8) | 6.0 (6.0–6.0, 5.9–6.2) |
+| Diagonal along a wall | 8.6 (8.5–8.9, 8.4–24.8) | 5.8 (5.7–5.8, 5.6–5.8) | 6.3 (6.2–6.4, 6.0–35.9) |
+| Acceleration from rest | 8.1 (8.0–8.2, 7.9–8.4) | 5.5 (5.4–5.6, 5.2–38.0) | 5.5 (5.4–5.8, 5.3–28.4) |
+| Constant-speed walk | 8.2 (8.0–8.2, 7.9–8.5) | 5.4 (5.3–5.4, 5.2–5.5) | 5.5 (5.5–5.6, 5.4–5.7) |
+| Constant-speed run | 8.2 (8.1–8.3, 8.0–43.2) | 5.4 (5.3–5.5, 5.2–15.7) | 5.4 (5.2–5.4, 5.1–5.5) |
+| Deceleration to rest | 7.5 (7.5–7.6, 7.4–7.7) | 4.9 (4.8–5.0, 4.7–5.0) | 5.0 (5.0–5.1, 4.9–5.2) |
+| Running uphill | 8.2 (8.1–8.4, 7.9–115.2) | 5.5 (5.4–5.5, 5.3–5.6) | 5.5 (5.5–5.7, 5.3–30.3) |
+| Running downhill | 8.2 (8.1–8.2, 7.9–8.4) | 5.5 (5.4–5.5, 5.3–24.0) | 5.5 (5.5–5.6, 5.4–47.2) |
+| Run held into a wall | 8.5 (8.5–8.7, 8.2–20.2) | 5.6 (5.5–5.7, 5.5–5.8) | 5.7 (5.6–5.8, 5.5–27.8) |
+| Airborne steering | 7.8 (7.8–8.0, 7.6–8.1) | 5.2 (5.2–5.2, 5.0–17.0) | 5.2 (5.2–5.3, 5.1–5.4) |
+| Airborne coast | 7.2 (7.0–7.2, 6.9–59.3) | 4.7 (4.6–4.8, 4.5–24.8) | 4.8 (4.7–4.8, 4.6–5.0) |
+| 8 mixed acceleration | 28.0 (27.8–28.5, 27.0–48.8) | 18.3 (18.1–18.4, 17.9–22.2) | 18.4 (18.3–18.6, 18.0–19.0) |
+
+In processes 2 and 3, acceleration, walk, run, and the slope runs stay within about 0.4 µs of that process's floor or uphill row. The wall hold and the run held into a wall match the uphill-into-a-wall row. Eight accelerating bodies match eight grounded bodies. Process 1 is louder, and its bare sweep moved with it. A few maxima jump well above the quartile. Those samples are not a second cost. Nothing here was optimized, and the broadphase was not changed.
+
+1D-R changes the diagonal-wall seed from the wish-scaled cruise `(60.133, 60.133)` to the tangent's actual XZ `(51.025, 68.034)`. The table above was recorded with the earlier seed. Both seeds request the same contour step, about 1.134 on Z, because the wall removes +X. This note does not replace the table.
+
+A remeasure on 2026-10-30 at about 6:28 PM America/Chicago, before the 1E course, used that corrected seed. Three processes. The diagonal row ended at `(-0.250, 0.433, 1.134)` in each. Medians were 4.4, 4.3, and 4.4 µs. The bare motor medians in the same run were 2.4, 2.2, and 2.2 µs. The other rows kept the end positions in the 1D section. That run is not a replacement of the table.
+
+## Locomotion-1E course
+
+Recorded 2026-10-30 at about 7:01 PM America/Chicago, on the same Apple M5 and macOS 27.0 (build 26A428), `rustc 1.99.0`. The command is `cargo run --release -p engine-world --example locomotion_bench`. Warmup is 10. Each row is 31 samples. q1 is sample 7, the median is sample 15, and q3 is sample 23 after sorting. The tables above are unchanged. Equivalent rows still end at the same positions, including the diagonal contour at `(-0.250, 0.433, 1.134)`, the uphill step at `(1.049, 1.183, 0)`, and the seeded run at `(2.333, 0.500, 0)`.
+
+Process 1 of this run was louder than processes 2 and 3, including the bare motor (5.8, 3.4, and 2.7 µs). That shift is the machine, not a new sweep. In the quietest process the floor locomotion median was 5.3 µs and the diagonal median was 5.3 µs, against a bare motor of 2.7 µs. The 1D quiet processes sat in that same band.
+
+The new row is eight bodies on a floor, a 30° ramp, a 60° face, and one wall. Two walk, two run, one walks uphill, one runs toward the wall, one jumps, and one falls. The index holds 12 colliders. The first body ends at `(-2.500, 0.500, -4.500)`.
+
+| Row | Process 1 median (q1–q3, min–max) | Process 2 | Process 3 |
+|---|---|---|---|
+| Small course, 8 bodies | 50.8 (50.5–51.0, 50.4–57.6) | 38.8 (38.6–39.1, 38.5–39.3) | 34.4 (34.3–34.6, 34.1–34.8) |
+
+The same run's eight-body acceleration row was 27.7, 18.8, and 16.2 µs with 25 indexed colliders. The course costs more per body because more of the eight are on a slope or a wall, not because the candidate list grew. Nothing here was optimized, and the broadphase was not changed.
+

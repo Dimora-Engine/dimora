@@ -19,12 +19,15 @@ use crate::World;
 use super::convert::{to_vector, Prepared};
 use super::feature::feature_hit;
 use super::index::{entries, entries_mut, CollisionWorld};
+use super::locomotion::{walkable_normal, SlideLimit, SlideLimits};
 use super::trigger::{collect_hits, Segment};
 use super::types::{point_finite, CharacterMotor, MoveIntent, MoveResult, MoveStatus};
 
 const STOP: f32 = 1e-6;
 const TIE: f32 = 1e-5;
 const RECOVERY_MIN: f32 = 1e-4;
+/// `|normal × wall|` below this is treated as one plane. A vertical wall on a 30° slope is ~0.87.
+const CREASE_MIN: f32 = 1e-3;
 /// Absolute world-unit width of a near-contact. This is the position tolerance, not a fraction of
 /// the request. A gap in `(-BAND, skin + BAND]` uses the closest-feature classifier.
 const BAND: f32 = 1e-4;
@@ -53,6 +56,7 @@ enum Scan {
 /// committed segments. When the index contains no sensors, segments are not recorded.
 pub(super) fn resolve_motors(world: &mut World) -> Vec<(Entity, Entity)> {
     let record = entries(&world.resource::<CollisionWorld>()).iter().any(|entry| entry.sensor);
+    let limits = world.remove_resource::<SlideLimits>().unwrap_or_default();
     let mut jobs: Vec<(Entity, CharacterMotor, Vec3)> = world
         .query::<(&CharacterMotor, &MoveIntent)>()
         .iter()
@@ -61,7 +65,8 @@ pub(super) fn resolve_motors(world: &mut World) -> Vec<(Entity, Entity)> {
     jobs.sort_by_key(|(entity, _, _)| *entity);
     let mut hits = Vec::new();
     for (entity, motor, translation) in jobs {
-        resolve_one(world, entity, motor, translation, record, &mut hits);
+        let limit = limits.entries.iter().find(|(id, _)| *id == entity).map(|(_, limit)| *limit);
+        resolve_one(world, entity, motor, translation, limit, record, &mut hits);
     }
     hits
 }
@@ -80,6 +85,7 @@ fn resolve_one(
     entity: Entity,
     motor: CharacterMotor,
     requested: Vec3,
+    limit: Option<SlideLimit>,
     record: bool,
     hits: &mut Vec<(Entity, Entity)>,
 ) {
@@ -96,7 +102,7 @@ fn resolve_one(
 
     let motion = {
         let collision = world.resource::<CollisionWorld>();
-        sweep(&collision, entity, &motor, requested, record)
+        sweep(&collision, entity, &motor, requested, limit, record)
     };
     let Some(motion) = motion else {
         publish(world, entity, rejected(requested));
@@ -156,6 +162,7 @@ fn sweep(
     entity: Entity,
     motor: &CharacterMotor,
     requested: Vec3,
+    limit: Option<SlideLimit>,
     record: bool,
 ) -> Option<Motion> {
     let list = entries(collision);
@@ -237,7 +244,16 @@ fn sweep(
                 normals.push(wall);
                 blocked = true;
                 let into = unconsumed.dot(wall);
-                let projected = if into < 0.0 { unconsumed - wall * into } else { unconsumed };
+                // No locomotion limit: project onto this wall only. That is the ADR-0025 slide.
+                // A limit redirects the same remainder inside this sweep. It does not cast again.
+                let projected = if into < 0.0 {
+                    match limit {
+                        Some(limit) => limited_remainder(unconsumed, wall, limit),
+                        None => unconsumed - wall * into,
+                    }
+                } else {
+                    unconsumed
+                };
                 remainder = motor.locked_axes.clear(projected);
                 if !point_finite(remainder) {
                     blocked = true;
@@ -254,6 +270,53 @@ fn sweep(
         return None;
     }
     Some(Motion { delta, blocked, normals, recovery_normal, segments })
+}
+
+/// Remainder after a blocking hit when locomotion asked for a slide limit.
+///
+/// Grounded: a walkable wall keeps the usual single-plane slide. An unwalkable wall keeps only
+/// `normalize(support × wall)`, which is the line in both planes. A pure uphill wish into a
+/// vertical wall has no component on that line, so the leftover Y is not applied.
+///
+/// Airborne: the vertical part of the remainder still slides on the wall, so gravity can fall
+/// along a steep face. The horizontal part keeps only `normalize(Y × wall)`, which has no Y.
+/// A nearly horizontal wall has no level contour and uses the usual slide.
+fn limited_remainder(unconsumed: Vec3, wall: Vec3, limit: SlideLimit) -> Vec3 {
+    let planar = unconsumed - wall * unconsumed.dot(wall);
+    match limit {
+        SlideLimit::Ground { normal, min_cosine } => {
+            if walkable_normal(wall, min_cosine) {
+                return planar;
+            }
+            let Some(normal) = normal.try_normalize().filter(|normal| normal.y > 0.0) else {
+                return planar;
+            };
+            match crease(normal, wall) {
+                Some(axis) => axis * unconsumed.dot(axis),
+                None => planar,
+            }
+        }
+        SlideLimit::Air => {
+            let Some(contour) = crease(Vec3::Y, wall) else {
+                return planar;
+            };
+            let vertical = Vec3::Y * unconsumed.y;
+            let horizontal = Vec3::new(unconsumed.x, 0.0, unconsumed.z);
+            let into = vertical.dot(wall);
+            let vertical_slide = if into < 0.0 { vertical - wall * into } else { vertical };
+            vertical_slide + contour * horizontal.dot(contour)
+        }
+    }
+}
+
+fn crease(normal: Vec3, wall: Vec3) -> Option<Vec3> {
+    let crossed = normal.cross(wall);
+    let length = crossed.length();
+    if !length.is_finite() || length < CREASE_MIN {
+        None
+    } else {
+        crossed.try_normalize()
+    }
 }
 
 fn note(segments: &mut Vec<Segment>, start: Vec3, delta: Vec3) {
@@ -639,5 +702,32 @@ mod tests {
         world.insert(parent, (GlobalTransform { matrix: singular },)).unwrap();
         assert!(!apply_world_delta(&mut world, child, Vec3::X));
         assert_eq!(world.component::<Transform>(child).unwrap().position, Vec3::ZERO);
+    }
+
+    #[test]
+    fn a_blocking_wall_drops_uphill_y_and_keeps_the_contour() {
+        let support = Vec3::new(-0.5, 0.8660254, 0.0);
+        let wall = -Vec3::X;
+        let min_cosine = std::f32::consts::FRAC_PI_4.cos();
+        let uphill = Vec3::new(1.299, 0.750, 0.0);
+        let grounded = SlideLimit::Ground { normal: support, min_cosine };
+        let stopped = limited_remainder(uphill, wall, grounded);
+        assert!(stopped.length() < 1e-3, "pure uphill into a wall left {stopped:?}");
+
+        let diagonal = Vec3::new(0.8, 0.4, 1.1);
+        let along = limited_remainder(diagonal, wall, grounded);
+        assert!(along.x.abs() < 1e-4 && along.y.abs() < 1e-4, "contour picked up the blocked axes {along:?}");
+        assert!((along.z - diagonal.z).abs() < 1e-4, "Z contour was shortened {along:?}");
+
+        let adhesion = uphill + support * 0.08;
+        let on_slope = limited_remainder(adhesion, support, grounded);
+        let tangent = on_slope - uphill;
+        assert!(tangent.length() < 1e-3, "the support face did not keep the tangent {on_slope:?}");
+
+        let steep = Vec3::new(-0.8660254, 0.5, 0.0);
+        let climbing = Vec3::new(1.5, -0.111, 0.0);
+        let fell = limited_remainder(climbing, steep, SlideLimit::Air);
+        assert!(fell.y < 0.0, "horizontal input still climbed {fell:?}");
+        assert!(fell.y > climbing.y, "gravity was discarded {fell:?}");
     }
 }

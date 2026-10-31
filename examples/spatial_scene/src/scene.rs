@@ -107,6 +107,8 @@ pub struct Scene {
     pub pending: Option<SceneOpId>,
     /// `--collision` is on. The sine patrol does not write the walker, and the pillar can carry a collider.
     pub collision: bool,
+    /// `--locomotion` is on. The walker is a character root on the course, not the sine patrol.
+    pub locomotion: bool,
     /// Non-colliding presentation child of [`Scene::walker`]. `None` until collision mode installs it.
     pub walker_visual: Option<Entity>,
     /// Second gameplay root. It is not a scene member, so a replacement leaves it in place.
@@ -150,6 +152,7 @@ pub fn build_world(world: &mut World, config: usize) -> Scene {
         instance,
         pending: None,
         collision: false,
+        locomotion: false,
         walker_visual: None,
         pace: None,
         pace_direction: 1.0,
@@ -207,7 +210,7 @@ pub fn build_environment_b(builder: &mut SceneBuilder<'_>) -> Result<(), SceneEr
     Ok(())
 }
 
-fn figure(tint: Color) -> Sprite {
+pub(crate) fn figure(tint: Color) -> Sprite {
     Sprite::new("figure").with_size(FIGURE_SIZE).with_tint(tint).cutout().unlit()
 }
 
@@ -236,11 +239,11 @@ fn refresh_tracked(world: &World, scene: &mut Scene) {
     scene.cube = named(world, "cube");
 }
 
-fn panel(color: Color) -> Material {
+pub(crate) fn panel(color: Color) -> Material {
     Material { base_color: color, base_texture: Some(AssetHandle::from_name("panel")), lit: false }
 }
 
-fn add_meshes(world: &mut World) {
+pub(crate) fn add_meshes(world: &mut World) {
     let mut assets = world.resource_mut::<AssetManager>();
     let mut add = |name: &str, mesh: MeshData| {
         assets.insert(name, mesh).expect("example asset names are distinct");
@@ -394,14 +397,15 @@ pub fn flat(position: Vec3) -> Transform {
 
 /// Per-frame motion: the cube spins while environment A is published, and the walker patrols.
 ///
-/// Both are plain `Transform` writes unless `--collision` is on. In that mode the walker's position
-/// comes from the fixed-step motor, and this system leaves it alone. The walker is not a scene
-/// member, so it keeps moving after a replacement. Environment B has no entity named `cube`.
+/// Both are plain `Transform` writes unless `--collision` or `--locomotion` is on. In those modes
+/// the walker's position comes from the fixed-step motor, and this system leaves it alone. The
+/// walker is not a scene member, so it keeps moving after a replacement. Environment B has no
+/// entity named `cube`.
 pub fn motion_system(world: &mut World) {
     let t = world.resource::<Time>().elapsed_secs();
-    let (cube, walker, collision) = {
+    let (cube, walker, collision, locomotion) = {
         let scene = world.resource::<Scene>();
-        (scene.cube, scene.walker, scene.collision)
+        (scene.cube, scene.walker, scene.collision, scene.locomotion)
     };
     if let Some(cube) = cube {
         if let Ok(mut transform) = world.component_mut::<Transform>(cube) {
@@ -410,7 +414,7 @@ pub fn motion_system(world: &mut World) {
     }
     // Collision mode moves the gameplay root from a fixed-step intent. The patrol write would
     // replace that position every frame.
-    if !collision {
+    if !collision && !locomotion {
         if let Ok(mut transform) = world.component_mut::<Transform>(walker) {
             transform.position = Vec3::new(WALK_RANGE * (t * 0.8).sin(), 0.0, WALK_Z);
         }

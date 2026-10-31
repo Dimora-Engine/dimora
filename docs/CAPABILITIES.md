@@ -75,7 +75,7 @@ without it.
 | 22 | Character gameplay layer | Absent | The demo's own system drives the animation player | M9 |
 | **Gameplay** | | | | |
 | 23 | Collision and spatial queries | Partial | Sphere, box, and capsule; fixed-step `CollisionWorld`; overlap, ray, and `TriggerEvent` enter/exit. Movement is row 24 | M7 |
-| 24 | Physics and movement | Partial | Kinematic sweep on `CharacterMotor`; no gravity, jump, or grounded state | M7 |
+| 24 | Physics and movement | Partial | Kinematic sweep on `CharacterMotor`. Locomotion-1A is ground support. Locomotion-1B adds gravity, jump, fall, and landing. Locomotion-1C walks walkable slopes. 1C-R keeps grounded motion on a wall's crease and stops airborne horizontal input from climbing an unwalkable face. 1D accelerates, runs, and steers horizontal velocity, including in the air. 1D-R stores the tangent's actual XZ. No stairs or platforms | M7 |
 | 25 | Audio | Absent | | M16 |
 | **UI** | | | | |
 | 26 | UI runtime (screen and world space) | Absent | No fonts, layout, widgets, overlay pass | M10 |
@@ -570,7 +570,8 @@ Missing from the original category list and now tracked: **save games** (34), **
   uniform when `(max - min) / max` of the column lengths is at most `1e-4`. `CollisionDebug` is off
   unless a caller enables it; a normal step with colliders submits no collision wires. When it is
   on, indexed shapes become finite `DebugDraw` segments, and several fixed iterations append them.
-  **Not implemented.** Locomotion. The opt-in `spatial_scene --collision` example does demonstrate the
+  **Not implemented.** Slope travel. Gravity and jumping are row 24. Flat-ground support is row 24
+  ([ADR-0026](adr/0026-character-locomotion.md)). The opt-in `spatial_scene --collision` example does demonstrate the
   pillar block, a slide wall, a sensor pass-through, and a second motor; the default scene does not.
   The contract is
   [ADR-0025](adr/0025-kinematic-collision.md).
@@ -601,9 +602,44 @@ Missing from the original category list and now tracked: **save games** (34), **
   the sprite or mesh on a child. IJKL requests world XZ at 90 units per second. Y is not locked.
   The same fixed step moves a second capsule between two bumpers. Headless tests step `Game` under
   several cameras and with either visual.
-  **Not implemented.** Gravity, jumping, walking acceleration, a grounded flag, floor/wall/ceiling
-  labels, stairs, slopes, and moving platforms. Trigger enter/exit is row 23. Triangle meshes and convex hulls are
-  not supported. The `1e-4` band is an absolute tolerance, not a guarantee at every world scale.
+  Locomotion-1A, 1B, 1C, and 1D
+  ([ADR-0026](adr/0026-character-locomotion.md)) add `CharacterLocomotion`, `CharacterMotion`,
+  `LocomotionIntent`, and `LocomotionEvent::Landed`. An enabled component owns the displacement.
+  Support is the closest-feature probe on the existing index, before and after the motor, with a
+  reach of `skin + stick`. A walkable normal faces strictly upward and meets `max_slope`, so a
+  vertical wall is not ground at a 90° limit. `velocity.xz` is world horizontal velocity: the
+  tangent's actual XZ, so walking and running speeds stay distances along the surface. Directly
+  up a slope that length is the along-surface speed times `cos(θ)`. Along a contour it is the
+  along-surface speed. A diagonal stores the tangent's own heading. The grounded step keeps that
+  XZ and takes Y from the support plane. Flat ground stores the horizontal speed directly.
+  Acceleration limits the horizontal vector, not along-surface speed. Adhesion follows the
+  negated normal and is not stored. Gravity
+  defaults to −400 along world −Y and uses semi-implicit Euler when the pre-move probe is already
+  airborne. Jump speed defaults to 200 along world +Y. Terminal fall speed defaults to 800.
+  Walk defaults to 90, run to 140, ground acceleration to 600, ground deceleration to 800, and
+  air acceleration to 300. A wish steers toward the selected speed by at most one rate times the
+  fixed step. `Run` follows committed traversal, with a midpoint entry and a one-unit hold above
+  the walk speed. A competing `MoveIntent` is discarded. `Walk` and `Run` are committed motion
+  along the ground and are not a jump, a fall, or adhesion by itself. `Jump` and `Fall` are
+  airborne phases. 1C-R attaches a private slide limit to that one intent. An unwalkable wall
+  keeps grounded motion on `normalize(support × wall)` and clips the stored horizontal velocity
+  into that wall. A fully blocked step stores none. Airborne horizontal input keeps the wall's
+  level contour, and the vertical velocity still slides on the wall, so a steep face does not
+  grant climb. Disabling locomotion clears velocity on the next positive fixed step. A missing
+  locomotion component still moves on XYZ through `MoveIntent`, including the unrestricted steep
+  slide.   `spatial_scene --collision` does not use the new components.
+  `spatial_scene --locomotion` is the playable course. It is off unless that flag is set, and it is
+  not combined with `--collision`. The root has `Transform`, the capsule, `CharacterMotor`,
+  `CharacterLocomotion`, and `CharacterMotion`. The sprite, or a mesh with `--body mesh`, is a
+  child with no collider. IJKL request world XZ, `H` holds run, and `N` is the jump edge. Bindings
+  stay in the example. The course is a floor, a 30° ramp, a vertical wall on that ramp, a 60° face,
+  a deck, a lower court, and a sensor that does not block. Visible boxes match those colliders.
+  Perspective, orthographic, and isometric use the existing presets and do not change the root trace.
+  **Not implemented.** Coyote time, jump buffering, variable jump
+  height, double jump, wall jump, stairs, autostep, moving platforms, and rigid-body physics.
+  Those deferred items are not assigned to 1E. Trigger enter/exit is row 23. Triangle meshes and
+  convex hulls are not supported. The `1e-4` band is an absolute tolerance, not a guarantee at
+  every world scale.
   **Depends on.** M7-1A and [ADR-0025](adr/0025-kinematic-collision.md). M7 is not complete.
 * **Not initially.** Rigid-body dynamics, joints, ragdolls, vehicles. The broadphase may be quadratic
   until a later milestone replaces the candidate function.

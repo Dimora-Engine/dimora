@@ -91,6 +91,14 @@ cargo run --release -p spatial_scene
 | `Tab` | Switch between environment A and environment B |
 | `R` / `Esc` | Reset camera / quit |
 
+`--locomotion` is a separate course on the same camera presets. It does not replace the scene above, and it is not combined with `--collision`.
+
+```sh
+cargo run --release -p spatial_scene -- --locomotion
+```
+
+Movement is world axes, not the camera. `J` / `L` are −X / +X, `K` / `I` are −Z / +Z, `H` is held to run, and `N` jumps. The camera keys in the table stay as they are. Tab does not switch environments in this mode. `--body mesh` draws a box child instead of the figure sprite. `--camera perspective`, `orthographic`, or `isometric` frames the same course. The gameplay root carries the transform, capsule, motor, and locomotion components. The sprite or mesh is a child with no collider.
+
 The rendering model (world vs render state, depth vs order vs position, orientation, conventions) is written up in
 [`docs/SPATIAL_RENDERING.md`](docs/SPATIAL_RENDERING.md).
 
