@@ -295,7 +295,8 @@ locomotion move also carries a private slide limit into that same sweep. Grounde
 an unwalkable wall keeps only the crease of the support plane and the wall, so an uphill wish
 blocked by a vertical wall does not leave its Y behind. Airborne horizontal input slides on the
 wall's level contour, while vertical velocity still slides on the wall. A motor with no locomotion
-limit keeps the unrestricted slide. Stairs,
+limit keeps the unrestricted slide. A sharp crest can leave the ground at a run and land once.
+`stick` stays 0.08. Stairs,
 autostep, moving platforms, coyote time, and jump buffering are not implemented.
 
 `elapsed` and `frame` advance once per `step`, not once per fixed iteration. Extract and render are
@@ -683,7 +684,10 @@ criteria. Open decisions stay in [DECISIONS.md](DECISIONS.md).
   pillar; the next rebuild omits it, and returning attaches a collider to the new entity for the
   following fixed step. The sensor, the slide wall, and the second character are not scene members.
   The camera is not an input to movement or to the index. That example still writes `MoveIntent`.
-  It does not attach `CharacterLocomotion`.
+  It does not attach `CharacterLocomotion`. `spatial_scene --locomotion` is a different opt-in
+  course. Its root has the locomotion components, and a fixed system writes `LocomotionIntent`
+  instead of integrating a second velocity. The sprite or mesh stays a non-colliding child.
+  The default scene does not build that course.
 * **Sprite-sheet animation** (M8), **a character gameplay layer with an API surface list** (M9), **a UI
   runtime** (M10), **pose-first skeletal animation** (M11) and **3D skinned characters** (M12), within the
   boundaries below.

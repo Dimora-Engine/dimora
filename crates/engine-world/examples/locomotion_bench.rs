@@ -18,6 +18,9 @@
 //! coast, and an eight-body mix. A constant-speed row, including the remeasured walk, slope, and
 //! wall rows, seeds `velocity` before the timed step so the sweep distance matches the earlier
 //! tables. Acceleration from rest is a separate row.
+//!
+//! The 1E row is one extra case: eight bodies on a floor, a 30° ramp, a 60° face, and a wall.
+//! It does not replace any earlier row.
 
 use std::time::Instant;
 
@@ -56,6 +59,7 @@ enum BenchMotion {
     AirSteer,
     AirCoast,
     MomentumCrowd,
+    Course,
 }
 
 #[derive(Clone)]
@@ -96,6 +100,7 @@ fn main() {
     time_case("airborne steering", scene(1, false, BenchMotion::AirSteer, Some(0.0)));
     time_case("airborne coast", scene(1, false, BenchMotion::AirCoast, Some(0.0)));
     time_case("8 mixed acceleration", scene(8, true, BenchMotion::MomentumCrowd, None));
+    time_case("small course, 8 bodies", course_level());
 }
 
 fn time_case(label: &str, mut world: World) {
@@ -219,6 +224,26 @@ fn rewind(world: &mut World) {
             BenchMotion::AirCoast => {
                 let _ = world.insert(*entity, (cruise(90.0, 0.0),));
             }
+            BenchMotion::Course => match index % 8 {
+                0 | 1 => {
+                    let _ = world.insert(*entity, (cruise(90.0, 0.0), LocomotionIntent::new(Vec3::X)));
+                }
+                2 | 3 => {
+                    let _ = world.insert(*entity, (cruise(140.0, 0.0), LocomotionIntent::running(Vec3::X)));
+                }
+                4 => {
+                    let _ = world.insert(*entity, (cruise(77.942, 0.0), LocomotionIntent::new(Vec3::X)));
+                }
+                5 => {
+                    let _ = world.insert(*entity, (cruise(121.24, 0.0), LocomotionIntent::running(Vec3::X)));
+                }
+                6 => {
+                    let _ = world.insert(*entity, (CharacterMotion::default(), LocomotionIntent::jumping(Vec3::X)));
+                }
+                _ => {
+                    let _ = world.insert(*entity, (cruise(20.0, -80.0),));
+                }
+            },
             BenchMotion::MomentumCrowd => {
                 let _ = world.insert(*entity, (CharacterMotion::default(),));
                 if index >= 6 {
@@ -273,6 +298,37 @@ fn slope_scene(bodies: usize, motion: BenchMotion) -> World {
         starts.push(start);
     }
     world.insert_resource(Cast { entities, starts, motion });
+    world
+}
+
+/// Floor, 30° ramp, 60° face, one wall, and eight bodies. Walk, run, jump, and a fall share the step.
+fn course_level() -> World {
+    let mut world = World::new();
+    world.spawn((Transform::from_xyz(-8.0, -0.5, 0.0), Collider::aabb_box(Vec3::new(12.0, 0.5, 16.0))));
+    let normal = spawn_ramp(&mut world, 30.0, 0.0);
+    spawn_ramp(&mut world, 60.0, 18.0);
+    let rest = normal * 0.5;
+    world.spawn((Transform::from_xyz(rest.x + 0.9, rest.y + 1.0, 0.0), Collider::aabb_box(Vec3::new(0.4, 3.0, 6.0))));
+    let mut entities = Vec::with_capacity(8);
+    let mut starts = Vec::with_capacity(8);
+    for index in 0..8 {
+        let start = match index {
+            0..=3 => Vec3::new(-4.0, 0.5, (index as f32 - 1.5) * 3.0),
+            4 | 5 => normal * 0.5 + Vec3::new(0.0, 0.0, if index == 4 { -2.0 } else { 0.0 }),
+            6 => Vec3::new(-4.0, 0.5, 8.0),
+            _ => Vec3::new(-4.0, 6.0, -8.0),
+        };
+        let entity = world.spawn((
+            Transform::from_xyz(start.x, start.y, start.z),
+            Collider::sphere(0.5),
+            CharacterMotor::default(),
+            CharacterLocomotion::default(),
+            CharacterMotion::default(),
+        ));
+        entities.push(entity);
+        starts.push(start);
+    }
+    world.insert_resource(Cast { entities, starts, motion: BenchMotion::Course });
     world
 }
 

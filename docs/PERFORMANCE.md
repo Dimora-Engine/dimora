@@ -1201,3 +1201,19 @@ In processes 2 and 3, acceleration, walk, run, and the slope runs stay within ab
 
 1D-R changes the diagonal-wall seed from the wish-scaled cruise `(60.133, 60.133)` to the tangent's actual XZ `(51.025, 68.034)`. The table above was recorded with the earlier seed. Both seeds request the same contour step, about 1.134 on Z, because the wall removes +X. This note does not replace the table.
 
+A remeasure on 2026-10-30 at about 6:28 PM America/Chicago, before the 1E course, used that corrected seed. Three processes. The diagonal row ended at `(-0.250, 0.433, 1.134)` in each. Medians were 4.4, 4.3, and 4.4 µs. The bare motor medians in the same run were 2.4, 2.2, and 2.2 µs. The other rows kept the end positions in the 1D section. That run is not a replacement of the table.
+
+## Locomotion-1E course
+
+Recorded 2026-10-30 at about 7:01 PM America/Chicago, on the same Apple M5 and macOS 27.0 (build 26A428), `rustc 1.99.0`. The command is `cargo run --release -p engine-world --example locomotion_bench`. Warmup is 10. Each row is 31 samples. q1 is sample 7, the median is sample 15, and q3 is sample 23 after sorting. The tables above are unchanged. Equivalent rows still end at the same positions, including the diagonal contour at `(-0.250, 0.433, 1.134)`, the uphill step at `(1.049, 1.183, 0)`, and the seeded run at `(2.333, 0.500, 0)`.
+
+Process 1 of this run was louder than processes 2 and 3, including the bare motor (5.8, 3.4, and 2.7 µs). That shift is the machine, not a new sweep. In the quietest process the floor locomotion median was 5.3 µs and the diagonal median was 5.3 µs, against a bare motor of 2.7 µs. The 1D quiet processes sat in that same band.
+
+The new row is eight bodies on a floor, a 30° ramp, a 60° face, and one wall. Two walk, two run, one walks uphill, one runs toward the wall, one jumps, and one falls. The index holds 12 colliders. The first body ends at `(-2.500, 0.500, -4.500)`.
+
+| Row | Process 1 median (q1–q3, min–max) | Process 2 | Process 3 |
+|---|---|---|---|
+| Small course, 8 bodies | 50.8 (50.5–51.0, 50.4–57.6) | 38.8 (38.6–39.1, 38.5–39.3) | 34.4 (34.3–34.6, 34.1–34.8) |
+
+The same run's eight-body acceleration row was 27.7, 18.8, and 16.2 µs with 25 indexed colliders. The course costs more per body because more of the eight are on a slope or a wall, not because the candidate list grew. Nothing here was optimized, and the broadphase was not changed.
+

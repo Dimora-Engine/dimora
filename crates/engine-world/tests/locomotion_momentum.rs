@@ -830,3 +830,52 @@ fn the_same_run_jump_and_slope_replays_for_a_thousand_steps() {
         assert_eq!(left.2, right.2, "step {index}");
     }
 }
+
+#[test]
+fn entering_a_walkable_slope_does_not_inject_horizontal_speed() {
+    let mut world = World::new();
+    let flat = world.spawn((Transform::from_xyz(-20.0, -0.5, 0.0), Collider::aabb_box(Vec3::new(20.0, 0.5, 24.0))));
+    let slope = ramp(&mut world, 30.0, 0.0);
+    let body = body_at(&mut world, Vec3::new(-10.0, RADIUS, 0.0));
+    drive(&mut world, body, Vec3::ZERO, false, false);
+    let mut stored = motion(&world, body);
+    stored.velocity.x = 90.0;
+    world.insert(body, (stored,)).unwrap();
+
+    let mut previous = 90.0;
+    let mut saw_flat = false;
+    let mut saw_slope = false;
+    for _ in 0..50 {
+        drive(&mut world, body, Vec3::X, false, false);
+        let now = motion(&world, body);
+        let speed = now.velocity.x;
+        assert!(speed <= previous + 0.05, "the slope added speed {previous} -> {speed}");
+        assert!(speed >= previous - DECEL_STEP - 0.05, "the slope shed more than deceleration {previous} -> {speed}");
+        assert!(speed <= 90.05, "{speed}");
+        assert_eq!(now.velocity.y, 0.0);
+        if supported_by(&world, body, flat) {
+            saw_flat = true;
+        }
+        if supported_by(&world, body, slope.entity) {
+            saw_slope = true;
+        }
+        previous = speed;
+    }
+    assert!(saw_flat && saw_slope, "flat {saw_flat} slope {saw_slope} at {:?}", position(&world, body));
+
+    let mut back = World::new();
+    let slope = ramp(&mut back, 30.0, std::f32::consts::FRAC_PI_2);
+    let body = body_at(&mut back, on_ramp(&slope));
+    drive(&mut back, body, Vec3::ZERO, false, false);
+    let mut stored = motion(&back, body);
+    stored.velocity = Vec3::new(0.0, 0.0, -77.942);
+    back.insert(body, (stored,)).unwrap();
+    let mut previous = horizontal(stored.velocity);
+    for _ in 0..12 {
+        drive(&mut back, body, -Vec3::Z, true, false);
+        let speed = horizontal(motion(&back, body).velocity);
+        assert!(speed <= previous + ACCEL_STEP + 0.05, "yawed slope injected {previous} -> {speed}");
+        assert_eq!(motion(&back, body).velocity.y, 0.0);
+        previous = speed;
+    }
+}

@@ -627,8 +627,15 @@ Missing from the original category list and now tracked: **save games** (34), **
   level contour, and the vertical velocity still slides on the wall, so a steep face does not
   grant climb. Disabling locomotion clears velocity on the next positive fixed step. A missing
   locomotion component still moves on XYZ through `MoveIntent`, including the unrestricted steep
-  slide. `spatial_scene --collision` does not use the new components.
-  **Not implemented.** 1E, the playable demonstration. Coyote time, jump buffering, variable jump
+  slide.   `spatial_scene --collision` does not use the new components.
+  `spatial_scene --locomotion` is the playable course. It is off unless that flag is set, and it is
+  not combined with `--collision`. The root has `Transform`, the capsule, `CharacterMotor`,
+  `CharacterLocomotion`, and `CharacterMotion`. The sprite, or a mesh with `--body mesh`, is a
+  child with no collider. IJKL request world XZ, `H` holds run, and `N` is the jump edge. Bindings
+  stay in the example. The course is a floor, a 30° ramp, a vertical wall on that ramp, a 60° face,
+  a deck, a lower court, and a sensor that does not block. Visible boxes match those colliders.
+  Perspective, orthographic, and isometric use the existing presets and do not change the root trace.
+  **Not implemented.** Coyote time, jump buffering, variable jump
   height, double jump, wall jump, stairs, autostep, moving platforms, and rigid-body physics.
   Those deferred items are not assigned to 1E. Trigger enter/exit is row 23. Triangle meshes and
   convex hulls are not supported. The `1e-4` band is an absolute tolerance, not a guarantee at

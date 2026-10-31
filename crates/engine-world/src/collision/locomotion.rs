@@ -1218,4 +1218,47 @@ mod tests {
         assert!(slope_cosine(f32::NAN).is_none());
         assert!(slope_cosine(std::f32::consts::PI).is_none());
     }
+
+    #[test]
+    fn grounded_rise_stays_finite_for_shallow_steep_and_invalid_normals() {
+        let flatish = Vec3::new(0.02, 0.9998, 0.0).normalized();
+        let shallow = horizontal_target(Vec3::X, SPEED, Some(flatish));
+        assert!((shallow.length() - SPEED).abs() < 1.0, "nearly flat ground keeps the walk speed {shallow:?}");
+        let shallow_step = grounded_delta(shallow, flatish, STEP);
+        assert!(shallow_step.dot(flatish).abs() < 1e-2, "{shallow_step:?}");
+
+        let slope_45 = Quat::from_rotation_z(std::f32::consts::FRAC_PI_4).rotate(Vec3::Y).normalized();
+        let up_45 = horizontal_target(Vec3::X, SPEED, Some(slope_45));
+        let step_45 = grounded_delta(up_45, slope_45, STEP);
+        assert!(finite(step_45) && (step_45.length() - 1.5).abs() < 1e-2, "{step_45:?}");
+        assert!(step_45.dot(slope_45).abs() < 1e-2, "{step_45:?}");
+
+        let slope_89 = Quat::from_rotation_z(89.0_f32.to_radians()).rotate(Vec3::Y).normalized();
+        assert!(slope_89.y > 0.01, "89° is still a usable denominator {slope_89:?}");
+        let up_89 = horizontal_target(Vec3::X, SPEED, Some(slope_89));
+        let step_89 = grounded_delta(up_89, slope_89, STEP);
+        assert!(finite(step_89), "{step_89:?}");
+        assert!((step_89.length() - 1.5).abs() < 2e-2, "89° still travels along the surface {step_89:?}");
+        assert!(step_89.dot(slope_89).abs() < 1e-2, "{step_89:?}");
+
+        assert_eq!(grounded_delta(Vec3::X * SPEED, Vec3::X, STEP), Vec3::ZERO);
+        assert_eq!(grounded_delta(Vec3::X * SPEED, -Vec3::Y, STEP), Vec3::ZERO);
+        assert_eq!(grounded_delta(Vec3::X * SPEED, Vec3::new(0.0, 0.0, 1.0), STEP), Vec3::ZERO);
+        assert_eq!(grounded_delta(Vec3::X * SPEED, Vec3::new(f32::NAN, 1.0, 0.0), STEP), Vec3::ZERO);
+        assert_eq!(grounded_delta(Vec3::X * 1.0e20, Vec3::new(1.0, 1.0e-20, 0.0), STEP), Vec3::ZERO);
+
+        let tiny = Vec3::new(1.0, 1.0e-6, 0.0).normalized();
+        let tiny_step = grounded_delta(horizontal_target(Vec3::X, SPEED, Some(tiny)), tiny, STEP);
+        assert!(finite(tiny_step), "{tiny_step:?}");
+        if tiny_step.length_squared() > 0.0 {
+            assert!(tiny_step.dot(tiny).abs() < 1e-2 * tiny_step.length().max(1.0), "{tiny_step:?}");
+        }
+
+        let fast = grounded_delta(Vec3::X * 1.0e6, SLOPE_30, STEP);
+        assert!(finite(fast), "{fast:?}");
+    }
+
+    fn finite(value: Vec3) -> bool {
+        value.x.is_finite() && value.y.is_finite() && value.z.is_finite()
+    }
 }

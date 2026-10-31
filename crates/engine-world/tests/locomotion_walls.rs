@@ -616,3 +616,181 @@ fn sharp_crests_separate_from_ledges_without_raising_stick() {
         assert!(!ledge.jumped, "{ledge:?}");
     }
 }
+
+/// A sharp 20° crest at walk 90 and run 140 can leave the ground. Measured on this fixture,
+/// one fixed step of 1/60 s, the lower sphere's gap above the far plane peaked at about 1.44
+/// (walk) and 4.49 (run). Each case emitted one landing and then stayed down. A smooth 30°
+/// ramp did not. A real ledge was not pulled back. `stick` stays 0.08.
+#[test]
+fn running_speed_crosses_a_sharp_crest_without_a_jump_loop() {
+    for speed in [90.0_f32, 140.0] {
+        for dt in [1.0 / 120.0, DT, 1.0 / 30.0] {
+            let sharp = ride_running_crest(speed, dt, 20.0, true, true);
+            assert!(sharp.steps >= 8 && sharp.finite, "speed {speed} dt {dt} left the finite range {sharp:?}");
+            assert!(!sharp.jumped, "speed {speed} dt {dt} treated separation as a jump {sharp:?}");
+            assert!(sharp.end_x > 4.0, "speed {speed} dt {dt} did not cross {sharp:?}");
+            assert_eq!(sharp.airborne_steps, sharp.hop_steps, "speed {speed} dt {dt} left the ground twice {sharp:?}");
+            assert!(sharp.landings <= 1, "speed {speed} dt {dt} landed repeatedly {sharp:?}");
+            assert_eq!(sharp.landings, sharp.events, "speed {speed} dt {dt} landing count {sharp:?}");
+            if sharp.hop_steps > 0 {
+                assert_eq!(sharp.landings, 1, "speed {speed} dt {dt} left the crest and did not land {sharp:?}");
+                assert!(sharp.returned && sharp.fell, "{sharp:?}");
+                assert!(sharp.peak_gap < 8.0, "speed {speed} dt {dt} separation {sharp:?}");
+            }
+        }
+    }
+    for dt in [1.0 / 120.0, DT, 1.0 / 30.0] {
+        let mut smooth = World::new();
+        let slope = ramp(&mut smooth, 30.0, 0.0, Vec3::new(80.0, 2.0, 16.0));
+        let body = capsule(&mut smooth, on_ramp(&slope));
+        smooth.insert(body, (CharacterLocomotion::default(),)).unwrap();
+        for _ in 0..16 {
+            smooth.insert(body, (LocomotionIntent::running(Vec3::X),)).unwrap();
+            step_at(&mut smooth, dt);
+            assert!(supported_by(&smooth, body, slope.entity), "dt {dt} left the continuous ramp");
+            let phase = motion(&smooth, body).phase;
+            assert_ne!(phase, LocomotionPhase::Jump, "dt {dt}");
+            assert_ne!(phase, LocomotionPhase::Fall, "dt {dt}");
+        }
+
+        let mut cruise = World::new();
+        let slope = ramp(&mut cruise, 30.0, 0.0, Vec3::new(80.0, 2.0, 16.0));
+        let body = capsule(&mut cruise, on_ramp(&slope));
+        cruise.insert(body, (CharacterLocomotion { run_speed: 140.0, ..kinematic() },)).unwrap();
+        let mut stored = motion(&cruise, body);
+        stored.velocity.x = 140.0 * slope.normal.y.max(0.05);
+        cruise.insert(body, (stored,)).unwrap();
+        for _ in 0..8 {
+            cruise.insert(body, (LocomotionIntent::running(Vec3::X),)).unwrap();
+            step_at(&mut cruise, dt);
+            assert!(supported_by(&cruise, body, slope.entity), "dt {dt} a seeded run left the smooth ramp");
+            let phase = motion(&cruise, body).phase;
+            assert_ne!(phase, LocomotionPhase::Jump, "dt {dt}");
+            assert_ne!(phase, LocomotionPhase::Fall, "dt {dt}");
+        }
+
+        let ledge = ride_running_crest(140.0, dt, 30.0, false, true);
+        assert!(ledge.steps >= 8 && ledge.airborne_steps > 0, "dt {dt} never left the ledge {ledge:?}");
+        assert!(!ledge.returned, "dt {dt} snapped back onto the ledge {ledge:?}");
+        assert!(!ledge.jumped, "{ledge:?}");
+        assert_eq!(ledge.landings, 0, "dt {dt} landed off a ledge with no floor {ledge:?}");
+        assert_eq!(ledge.landings, ledge.events, "ledge dt {dt} {ledge:?}");
+        assert!(ledge.peak_gap.is_finite() && ledge.fell, "{ledge:?}");
+    }
+}
+
+#[derive(Debug)]
+struct RunningCrest {
+    steps: u32,
+    airborne_steps: u32,
+    landings: u32,
+    events: u32,
+    hop_steps: u32,
+    jumped: bool,
+    fell: bool,
+    returned: bool,
+    finite: bool,
+    end_x: f32,
+    peak_gap: f32,
+}
+
+/// `joined` builds the far face. `seed_run` starts already at `speed` along +X; otherwise the body
+/// accelerates with the gameplay run rate from rest.
+fn ride_running_crest(speed: f32, dt: f32, degrees: f32, joined: bool, seed_run: bool) -> RunningCrest {
+    let mut world = World::new();
+    let rotation = Quat::from_rotation_z(degrees.to_radians());
+    let half = Vec3::new(80.0, 2.0, 16.0);
+    let left_center = -rotation.rotate(Vec3::new(half.x, half.y, 0.0));
+    let left = world.spawn((Transform::from_position(left_center).with_rotation(rotation), Collider::aabb_box(half)));
+    let right = joined.then(|| {
+        let right_rotation = Quat::from_rotation_z(-degrees.to_radians());
+        let right_center = -right_rotation.rotate(Vec3::new(-half.x, half.y, 0.0));
+        world.spawn((Transform::from_position(right_center).with_rotation(right_rotation), Collider::aabb_box(half)))
+    });
+    let normal = rotation.rotate(Vec3::Y).normalized();
+    let start = normal * RADIUS + Vec3::Y * HALF + rotation.rotate(-Vec3::X) * 28.0;
+    let body = capsule(&mut world, start);
+    let settings = if seed_run {
+        CharacterLocomotion { speed, run_speed: speed + 10.0, acceleration: 1.0e6, ..kinematic() }
+    } else {
+        CharacterLocomotion { speed: 90.0, run_speed: speed, ..CharacterLocomotion::default() }
+    };
+    world.insert(body, (settings,)).unwrap();
+    if seed_run {
+        let mut stored = motion(&world, body);
+        let share = normal.y.max(0.05);
+        stored.velocity.x = speed * share;
+        world.insert(body, (stored,)).unwrap();
+    }
+    // Cross the crest and keep going until a landing or the far face is behind the body.
+    // A 40-unit face is long enough to catch an ordinary hop. It is not ground snapping.
+    let steps = ((70.0 / (speed * dt)).ceil() as u32).clamp(16, 90);
+    let mut airborne_steps = 0;
+    let mut hop_steps = 0;
+    let mut touchdowns = 0;
+    let mut events = 0;
+    let mut jumped = false;
+    let mut fell = false;
+    let mut returned = false;
+    let mut left_ground = false;
+    let mut finite = true;
+    let mut grounded_after = 0;
+    let mut peak_gap: f32 = 0.0;
+    for _ in 0..steps {
+        world.insert(body, (LocomotionIntent::running(Vec3::X),)).unwrap();
+        step_at(&mut world, dt);
+        events = landings(&mut world).len() as u32;
+        let at = position(&world, body);
+        finite &= at.x.is_finite() && at.y.is_finite() && at.z.is_finite();
+        let state = motion(&world, body);
+        finite &= state.velocity.x.is_finite() && state.velocity.y.is_finite() && state.velocity.z.is_finite();
+        match state.phase {
+            LocomotionPhase::Jump => jumped = true,
+            LocomotionPhase::Fall => fell = true,
+            _ => {}
+        }
+        let supported =
+            supported_by(&world, body, left) || right.is_some_and(|right| supported_by(&world, body, right));
+        if supported {
+            if left_ground {
+                returned = true;
+                touchdowns += 1;
+                left_ground = false;
+            }
+            if returned {
+                grounded_after += 1;
+                if grounded_after >= 12 {
+                    break;
+                }
+            }
+        } else {
+            airborne_steps += 1;
+            if touchdowns == 0 {
+                hop_steps += 1;
+            }
+            left_ground = true;
+            let plane = if at.x >= 0.0 && joined {
+                Quat::from_rotation_z(-degrees.to_radians()).rotate(Vec3::Y).normalized()
+            } else {
+                normal
+            };
+            let gap = (at - Vec3::Y * HALF).dot(plane) - RADIUS;
+            if gap.is_finite() {
+                peak_gap = peak_gap.max(gap);
+            }
+        }
+    }
+    RunningCrest {
+        steps,
+        airborne_steps,
+        landings: touchdowns,
+        events,
+        hop_steps,
+        jumped,
+        fell,
+        returned,
+        finite,
+        end_x: position(&world, body).x,
+        peak_gap,
+    }
+}
